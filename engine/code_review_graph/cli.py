@@ -761,7 +761,7 @@ def _emit_tool_result(args, result: dict) -> None:
         truncated_reason="page_limit" if truncated else None,
         search_mode=result.get("search_mode") if isinstance(result, dict) else None,
     )
-    raise SystemExit(_env.emit(env, fmt))
+    raise SystemExit(_env.emit(env, fmt, getattr(args, "max_tokens", None)))
 
 
 def main() -> None:
@@ -1557,7 +1557,9 @@ def main() -> None:
                 )
             )
         env = _env.ok("capabilities", data=catalogue)
-        raise SystemExit(_env.emit(env, args.output_format))
+        raise SystemExit(
+            _env.emit(env, args.output_format, getattr(args, "max_tokens", None))
+        )
 
     if not args.command:
         _print_banner()
@@ -2159,7 +2161,7 @@ def main() -> None:
                         "built_at": stats.last_updated,
                     },
                 )
-                return _env.emit(env, "json")
+                return _env.emit(env, "json", getattr(args, "max_tokens", None))
             elif not args.quiet:
                 print(f"Nodes: {stats.total_nodes}")
                 print(f"Edges: {stats.total_edges}")

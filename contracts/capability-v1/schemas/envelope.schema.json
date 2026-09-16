@@ -48,6 +48,15 @@
           "type": "string",
           "description": "The documented estimator used, e.g. 'chars/4'.",
           "examples": ["chars/4"]
+        },
+        "budget_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Echoes the --max-tokens the caller asked for. Present only when a budget was given, so an agent can see the constraint was actually applied rather than assume it."
+        },
+        "over_budget": {
+          "type": "boolean",
+          "description": "The response still exceeds budget_tokens after semantic reduction reached its floor (data.summary is never dropped). Says so on the envelope's face rather than overrunning quietly, so 'it fits, or it admits it does not' stays true."
         }
       }
     },
@@ -82,8 +91,8 @@
       }
     },
     "search_mode": {
-      "enum": ["semantic", "keyword"],
-      "description": "Required on any search-like result. Degradation to keyword/FTS5 must never be silent."
+      "enum": ["semantic", "hybrid", "keyword"],
+      "description": "Required on any search-like result. Degradation to keyword/FTS5 must never be silent. Named for whether embeddings participated, not for which index answered: FTS5 reports as 'keyword', and anything unrecognised degrades to 'keyword' rather than over-claiming 'semantic'."
     },
     "error": {
       "type": "object",
@@ -118,6 +127,13 @@
     {
       "if": { "properties": { "truncated": { "const": true } }, "required": ["truncated"] },
       "then": { "required": ["truncated_reason"] }
+    },
+    {
+      "if": {
+        "properties": { "size": { "properties": { "over_budget": { "const": true } }, "required": ["over_budget"] } },
+        "required": ["size"]
+      },
+      "then": { "properties": { "size": { "required": ["budget_tokens"] } } }
     }
   ]
 }

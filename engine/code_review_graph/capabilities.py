@@ -160,7 +160,19 @@ def build_catalogue(
         "version": version,
         "conventions": {
             "format": "Every command accepts --format json|text. Agents should always pass json.",
-            "budget": "--max-tokens bounds the response. Truncation is semantic, never a byte cut.",
+            "budget": (
+                "--max-tokens bounds the response. Truncation is semantic, never a byte "
+                "cut: supporting context is dropped first, then the tail of the result "
+                "list; the summary is never dropped, so the response is always valid "
+                "JSON. Check size.over_budget — if true, not even the floor fit and you "
+                "should narrow the query rather than assume you saw everything."
+            ),
+            "truncation_signals": {
+                "truncated_reason": "max_tokens means narrow the query; page_limit means ask for the next page.",
+                "data.context_omitted": "Names supporting context withheld for budget, with a reason.",
+                "facet.omitted": "How many entries a facet withheld; its `total` still reports the true count.",
+                "size.over_budget": "The response exceeds --max-tokens even after reduction.",
+            },
             "exit_codes": {
                 "0": "success — an empty result is success, not an error",
                 "1": "usage error — the call was malformed",

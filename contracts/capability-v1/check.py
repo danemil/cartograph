@@ -20,6 +20,17 @@ A manifest maps abstract operations to whatever concrete command that tool uses:
                             "expect": "precondition"}
       }
     }
+
+An operation may also carry a token budget, which appends --max-tokens and
+turns on the budget checks:
+
+    "review-context-budget": {
+      "args": ["review-context", "--repo", "."],
+      "expect": "ok",
+      "budget": 1200,          # assert it fits, or declares over_budget
+      "expect_truncated": true, # assert the budget is what forced truncation
+      "expect_floor": "summary" # assert this data key survived the reduction
+    }
 """
 
 from __future__ import annotations
@@ -65,6 +76,9 @@ def run_operation(manifest: dict, op_name: str, op: dict, tmpdir: str, res: Resu
     args = [a.replace("{tmpdir}", tmpdir) for a in op["args"]]
     cwd = manifest.get("cwd")
     expect = op.get("expect", "ok")
+    budget = op.get("budget")
+    if budget is not None:
+        args += ["--max-tokens", str(budget)]
 
     # Every agent-facing invocation is json; text mode is for humans only.
     proc = subprocess.run(
@@ -111,6 +125,54 @@ def run_operation(manifest: dict, op_name: str, op: dict, tmpdir: str, res: Resu
     if doc.get("truncated"):
         res.check(f"{tag}: truncated implies truncated_reason",
                   bool(doc.get("truncated_reason")))
+
+    if budget is None:
+        return
+
+    # 8. The budget must be visible, so an agent can tell that it was applied
+    #    rather than assume it.
+    res.check(f"{tag}: size.budget_tokens echoes --max-tokens",
+              size.get("budget_tokens") == budget,
+              f"got {size.get('budget_tokens')}")
+
+    # 9. THE PROMISE: the response fits, or it says on its face that it does
+    #    not. A response that quietly overruns is the failure mode a token
+    #    budget exists to prevent.
+    tokens = size.get("tokens_estimated")
+    res.check(f"{tag}: fits the budget, or declares over_budget",
+              tokens <= budget or size.get("over_budget") is True,
+              f"tokens_estimated={tokens} > budget={budget} with over_budget unset")
+
+    # 10. Truncation is SEMANTIC. Parsing already proved the document is whole
+    #     (a byte cut would not parse); this proves the *cause* is reported as
+    #     the budget, so the agent narrows instead of paging.
+    if op.get("expect_truncated"):
+        res.check(f"{tag}: budget truncation is flagged", doc.get("truncated") is True)
+        res.check(f"{tag}: truncated_reason is max_tokens",
+                  doc.get("truncated_reason") == "max_tokens",
+                  f"got {doc.get('truncated_reason')!r}")
+
+    # 11. The floor holds: whatever else is shed, the part an agent always
+    #     needs must survive. A response without it is not a cheaper answer.
+    floor = op.get("expect_floor")
+    if floor:
+        data = doc.get("data") or {}
+        res.check(f"{tag}: {floor} survives the budget",
+                  bool(data.get(floor)),
+                  f"{floor} missing or empty under --max-tokens {budget}")
+
+    # 12. Paging must keep describing what was actually emitted, or a cursor
+    #     gets computed against a count that was never sent.
+    page = doc.get("page")
+    if isinstance(page, dict) and page.get("result_count") is not None:
+        data = doc.get("data") or {}
+        name = page.get("collection") or next(
+            (k for k in ("items", "results") if isinstance(data.get(k), list)), None
+        )
+        if name and isinstance(data.get(name), list):
+            res.check(f"{tag}: page.result_count matches what was emitted",
+                      page["result_count"] == len(data[name]),
+                      f"page says {page['result_count']}, data.{name} has {len(data[name])}")
 
 
 def main() -> int:
