@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "ok": true,
+  "tool": "status",
+  "data": {
+    "nodes": 0,
+    "edges": 0,
+    "files": 0,
+    "languages": [],
+    "last_updated": null,
+    "vcs": "git",
+    "built_on_branch": null,
+    "built_at_commit": null,
+    "current_branch": "<redacted>",
+    "current_sha": "<redacted>",
+    "svn_branch": null,
+    "svn_revision": null,
+    "stale": false
+  },
+  "truncated": false,
+  "provenance": {
+    "graph_sha": null,
+    "built_at": null
+  },
+  "size": {
+    "chars": 433,
+    "tokens_estimated": 109,
+    "estimator": "chars/4"
+  }
+}

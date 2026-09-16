@@ -1,0 +1,15 @@
+{
+  "name": "engine",
+  "command": [".venv/bin/python", "-m", "code_review_graph"],
+  "cwd": "engine",
+  "operations": {
+    "status": {
+      "args": ["status"],
+      "expect": "ok"
+    },
+    "status-no-graph": {
+      "args": ["status", "--repo", "{tmpdir}"],
+      "expect": "precondition"
+    }
+  }
+}

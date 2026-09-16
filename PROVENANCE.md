@@ -60,6 +60,8 @@ upstream so it can be offered as a PR on its own merits.
 | 4 | `repos` bypasses its own response envelope | code-review-graph | `cli.py:1593-1602` | not yet submitted |
 | 5 | `build` hook uses `&`, which does not detach on Windows | code-review-graph | `hooks/hooks.json` | not yet submitted |
 | 6 | `query` CLI exposes only 8 of 16 supported patterns | code-review-graph | `cli.py:1132-1140` | not yet submitted |
+| 7 | `tree_sitter_language_pack` imported at module scope for a single call site, putting ~351MB of grammars on the import path of every command — including `status`, which only reads SQLite | code-review-graph | `custom_languages.py:35` | **fixed locally**, not yet submitted |
+| 8 | Missing graph exits 1 (usage) when it is a precondition failure, and emits no machine-readable remediation | code-review-graph | `cli.py:1734-1742` | **fixed locally** (Cartograph-specific in part) |
 
 ## Design record
 

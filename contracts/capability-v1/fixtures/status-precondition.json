@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "ok": false,
+  "tool": "status",
+  "data": null,
+  "error": {
+    "code": "precondition",
+    "message": "No graph found at <path>/graph.db.",
+    "remediation": "carto build"
+  },
+  "size": {
+    "chars": 253,
+    "tokens_estimated": 64,
+    "estimator": "chars/4"
+  }
+}
