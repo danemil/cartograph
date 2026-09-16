@@ -131,11 +131,13 @@
         "review-context",
         "--repo",
         ".",
+        "--files",
+        "engine/code_review_graph/cli.py",
         "--limit",
         "5"
       ],
       "expect": "ok",
-      "budget": 1200,
+      "budget": 800,
       "expect_truncated": true,
       "expect_floor": "summary"
     },
@@ -144,6 +146,8 @@
         "review-context",
         "--repo",
         ".",
+        "--files",
+        "engine/code_review_graph/cli.py",
         "--limit",
         "5"
       ],
