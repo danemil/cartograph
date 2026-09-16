@@ -1,7 +1,7 @@
 ---
 tags: [handoff, cartograph]
 updated: 2026-09-16
-next-task: the skills pack
+next-task: rename pass, then carto-hook
 ---
 
 # CONTINUE HERE
@@ -13,8 +13,8 @@ below, then pick up **Next task**.
 
 ```bash
 cd /Users/emidan/work/cartograph
-engine/.venv/bin/python contracts/capability-v1/check.py --manifest engine/contract-manifest.json
-# expect: engine: 139/139 checks passed
+./scripts/verify.sh
+# expect: 139 envelope checks, 224 skills checks, 15/15 copies, "all green"
 ```
 
 If that passes, everything described here is true. If it does not, trust the
@@ -33,7 +33,7 @@ built into VS Code 1.135.0), installing from a private repo, default-deny egress
   map, 17 resolved tickets, the capability-contract ADR + 9 amendments, and a
   reconciliation that wins where parallel resolutions disagree.
 
-## Done so far (6 code commits)
+## Done so far (8 code commits)
 
 | Commit | What |
 |---|---|
@@ -43,19 +43,61 @@ built into VS Code 1.135.0), installing from a private repo, default-deny egress
 | `64a9431` | `carto capabilities` — catalogue generated from the argparse parser |
 | `478d3b8` | `carto review-context` + `carto review-summary` |
 | `9c4c3e8` | `--max-tokens` enforced with semantic truncation |
+| `38d5133` | Budget conformance cases pinned to explicit files |
+| `e837aa0` | The five-skill pack, verified against the CLI |
 
 The envelope contract is now fully honoured: everything it declares, it does.
+And the capability is reachable by an agent, not only at a terminal.
 
-## NEXT TASK — the skills pack
+## NEXT TASK — the rename pass
 
-Five skills are designed in the vault (`docs/decisions/T09-skills-resolution.md`),
-with `review-changes` drafted in full. **This is what makes any of the above
-reachable by an agent rather than only at a terminal** — until it exists,
-Cartograph is a CLI nobody's agent knows to call.
+`code_review_graph` -> `cartograph`. Cheap now, worse later. Agents act on
+strings literally, and several internal messages still tell them to run
+`code-review-graph build`. The remediation strings already say `carto build`,
+so the two disagree.
 
-Discovery is shared across all three hosts: `.github/skills/`, `.agents/skills/`,
-`.claude/skills/`. Skill bodies stay short and point at `carto capabilities`
-for the long tail — that is the whole reason the catalogue exists.
+Do it in one pass: package directory, imports, `prog=` in the parser, the
+conformance manifest's `command`, `scripts/verify.sh`, and the `PYTHONPATH`
+gotcha below. `./scripts/verify.sh` proves it landed — all three suites invoke
+the CLI by module name, so a missed spelling fails loudly rather than quietly.
+
+## The skills pack, and how it stays true
+
+Five skills in `skills/<name>/SKILL.md`, copied into `.claude/skills/`,
+`.github/skills/` and `.agents/skills/` by `scripts/install-skills.py`.
+Copies, not symlinks: git on Windows checks a symlink out as a text file
+containing its target path, which a host reads as a skill body and ignores.
+
+**Never hand-edit the copies** — edit `skills/`, then re-run the installer.
+`--check` catches stale, missing and orphaned copies and runs in `verify.sh`.
+
+`contracts/capability-v1/check_skills.py` extracts every `carto` line from
+every skill body and validates it against `carto capabilities`. This is not
+decoration: the designed skill drafts named five commands and flags that do
+not exist, and every one was caught this way rather than by review. If you add
+a skill, the checker holds it to the same standard automatically.
+
+## Contract gaps found while writing the skills
+
+Three commands sit outside the envelope contract. The skills route around them,
+so nothing is broken — but they are the remaining inconsistencies in the
+agent-facing surface, and they are why `carto capabilities` lists flags that
+differ between commands.
+
+- **`detect-changes`** emits raw JSON, not an envelope, and has no `--format`
+  or `--max-tokens`. `review-summary` covers the same ground inside the
+  contract, which is what the skills use instead.
+- **`dead-code`** emits raw JSON behind `--json` rather than `--format json`,
+  and **prints `INFO: ...` to stdout before it** — a direct violation of the
+  envelope's first rule, that stdout carries nothing but the envelope. An
+  agent parsing it gets a JSONDecodeError. `carto refactor dead_code` is the
+  enveloped path.
+- **`_PAGEABLE_COLLECTION["refactor"]`** is `"matches"`, but `refactor suggest`
+  returns `suggestions`. `fit()`'s sole-list fallback handles it, so nothing
+  misbehaves; the map is just incomplete.
+
+Retrofitting the first two is a small, well-understood job — the pattern is
+`_emit_tool_result`, already used by twelve commands.
 
 ## Known state you should not mistake for a regression
 
