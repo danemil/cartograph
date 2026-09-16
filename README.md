@@ -12,7 +12,7 @@ nothing on it.
 carto status                      # is there a graph here?
 carto query callers_of parse_args # who calls this?
 carto review-context --base main  # token-efficient review context
-carto mem search "auth refactor"  # what did we learn before?
+carto capabilities                # everything else, machine-readable
 ```
 
 ## Why
@@ -34,7 +34,7 @@ See [PROVENANCE.md](PROVENANCE.md).
 | `memory/` | TypeScript — observations and recall |
 | `contracts/capability-v1/` | The capability contract: schemas, fixtures, conformance suite |
 | `skills/` | The skills pack — one set, read by all three hosts |
-| `hooks/` | Hook manifests: Claude Code hand-written, Copilot generated |
+| `hooks/` | Host hook manifests (the logic lives in `engine/cartograph/hook.py`) |
 | `extension/` | VS Code extension — the primary delivery vehicle |
 | `installer/` | Bootstrap for the CLI hosts |
 | `scripts/` | Build and release tooling |
@@ -65,7 +65,8 @@ host — there is no per-host adapter on the query path.
   `3` internal.
 - In `json` mode **stdout carries nothing but the envelope**. Logs go to stderr.
 - Cursors are bound to the query hash *and* the provenance snapshot, so page two
-  cannot silently continue against a rebuilt graph.
+  cannot silently continue against a rebuilt graph. *(Specified; `next_cursor`
+  is still `null` — see Status.)*
 
 Schema: [`contracts/capability-v1/schemas/envelope.schema.json`](contracts/capability-v1/schemas/envelope.schema.json).
 
@@ -88,21 +89,35 @@ Some decisions worth knowing before changing things:
 - **Grammars are precompiled, never built at runtime.** The upstream memory tool
   shelled out to the `tree-sitter` CLI to compile grammars from C, requiring a
   toolchain no locked-down machine has. One parser, two consumers.
-- **Hooks always detach.** Copilot has no async hook type and a 30s default, and
-  `process.exit()` kills in-flight work. Every capture hook hands off to
-  `carto-hook --detach` and exits.
+- **Hooks always detach.** Copilot has no async hook type and a 30s default,
+  against a build that takes minutes. Hosts call `carto hook <event>`, which
+  hands off through one `spawn_detached` and returns in ~0.2s. A trailing `&`
+  is the reflex and it backgrounds nothing on Windows.
 - **Degradation is always visible.** `search_mode`, `summary_source`, the
   community algorithm name. An agent must never mistake keyword results for
   semantic ones.
 
 ## Status
 
-Scaffolded. Nothing is implemented yet.
+**`engine/` works. `memory/` has not been started** — the build order is
+engine-first, because the memory side compiled tree-sitter grammars from C at
+runtime and will call the engine's precompiled parser instead.
 
-First milestone — the vertical slice, in this order:
-`carto status` → `carto query` → `carto review-context`.
-Envelope first on the smallest surface, then breadth (the CLI currently reaches
-only 8 of 16 query patterns), then the headline capability.
+Working today: the capability envelope on ~25 commands, all 16 query patterns,
+`carto capabilities`, `carto review-context` / `review-summary`, `--max-tokens`
+with semantic truncation, the five-skill pack, and `carto hook` with a
+cross-platform detached launcher.
+
+Not yet: cursors (`next_cursor` is honestly `null`), `carto mem` anything, the
+`.vsix`, and the installer.
+
+Verify any of this rather than trusting it:
+
+```bash
+./scripts/verify.sh     # envelope conformance + skills-match-CLI + install sync
+```
+
+`docs/CONTINUE.md` is the resumption point and says what is next.
 
 ## Licence
 
