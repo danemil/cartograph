@@ -1,0 +1,20 @@
+# Build artifacts — the engine binary is NEVER committed (see PROVENANCE.md).
+# It ships as a .vsix asset and a Release asset.
+dist/
+build/
+*.vsix
+*.pyc
+__pycache__/
+node_modules/
+.venv/
+venv/
+*.egg-info/
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+.cartograph/
+
+# OS
+.DS_Store

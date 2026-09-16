@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cartograph.local/contracts/capability-v1/envelope.schema.json",
+  "title": "Cartograph capability envelope v1",
+  "description": "The response every `carto` command emits on stdout under --format json. Emitted on failure too, with ok:false. Nothing but this document may be written to stdout in json mode; logs go to stderr.",
+  "type": "object",
+  "required": ["schema", "ok", "tool"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": 1,
+      "description": "Envelope version. Lets skills pin behaviour across upgrades."
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "Whether the command succeeded. Empty results are a SUCCESS (ok:true), not an error."
+    },
+    "tool": {
+      "type": "string",
+      "description": "The logical operation, e.g. review-context. Stable across CLI renames.",
+      "pattern": "^[a-z][a-z0-9-]*(\\s[a-z][a-z0-9-]*)*$"
+    },
+    "data": {
+      "description": "Typed per tool — never an opaque blob. List-shaped results use {items, summary?, facets?}.",
+      "type": ["object", "null"]
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "This response was deliberately incomplete. Truncation is SEMANTIC (lowest-ranked results dropped), never a byte cut."
+    },
+    "truncated_reason": {
+      "enum": ["max_tokens", "page_limit", "policy"],
+      "description": "Tells the agent whether to narrow the query (max_tokens) or request the next page (page_limit)."
+    },
+    "size": {
+      "type": "object",
+      "required": ["chars", "tokens_estimated", "estimator"],
+      "additionalProperties": false,
+      "description": "A budget signal, not a tokenizer match for any specific model.",
+      "properties": {
+        "chars": { "type": "integer", "minimum": 0 },
+        "tokens_estimated": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Conservative and monotonic with output size, covering the serialised envelope."
+        },
+        "estimator": {
+          "type": "string",
+          "description": "The documented estimator used, e.g. 'chars/4'.",
+          "examples": ["chars/4"]
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "description": "What state produced this answer. Cursors are bound to it so a page cannot silently continue against a rebuilt graph.",
+      "properties": {
+        "graph_sha": { "type": ["string", "null"] },
+        "built_at": { "type": ["string", "null"], "format": "date-time" },
+        "schema_version": { "type": ["integer", "null"] }
+      }
+    },
+    "page": {
+      "type": "object",
+      "required": ["limit", "has_more"],
+      "additionalProperties": false,
+      "description": "Present on list-shaped results. At most ONE collection per envelope is pageable — a cursor could not be interpreted unambiguously otherwise.",
+      "properties": {
+        "collection": {
+          "type": "string",
+          "description": "Which collection pages, when data is composite rather than a plain item list. Omit when paging data.items.",
+          "examples": ["impacted_nodes", "members", "steps"]
+        },
+        "limit": { "type": "integer", "minimum": 1 },
+        "next_cursor": {
+          "type": ["string", "null"],
+          "description": "Opaque, versioned, and bound to the query hash plus the provenance snapshot."
+        },
+        "has_more": { "type": "boolean" },
+        "result_count": { "type": "integer", "minimum": 0 },
+        "total_estimated": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "search_mode": {
+      "enum": ["semantic", "keyword"],
+      "description": "Required on any search-like result. Degradation to keyword/FTS5 must never be silent."
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": ["usage", "precondition", "internal"],
+          "description": "Mirrors the exit code: 1 usage, 2 precondition, 3 internal."
+        },
+        "message": { "type": "string" },
+        "remediation": {
+          "type": "string",
+          "description": "Required for precondition errors. An actionable command that lets the agent self-heal, e.g. 'run: carto build'.",
+          "examples": ["run: carto build"]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "ok": { "const": false } }, "required": ["ok"] },
+      "then": { "required": ["error"] }
+    },
+    {
+      "if": {
+        "properties": { "error": { "properties": { "code": { "const": "precondition" } }, "required": ["code"] } },
+        "required": ["error"]
+      },
+      "then": { "properties": { "error": { "required": ["code", "message", "remediation"] } } }
+    },
+    {
+      "if": { "properties": { "truncated": { "const": true } }, "required": ["truncated"] },
+      "then": { "required": ["truncated_reason"] }
+    }
+  ]
+}
