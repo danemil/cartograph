@@ -122,3 +122,31 @@ def crg_home() -> Path:
     if override:
         return Path(override).expanduser()
     return _DEFAULT_CRG_HOME
+
+
+#: Every query pattern ``tools.query_graph`` dispatches, in the order its
+#: docstring lists them.
+#:
+#: This is the single source of truth. It lives here — rather than in an
+#: argparse ``choices=[...]`` list — because the CLI previously hard-coded only
+#: eight of them, leaving half the query surface unreachable from the command
+#: line while the engine supported it the whole time. ``tools.query_graph``
+#: validates against this tuple, so the two cannot drift apart again.
+QUERY_PATTERNS: tuple[str, ...] = (
+    "callers_of",
+    "references_to",
+    "callees_of",
+    "imports_of",
+    "importers_of",
+    "children_of",
+    "tests_for",
+    "inheritors_of",
+    "triggers_of",
+    "triggered_by",
+    "publishers_of",
+    "listeners_of",
+    "handlers_of",
+    "endpoints_for",
+    "consumers_of",
+    "file_summary",
+)

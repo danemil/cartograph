@@ -49,6 +49,8 @@ from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Iterable, TypedDict
 
+from .constants import QUERY_PATTERNS
+
 logger = logging.getLogger(__name__)
 
 # Shared platform choices for install and init commands
@@ -609,6 +611,11 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
             pattern=args.pattern,
             target=args.target,
             repo_root=root,
+            # Previously dropped on the floor: the CLI accepted neither, so
+            # there was no way to control detail or result count from the
+            # command line even though the tool has always supported both.
+            detail_level=args.detail_level,
+            max_results=args.max_results,
         )
     elif args.command == "impact":
         result = tools.get_impact_radius(
@@ -674,7 +681,63 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
             file_pattern=args.path,
             repo_root=root,
         )
-    print(json.dumps(result, indent=2, default=str))
+    _emit_tool_result(args, result)
+
+
+#: Result keys that are list-shaped and therefore the natural pageable
+#: collection for their command. Contract amendment A8 allows at most ONE
+#: pageable collection per envelope — a cursor could not be interpreted
+#: unambiguously otherwise — so this maps each command to its single one.
+_PAGEABLE_COLLECTION = {
+    "query": "results",
+    "impact": "impacted_nodes",
+    "search": "results",
+    "flows": "flows",
+    "communities": "communities",
+    "large-functions": "functions",
+    "refactor": "matches",
+}
+
+
+def _emit_tool_result(args, result: dict) -> None:
+    """Wrap a graph-tool result in the capability envelope and print it.
+
+    This is the shared emit path for query, impact, search, flows, communities,
+    architecture, large-functions and refactor, so the envelope retrofit lands
+    on all of them at once.
+    """
+    from . import envelope as _env
+
+    fmt = getattr(args, "output_format", None) or "json"
+    command = args.command
+
+    page = None
+    key = _PAGEABLE_COLLECTION.get(command)
+    if key and isinstance(result, dict) and isinstance(result.get(key), list):
+        items = result[key]
+        limit = getattr(args, "max_results", None) or len(items)
+        page = _env.Page(
+            limit=limit,
+            # The tool truncates at max_results, so a full page means there may
+            # be more. Cursor support lands with the paging implementation;
+            # has_more is honest about what we can currently tell.
+            has_more=len(items) >= limit,
+            result_count=len(items),
+            collection=None if key == "results" else key,
+        )
+
+    # The tool reports its own truncation; surface it rather than inventing one.
+    truncated = bool(result.get("truncated")) if isinstance(result, dict) else False
+
+    env = _env.ok(
+        command,
+        data=result,
+        page=page,
+        truncated=truncated,
+        truncated_reason="page_limit" if truncated else None,
+        search_mode=result.get("search_mode") if isinstance(result, dict) else None,
+    )
+    raise SystemExit(_env.emit(env, fmt))
 
 
 def main() -> None:
@@ -1143,19 +1206,29 @@ def main() -> None:
     query_cmd = sub.add_parser("query", help="Query graph relationships")
     query_cmd.add_argument(
         "pattern",
-        choices=[
-            "callers_of",
-            "callees_of",
-            "imports_of",
-            "importers_of",
-            "children_of",
-            "tests_for",
-            "inheritors_of",
-            "file_summary",
-        ],
+        # All 16 patterns dispatched by tools.query_graph. The CLI previously
+        # hard-coded only 8 of them here, making half the query surface
+        # unreachable from the command line even though the engine supported it.
+        choices=QUERY_PATTERNS,
+        metavar="PATTERN",
+        help="One of: " + ", ".join(QUERY_PATTERNS),
     )
     query_cmd.add_argument("target", help="Node name, qualified name, or file path")
     query_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+    query_cmd.add_argument(
+        "--detail-level",
+        choices=["minimal", "standard", "full"],
+        default="standard",
+        dest="detail_level",
+        help="How much detail per result",
+    )
+    query_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        dest="max_results",
+        help="Maximum results to return",
+    )
 
     impact_cmd = sub.add_parser("impact", help="Analyze the blast radius of changes")
     impact_cmd.add_argument(
@@ -1242,6 +1315,27 @@ def main() -> None:
     )
     refactor_cmd.add_argument("--path", default=None, help="File-path substring filter")
     refactor_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+
+    # Every graph-tool command shares one emit path (_emit_tool_result), so the
+    # contract flags are attached in one place rather than repeated ten times.
+    for _graph_cmd in (
+        query_cmd, impact_cmd, search_cmd, flows_cmd, flow_cmd,
+        communities_cmd, community_cmd, architecture_cmd, large_cmd, refactor_cmd,
+    ):
+        _graph_cmd.add_argument(
+            "--format",
+            choices=["json", "text"],
+            default="json",
+            dest="output_format",
+            help="Output format (these commands default to json — they are agent-facing)",
+        )
+        _graph_cmd.add_argument(
+            "--max-tokens",
+            type=int,
+            default=None,
+            dest="max_tokens",
+            help="Token budget for the response",
+        )
 
     # serve / mcp
     serve_cmd = sub.add_parser(
@@ -1411,11 +1505,24 @@ def main() -> None:
             repo_root = find_project_root()
         db_path = get_db_path(repo_root)
         if not db_path.exists():
-            print(
-                f"No graph found at {db_path}. Run `code-review-graph build` first.",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
+            # Same precondition contract as the other guard: exit 2, and in json
+            # mode an envelope carrying a machine-readable remediation. This is
+            # the graph-tool path (query, impact, search, flows, …), which is
+            # the one agents actually hit most often.
+            from . import envelope as _env
+
+            message = f"No graph found at {db_path}."
+            remediation = "carto build"
+            if getattr(args, "output_format", "json") == "json":
+                env = _env.error(
+                    args.command,
+                    _env.Exit.PRECONDITION,
+                    message,
+                    remediation=remediation,
+                )
+                raise SystemExit(_env.emit(env, "json"))
+            print(f"{message} Run `{remediation}` first.", file=sys.stderr)
+            raise SystemExit(_env.Exit.PRECONDITION)
         _run_graph_tool_command(args, repo_root)
         return
 
