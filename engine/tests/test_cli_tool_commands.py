@@ -89,6 +89,9 @@ from cartograph import cli
             },
         ),
         (
+            # `refactor` gained --limit for the same reason `query` gained its
+            # flags: the tool always bounded its response, and the CLI gave
+            # the caller no way to say how large that bound should be.
             ["refactor", "dead_code", "--kind", "Function", "--path", "src/"],
             "refactor_func",
             {
@@ -97,6 +100,7 @@ from cartograph import cli
                 "new_name": None,
                 "kind": "Function",
                 "file_pattern": "src/",
+                "max_results": 50,
             },
         ),
     ],
@@ -147,11 +151,23 @@ def test_tool_command_forwards_typed_arguments_as_json(
         ["search", "query", "--limit", "0"],
     ],
 )
-def test_tool_commands_reject_invalid_or_ambiguous_arguments(arguments):
+def test_tool_commands_reject_invalid_or_ambiguous_arguments(arguments, capsys):
+    """A malformed call is USAGE (exit 1) and says so in an envelope.
+
+    This asserted exit 2 and passed, because 2 is what argparse does — but 2
+    is PRECONDITION here, so an agent read a bad flag value as "no graph",
+    built one it did not need, and retried the identical bad call. The exit
+    code is now 1 and stdout carries the usage envelope, so stderr prose is no
+    longer the only account of what went wrong.
+    """
     with patch.object(sys, "argv", ["cartograph", *arguments]):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
-    assert exc_info.value.code == 2
+    assert exc_info.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "usage"
+    assert payload["tool"] == arguments[0]
 
 
 def test_tool_command_missing_graph_reports_a_recoverable_precondition(

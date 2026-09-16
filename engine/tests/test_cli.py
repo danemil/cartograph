@@ -317,6 +317,18 @@ class TestBuildUpdateCommands:
         assert "Incremental:" not in out
 
 
+def _detect_changes_payload(out: str) -> dict:
+    """The analysis dict, unwrapped from the capability envelope.
+
+    `detect-changes` used to print the analysis on stdout as bare JSON. It now
+    speaks the envelope like every other agent-facing command, so the analysis
+    is `data` and the command leaves through SystemExit rather than returning.
+    These tests assert the analysis, not the transport, so they reach through
+    it here rather than being loosened.
+    """
+    return json.loads(out[out.index("{"):])["data"]
+
+
 class TestDetectChangesCommand:
     def test_churn_flag_is_forwarded_to_analysis(self, tmp_path, capsys):
         repo = tmp_path / "repo"
@@ -344,9 +356,12 @@ class TestDetectChangesCommand:
                             "cartograph.changes.analyze_changes",
                             return_value={"summary": "with churn"},
                         ) as analyze:
-                            cli.main()
+                            with pytest.raises(SystemExit) as exc_info:
+                                cli.main()
 
-        assert json.loads(capsys.readouterr().out)["summary"] == "with churn"
+        assert exc_info.value.code == 0
+        payload = _detect_changes_payload(capsys.readouterr().out)
+        assert payload["summary"] == "with churn"
         assert analyze.call_args.kwargs["include_churn"] is True
 
     def test_brief_output_includes_token_savings_panel(self, tmp_path, capsys):
@@ -418,9 +433,10 @@ class TestDetectChangesCommand:
                             "cartograph.changes.analyze_changes",
                             return_value={"summary": "json summary"},
                         ):
-                            cli.main()
+                            with pytest.raises(SystemExit):
+                                cli.main()
 
-        result = json.loads(capsys.readouterr().out)
+        result = _detect_changes_payload(capsys.readouterr().out)
         assert set(result["context_savings"]) == {
             "estimated",
             "saved_tokens",
@@ -499,10 +515,10 @@ class TestDetectChangesEndToEnd:
 
         argv = ["cartograph", "detect-changes", "--repo", str(repo)]
         with patch.object(sys, "argv", argv):
-            cli.main()
+            with pytest.raises(SystemExit):
+                cli.main()
 
-        out = capsys.readouterr().out
-        result = json.loads(out[out.index("{"):])
+        result = _detect_changes_payload(capsys.readouterr().out)
 
         # The diff must map to >0 functions — not silently come up empty.
         names = {f["name"] for f in result["changed_functions"]}

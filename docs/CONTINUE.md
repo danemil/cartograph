@@ -14,7 +14,7 @@ below, then pick up **Next task**.
 ```bash
 cd /Users/emidan/work/cartograph
 ./scripts/verify.sh
-# expect: 139 envelope checks, 224 skills checks, 15/15 copies, "all green"
+# expect: 196 envelope checks, 224 skills checks, 20/20 copies, "all green"
 ```
 
 If that passes, everything described here is true. If it does not, trust the

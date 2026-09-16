@@ -284,16 +284,26 @@ def render_no_changes() -> str:
 
 
 def load_report(text: str) -> dict[str, Any] | None:
-    """Parse detect-changes output; None when it is not a JSON object.
+    """Parse detect-changes output; None when there is no analysis to render.
 
-    ``detect-changes`` prints the plain string ``No changes detected.``
-    instead of JSON when the diff is empty, so non-JSON input is expected.
+    ``detect-changes`` now speaks the capability envelope, so the analysis
+    arrives as ``data``; the pre-envelope shape is still accepted because a
+    workflow may be pinned to an older engine. An empty change set is a
+    success envelope whose payload is a summary and nothing else, which has
+    nothing to render — the same case the plain ``No changes detected.`` line
+    used to be.
     """
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         return None
     if not isinstance(data, dict):
+        return None
+    if data.get("schema") == 1 and "ok" in data:
+        if not data.get("ok"):
+            return None
+        data = data.get("data") or {}
+    if not isinstance(data, dict) or "changed_functions" not in data:
         return None
     return data
 

@@ -31,6 +31,18 @@ turns on the budget checks:
       "expect_truncated": true, # assert the budget is what forced truncation
       "expect_floor": "summary" # assert this data key survived the reduction
     }
+
+An operation may also pin the paging block, which is how a zero-result case
+proves it does not advertise a page that is not there:
+
+    "search-zero-results": {
+      "args": ["search", "no_such_symbol", "--repo", ".", "--limit", "7"],
+      "expect": "ok",
+      "expect_page": {"limit": 7, "has_more": false, "result_count": 0}
+    }
+
+``"expect_page": false`` asserts the opposite — that no page block is emitted,
+which is the honest answer for a command with no result cap.
 """
 
 from __future__ import annotations
@@ -113,6 +125,22 @@ def run_operation(manifest: dict, op_name: str, op: dict, tmpdir: str, res: Resu
         rem = doc.get("error", {}).get("remediation")
         res.check(f"{tag}: precondition carries a remediation", bool(rem),
                   "missing error.remediation")
+
+    # 5b. Paging must describe the page the CALLER asked for. A `limit` echoed
+    #     back as the number of rows that happened to come back makes
+    #     `has_more` the tautology len >= len, so an empty result advertises a
+    #     next page that does not exist — and the agent pages forever.
+    want_page = op.get("expect_page")
+    if want_page is not None:
+        page = doc.get("page")
+        if want_page is False:
+            res.check(f"{tag}: no page block", page is None, f"got {page}")
+        else:
+            res.check(f"{tag}: carries a page block", isinstance(page, dict))
+            for field, value in (want_page or {}).items():
+                res.check(f"{tag}: page.{field} == {value!r}",
+                          isinstance(page, dict) and page.get(field) == value,
+                          f"got {page.get(field)!r}" if isinstance(page, dict) else "no page")
 
     # 6. The size block must actually describe the payload.
     size = doc.get("size", {})

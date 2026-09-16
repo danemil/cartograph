@@ -99,7 +99,11 @@ def test_registry_pointed_data_dir_is_not_created(
     exc_info = _run_cli([command, "--repo", str(repo)])
 
     assert exc_info.value.code == 2  # precondition, not usage: no graph
-    assert "No graph found" in capsys.readouterr().err
+    # detect-changes defaults to json now that it is inside the contract,
+    # so its precondition arrives as an envelope on stdout rather than as
+    # prose on stderr. Either way it must name the missing graph.
+    captured = capsys.readouterr()
+    assert "No graph found" in captured.err + captured.out
     assert not pointed.exists()
     assert registry_file.read_bytes() == before
     assert not (repo / ".cartograph").exists()
@@ -119,7 +123,11 @@ def test_deep_missing_crg_data_dir_tree_not_created(
     exc_info = _run_cli([command, "--repo", str(repo)])
 
     assert exc_info.value.code == 2  # precondition, not usage: no graph
-    assert "No graph found" in capsys.readouterr().err
+    # detect-changes defaults to json now that it is inside the contract,
+    # so its precondition arrives as an envelope on stdout rather than as
+    # prose on stderr. Either way it must name the missing graph.
+    captured = capsys.readouterr()
+    assert "No graph found" in captured.err + captured.out
     assert not (tmp_path / "a").exists()
 
 
@@ -274,5 +282,9 @@ def test_detect_changes_no_graph_real_git_repo_with_commit(
     exc_info = _run_cli(["detect-changes", "--repo", str(repo)])
 
     assert exc_info.value.code == 2  # precondition, not usage: no graph
-    assert "No graph found" in capsys.readouterr().err
+    # detect-changes defaults to json now that it is inside the contract,
+    # so its precondition arrives as an envelope on stdout rather than as
+    # prose on stderr. Either way it must name the missing graph.
+    captured = capsys.readouterr()
+    assert "No graph found" in captured.err + captured.out
     assert not (repo / ".cartograph").exists()

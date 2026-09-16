@@ -205,8 +205,12 @@ def test_read_only_commands_missing_graph_do_not_create_empty_db(
                 cli.main()
 
     assert exc_info.value.code == 2  # precondition, not usage: no graph
-    err = capsys.readouterr().err
-    assert "No graph found" in err
+    # detect-changes defaults to json now that it is inside the contract, so
+    # its precondition arrives as an envelope on stdout; the text-default
+    # commands still put prose on stderr. What this test is about is that the
+    # graph is named as missing and nothing is materialized either way.
+    captured = capsys.readouterr()
+    assert "No graph found" in captured.err + captured.out
     assert not data_dir.exists()
     assert not (repo / ".cartograph").exists()
 
@@ -478,9 +482,21 @@ def test_dead_code_json_limit_is_machine_readable(tmp_path, monkeypatch, capsys)
                 "cartograph.refactor.find_dead_code",
                 return_value=_dead_items(),
             ):
-                cli.main()
+                with pytest.raises(SystemExit) as exc_info:
+                    cli.main()
 
-    assert json.loads(capsys.readouterr().out) == _dead_items()[:1]
+    # Was a bare JSON array, which the envelope schema does not permit as
+    # `data` and which carried no size, provenance or paging. `--json` now
+    # means here what it means everywhere else, and `--limit` is reported as
+    # the page it actually is.
+    assert exc_info.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tool"] == "dead-code"
+    assert payload["data"]["items"] == _dead_items()[:1]
+    assert payload["data"]["total"] == len(_dead_items())
+    assert payload["page"]["limit"] == 1
+    assert payload["page"]["result_count"] == 1
+    assert payload["page"]["has_more"] is True
 
 
 @pytest.mark.parametrize(
@@ -490,12 +506,20 @@ def test_dead_code_json_limit_is_machine_readable(tmp_path, monkeypatch, capsys)
         ["--limit", "-1"],
     ],
 )
-def test_dead_code_rejects_invalid_filters(extra_args):
-    argv = ["cartograph", "dead-code", *extra_args]
+def test_dead_code_rejects_invalid_filters(extra_args, capsys):
+    """A rejected filter is USAGE (exit 1), not the precondition exit 2.
+
+    argparse's own exit 2 collides with PRECONDITION in this protocol, which
+    told an agent to run `carto build` over a filter it had merely misspelled.
+    """
+    argv = ["cartograph", "dead-code", *extra_args, "--format", "json"]
     with patch.object(sys, "argv", argv):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
-    assert exc_info.value.code == 2
+    assert exc_info.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tool"] == "dead-code"
+    assert payload["error"]["code"] == "usage"
 
 
 def test_dead_code_missing_graph_exits_nonzero(tmp_path, monkeypatch, capsys):

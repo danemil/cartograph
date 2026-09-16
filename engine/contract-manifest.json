@@ -126,6 +126,90 @@
       ],
       "expect": "ok"
     },
+    "search-zero-results": {
+      "args": [
+        "search",
+        "zzz_no_such_symbol_zzz",
+        "--repo",
+        ".",
+        "--limit",
+        "7"
+      ],
+      "expect": "ok",
+      "expect_page": {
+        "limit": 7,
+        "has_more": false,
+        "result_count": 0
+      }
+    },
+    "usage-bad-flag-value": {
+      "args": [
+        "search",
+        "alpha",
+        "--repo",
+        ".",
+        "--limit",
+        "0"
+      ],
+      "expect": "usage"
+    },
+    "usage-bad-positional-choice": {
+      "args": [
+        "query",
+        "not_a_pattern",
+        "foo",
+        "--repo",
+        "."
+      ],
+      "expect": "usage"
+    },
+    "detect-changes": {
+      "args": [
+        "detect-changes",
+        "--repo",
+        "."
+      ],
+      "expect": "ok",
+      "expect_page": false
+    },
+    "dead-code": {
+      "args": [
+        "dead-code",
+        "--repo",
+        ".",
+        "--limit",
+        "5"
+      ],
+      "expect": "ok",
+      "expect_page": {
+        "limit": 5,
+        "result_count": 5
+      }
+    },
+    "dead-code-no-graph": {
+      "args": [
+        "dead-code",
+        "--repo",
+        "{tmpdir}"
+      ],
+      "expect": "precondition"
+    },
+    "refactor-suggest": {
+      "args": [
+        "refactor",
+        "suggest",
+        "--repo",
+        ".",
+        "--limit",
+        "3"
+      ],
+      "expect": "ok",
+      "expect_page": {
+        "collection": "suggestions",
+        "limit": 3,
+        "result_count": 3
+      }
+    },
     "review-context-budget": {
       "args": [
         "review-context",

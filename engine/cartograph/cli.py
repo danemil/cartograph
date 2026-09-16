@@ -543,6 +543,76 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _usage_format(parser: argparse.ArgumentParser) -> str:
+    """The format a usage error should answer in, before anything is parsed.
+
+    An explicit ``--format``/``--json`` on the command line wins; otherwise the
+    parser's own ``--format`` default does, so a malformed call answers in the
+    same mode the successful call would have. A command with no ``--format`` at
+    all is a human command, and prose is the right answer for it.
+    """
+    argv = sys.argv[1:]
+    for index, token in enumerate(argv):
+        if token == "--json":
+            return "json"
+        if token.startswith("--format="):
+            return token.split("=", 1)[1]
+        if token == "--format" and index + 1 < len(argv):
+            return argv[index + 1]
+    for action in parser._actions:  # noqa: SLF001 — argparse exposes no public API
+        if action.dest == "output_format":
+            return action.default or "text"
+    return "text"
+
+
+class _ContractParser(argparse.ArgumentParser):
+    """An ArgumentParser whose usage errors stay inside the capability contract.
+
+    argparse's own ``error()`` exits **2** with prose on stderr and an empty
+    stdout. In this protocol exit 2 is PRECONDITION, so an agent reads a
+    malformed call as "no graph — run carto build", spends minutes building a
+    graph it does not need, retries the identical bad call, and loops. A usage
+    error is exit 1 and says so on stdout, in the envelope, where the agent is
+    already looking.
+
+    Subparsers inherit this class: ``add_subparsers`` defaults ``parser_class``
+    to ``type(self)``, which was verified against this argparse rather than
+    assumed, for both the subcommands and ``daemon``'s nested ones.
+
+    ``--help`` and ``--version`` do not come through here — they are actions
+    that call ``exit(0)`` directly — so they keep exiting 0 without an envelope.
+    """
+
+    def _tool_name(self) -> str:
+        # prog is "carto" on the top-level parser and "carto search" on a
+        # subparser, so the logical operation is everything after the binary.
+        words = self.prog.split()[1:]
+        if words:
+            return " ".join(words)
+        # A top-level error ("unrecognized arguments") still happened during
+        # some subcommand, and `tool` is how an agent correlates the failure
+        # with the call it made.
+        choices: set[str] = set()
+        for action in self._actions:  # noqa: SLF001
+            if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001
+                choices = set(action.choices)
+        for token in sys.argv[1:]:
+            if not token.startswith("-") and token in choices:
+                return token
+        return self.prog
+
+    def error(self, message: str):  # noqa: D102 — argparse's own contract
+        from . import envelope as _env
+
+        env = _env.error(self._tool_name(), _env.Exit.USAGE, message)
+        fmt = _usage_format(self)
+        if fmt != "json":
+            # Text mode keeps argparse's usage block, which is the part a
+            # human needs; emit() then writes the message to stderr.
+            self.print_usage(sys.stderr)
+        raise SystemExit(_env.emit(env, fmt))
+
+
 _GRAPH_TOOL_COMMANDS = {
     "review-context",
     "review-summary",
@@ -713,6 +783,7 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
             kind=args.kind,
             file_pattern=args.path,
             repo_root=root,
+            max_results=args.max_results,
         )
     _emit_tool_result(args, result)
 
@@ -720,49 +791,85 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
 #: Result keys that are list-shaped and therefore the natural pageable
 #: collection for their command. Contract amendment A8 allows at most ONE
 #: pageable collection per envelope — a cursor could not be interpreted
-#: unambiguously otherwise — so this maps each command to its single one.
-_PAGEABLE_COLLECTION = {
+#: unambiguously otherwise — so this names, per command, the candidates from
+#: which exactly one is chosen at emit time. A command whose result shape
+#: depends on its mode (`refactor`) needs the alternatives spelled out; a
+#: single-key entry is written as a one-element tuple so there is one rule.
+_PAGEABLE_COLLECTION: dict[str, tuple[str, ...]] = {
     # review-context pages `items` (the impacted-node work queue) — the one
     # collection A8 permits. Everything else lives bounded in facets.
-    "review-context": "items",
-    "query": "results",
-    "impact": "impacted_nodes",
-    "search": "results",
-    "flows": "flows",
-    "communities": "communities",
-    "large-functions": "functions",
-    "refactor": "matches",
+    "review-context": ("items",),
+    "query": ("results",),
+    "impact": ("impacted_nodes",),
+    "search": ("results",),
+    "flows": ("flows",),
+    "communities": ("communities",),
+    "large-functions": ("results",),
+    # One key per refactor mode: rename returns edits, dead_code returns
+    # dead_code, suggest returns suggestions. There is never more than one in a
+    # response, so A8 still holds.
+    "refactor": ("edits", "dead_code", "suggestions"),
+    "dead-code": ("items",),
 }
+
+#: Where argparse puts a result cap. The flag is spelled `--limit` on some
+#: commands and `--max-results` on others, and the dest follows the spelling,
+#: so the one thing `page.limit` must report — what the CALLER asked for — is
+#: not reliably at any single attribute name.
+_LIMIT_DESTS = ("max_results", "limit")
+
+
+def _page_for(args, command: str, result: dict) -> "object | None":
+    """Describe the one pageable collection, or None when nothing pages.
+
+    A page exists only where a cap does. Falling back to ``len(items)`` made
+    ``has_more`` the tautology ``len >= len`` — always true, so an empty result
+    advertised a next page — and put ``limit: 0`` on the wire, which the schema
+    forbids outright.
+    """
+    from . import envelope as _env
+
+    if not isinstance(result, dict):
+        return None
+    key = next(
+        (k for k in _PAGEABLE_COLLECTION.get(command, ())
+         if isinstance(result.get(k), list)),
+        None,
+    )
+    limit = next(
+        (v for v in (getattr(args, d, None) for d in _LIMIT_DESTS) if v),
+        None,
+    )
+    if key is None or not limit:
+        return None
+    items = result[key]
+    return _env.Page(
+        limit=limit,
+        # The tool truncates at the cap, so a full page means there may be
+        # more — and anything short of it is the whole answer. Cursor support
+        # lands with the paging implementation; this is honest about what can
+        # currently be told.
+        has_more=len(items) >= limit,
+        result_count=len(items),
+        # `collection` names the pageable list only when it is NOT the
+        # conventional `data.items`. Emitting "items" would be noise.
+        collection=None if key in ("items", "results") else key,
+    )
 
 
 def _emit_tool_result(args, result: dict) -> None:
     """Wrap a graph-tool result in the capability envelope and print it.
 
     This is the shared emit path for query, impact, search, flows, communities,
-    architecture, large-functions and refactor, so the envelope retrofit lands
-    on all of them at once.
+    architecture, large-functions, refactor, detect-changes and dead-code, so
+    the envelope retrofit lands on all of them at once.
     """
     from . import envelope as _env
 
     fmt = getattr(args, "output_format", None) or "json"
     command = args.command
 
-    page = None
-    key = _PAGEABLE_COLLECTION.get(command)
-    if key and isinstance(result, dict) and isinstance(result.get(key), list):
-        items = result[key]
-        limit = getattr(args, "max_results", None) or len(items)
-        page = _env.Page(
-            limit=limit,
-            # The tool truncates at max_results, so a full page means there may
-            # be more. Cursor support lands with the paging implementation;
-            # has_more is honest about what we can currently tell.
-            has_more=len(items) >= limit,
-            result_count=len(items),
-            # `collection` names the pageable list only when it is NOT the
-            # conventional `data.items`. Emitting "items" would be noise.
-            collection=None if key in ("items", "results") else key,
-        )
+    page = _page_for(args, command, result)
 
     # The tool reports its own truncation; surface it rather than inventing one.
     truncated = bool(result.get("truncated")) if isinstance(result, dict) else False
@@ -778,10 +885,25 @@ def _emit_tool_result(args, result: dict) -> None:
     raise SystemExit(_env.emit(env, fmt, getattr(args, "max_tokens", None)))
 
 
+def _normalise_output_format(args) -> None:
+    """Settle ``--format`` once, before anything dispatches on it.
+
+    Two rules every command agrees on: ``--json`` is the deprecated spelling of
+    ``--format json``, and a command whose default depends on another flag
+    resolves it here rather than at each use site.
+    """
+    if getattr(args, "json_output", False):
+        args.output_format = "json"
+    elif getattr(args, "output_format", "") is None:
+        # detect-changes: --brief is a rendered panel, so it means text.
+        # Without it the command stays machine-first, as it always has been.
+        args.output_format = "text" if getattr(args, "brief", False) else "json"
+
+
 def main() -> None:
     """Main CLI entry point."""
     _configure_utf8_stdio()
-    ap = argparse.ArgumentParser(
+    ap = _ContractParser(
         prog="carto",
         description="Persistent incremental knowledge graph for code reviews",
     )
@@ -1211,6 +1333,26 @@ def main() -> None:
              "second row to the panel with the real token counts. Requires "
              "`pip install tiktoken`.",
     )
+    detect_cmd.add_argument(
+        "--format",
+        choices=["json", "text"],
+        # Unset rather than json, because --brief renders a panel and so
+        # implies text. Resolved by _normalise_output_format, which is the one
+        # place that rule lives.
+        default=None,
+        dest="output_format",
+        help="Output format; defaults to json, or text with --brief",
+    )
+    detect_cmd.add_argument(
+        "--max-tokens", type=int, default=None, dest="max_tokens",
+        help="Token budget for the response",
+    )
+    detect_cmd.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Deprecated alias for --format json",
+    )
 
     # enrich (Claude Code PreToolUse hook; reads one JSON object from stdin)
     sub.add_parser("enrich", help="Enrich hook input with graph context")
@@ -1248,10 +1390,21 @@ def main() -> None:
         help="Maximum rows to print (0 = no limit)",
     )
     dead_cmd.add_argument(
+        "--format",
+        choices=["json", "text"],
+        default="text",
+        dest="output_format",
+        help="Output format; 'json' emits the Cartograph capability envelope",
+    )
+    dead_cmd.add_argument(
+        "--max-tokens", type=int, default=None, dest="max_tokens",
+        help="Token budget for the response",
+    )
+    dead_cmd.add_argument(
         "--json",
         action="store_true",
         dest="json_output",
-        help="Output a machine-readable JSON array",
+        help="Deprecated alias for --format json (kept so existing callers keep working)",
     )
     dead_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
     dead_cmd.add_argument(
@@ -1420,6 +1573,13 @@ def main() -> None:
         default=None,
     )
     refactor_cmd.add_argument("--path", default=None, help="File-path substring filter")
+    # The tool has always bounded its response; the CLI dropped the control on
+    # the floor, which left the caller with a page nobody asked for and no way
+    # to say how big it should be. Default matches refactor_func's own.
+    refactor_cmd.add_argument(
+        "--limit", type=_positive_int, default=50, dest="max_results",
+        help="Maximum edits/symbols/suggestions returned (the pageable collection)",
+    )
     refactor_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 
     # Every graph-tool command shares one emit path (_emit_tool_result), so the
@@ -1571,6 +1731,8 @@ def main() -> None:
     if args.version:
         print(f"cartograph {_get_version()}")
         return
+
+    _normalise_output_format(args)
 
     if args.command == "capabilities":
         # Dispatched here, before repo resolution and any database access:
@@ -1863,7 +2025,14 @@ def main() -> None:
                     print(f"  {entry['path']}{alias_str}")
         return
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    # stream is named rather than left to the default: json mode promises that
+    # stdout carries nothing but the envelope, and a log line landing there
+    # hands the agent a JSONDecodeError instead of an answer.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
 
     from .graph import GraphStore
     from .incremental import (
@@ -2015,8 +2184,20 @@ def main() -> None:
             )
             total = len(items)
             shown = items[: args.limit] if args.limit else items
-            if args.json_output:
-                print(json.dumps(shown, indent=2))
+            if getattr(args, "output_format", "text") == "json":
+                # Was a bare JSON array, which the envelope schema does not
+                # permit as `data` and which carried no size, provenance or
+                # paging. `items` is the conventional collection name, so the
+                # shared emit path pages it without a special case.
+                _emit_tool_result(args, {
+                    "status": "ok",
+                    "summary": f"Found {total} dead code symbol(s)"
+                               + (f", showing {len(shown)}" if len(shown) < total else "")
+                               + ".",
+                    "items": shown,
+                    "total": total,
+                    "truncated": len(shown) < total,
+                })
             else:
                 print(f"Dead code: {total} item(s); showing {len(shown)}")
                 for item in shown:
@@ -2385,8 +2566,12 @@ def main() -> None:
             if not changed:
                 changed = get_staged_and_unstaged(repo_root)
 
+            original_tokens = 0
             if not changed:
-                print("No changes detected.")
+                # An empty change set is a correct answer, not a failure, so it
+                # is a success envelope with an empty payload rather than the
+                # bare line of prose it used to print.
+                result = {"summary": "No changes detected.", "risk_score": 0.0}
             else:
                 result = analyze_changes(
                     store,
@@ -2400,30 +2585,40 @@ def main() -> None:
                     result,
                     original_tokens=original_tokens,
                 )
-                if args.brief:
-                    from .context_savings import (
-                        format_context_savings_panel,
-                        verify_with_tiktoken,
-                    )
-                    print(result.get("summary", "No summary available."))
-                    verified = None
-                    if getattr(args, "verify", False):
-                        verified = verify_with_tiktoken(repo_root, changed, result)
-                        if verified is None:
-                            print(
-                                "Note: --verify requires tiktoken. "
-                                "Install with `pip install tiktoken`.",
-                            )
-                    panel = format_context_savings_panel(
-                        result.get("context_savings"),
-                        original_tokens=original_tokens,
-                        response=result,
-                        verified=verified,
-                    )
-                    if panel:
-                        print(panel)
-                else:
-                    print(json.dumps(result, indent=2, default=str))
+
+            brief = getattr(args, "brief", False)
+            if brief and args.output_format != "json":
+                from .context_savings import (
+                    format_context_savings_panel,
+                    verify_with_tiktoken,
+                )
+                print(result.get("summary", "No summary available."))
+                verified = None
+                if changed and getattr(args, "verify", False):
+                    verified = verify_with_tiktoken(repo_root, changed, result)
+                    if verified is None:
+                        print(
+                            "Note: --verify requires tiktoken. "
+                            "Install with `pip install tiktoken`.",
+                        )
+                panel = format_context_savings_panel(
+                    result.get("context_savings"),
+                    original_tokens=original_tokens,
+                    response=result,
+                    verified=verified,
+                )
+                if panel:
+                    print(panel)
+            else:
+                if brief:
+                    # In json, brief cannot mean "render a panel", so it means
+                    # what the panel actually says: the verdict without the
+                    # per-node detail behind it.
+                    result = {
+                        k: v for k, v in result.items()
+                        if k in ("summary", "risk_score", "context_savings")
+                    }
+                _emit_tool_result(args, result)
 
     finally:
         store.close()
