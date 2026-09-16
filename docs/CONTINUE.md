@@ -1,7 +1,7 @@
 ---
 tags: [handoff, cartograph]
 updated: 2026-09-16
-next-task: enforce --max-tokens
+next-task: the skills pack
 ---
 
 # CONTINUE HERE
@@ -14,7 +14,7 @@ below, then pick up **Next task**.
 ```bash
 cd /Users/emidan/work/cartograph
 engine/.venv/bin/python contracts/capability-v1/check.py --manifest engine/contract-manifest.json
-# expect: engine: 75/75 checks passed
+# expect: engine: 139/139 checks passed
 ```
 
 If that passes, everything described here is true. If it does not, trust the
@@ -33,7 +33,7 @@ built into VS Code 1.135.0), installing from a private repo, default-deny egress
   map, 17 resolved tickets, the capability-contract ADR + 9 amendments, and a
   reconciliation that wins where parallel resolutions disagree.
 
-## Done so far (4 code commits)
+## Done so far (6 code commits)
 
 | Commit | What |
 |---|---|
@@ -42,33 +42,49 @@ built into VS Code 1.135.0), installing from a private repo, default-deny egress
 | `e7f00cd` | All 16 query patterns (was 8); envelope on 10 graph commands |
 | `64a9431` | `carto capabilities` — catalogue generated from the argparse parser |
 | `478d3b8` | `carto review-context` + `carto review-summary` |
+| `9c4c3e8` | `--max-tokens` enforced with semantic truncation |
 
-## NEXT TASK — enforce `--max-tokens`
+The envelope contract is now fully honoured: everything it declares, it does.
 
-`--max-tokens` is accepted on every command and **currently ignored**. This is
-the last piece of the envelope contract that is declared but not honoured.
+## NEXT TASK — the skills pack
 
-It matters most on `review-context`, which runs **~6,263 tokens at `--limit 3`**,
-dominated by `facets.source_snippets`.
+Five skills are designed in the vault (`docs/decisions/T09-skills-resolution.md`),
+with `review-changes` drafted in full. **This is what makes any of the above
+reachable by an agent rather than only at a terminal** — until it exists,
+Cartograph is a CLI nobody's agent knows to call.
 
-**Requirements (from the contract, `docs/decisions/2026-09-15-capability-contract.md`):**
+Discovery is shared across all three hosts: `.github/skills/`, `.agents/skills/`,
+`.claude/skills/`. Skill bodies stay short and point at `carto capabilities`
+for the long tail — that is the whole reason the catalogue exists.
 
-1. **Truncation is SEMANTIC, never a byte cut.** Drop lowest-value content, keep
-   the envelope valid JSON. Never truncate mid-structure.
-2. When truncation happens, set `truncated: true` **and** `truncated_reason`
-   (`max_tokens` here, vs `page_limit` which paging already sets).
-3. `size.tokens_estimated` must reflect what was actually emitted.
-4. The drop order should be deliberate and documented — suggested, least
-   valuable first: `facets.source_snippets` → `facets.edges.items` →
-   `facets.changed_nodes.items` → trim `data.items` from the tail.
-   `data.summary` is never dropped; it is the part an agent always needs.
-5. Add conformance cases: a `--max-tokens` small enough to force truncation must
-   still produce a schema-valid envelope with `truncated_reason: "max_tokens"`.
+## Known state you should not mistake for a regression
 
-**Where to implement:** `engine/code_review_graph/envelope.py` is the natural
-home — a `fit(env, max_tokens, drop_order)` helper applied in `emit()`, so every
-command inherits it rather than each reimplementing it. `_emit_tool_result` in
-`cli.py` already passes through `args.max_tokens`.
+**56 engine tests fail, and did so before this work too.** Verified by running
+the suite on the stashed tree: identical `56 failed, 2717 passed` on both
+sides. They are upstream tests asserting pre-contract behaviour — e.g.
+`assert exc_info.value.code == 1` where the missing-graph guard now exits `2`
+(PRECONDITION, deliberately), and `SystemExit: 0` where graph-tool commands now
+`raise SystemExit(emit(...))`. Two more need network to fetch a grammar
+manifest. They need triage, not panic — but triage them before trusting the
+suite, because a real regression could hide among them.
+
+Run them with the MCP-path modules excluded (no `fastmcp` in the venv, by
+design — MCP is banned):
+
+```bash
+cd engine && .venv/bin/python -m pytest tests/ -q --timeout=300 \
+  --ignore=tests/test_agent_transparency.py --ignore=tests/test_embedding_initialization.py \
+  --ignore=tests/test_http_origin_guard.py --ignore=tests/test_integration_v2.py \
+  --ignore=tests/test_main.py --ignore=tests/test_prompts.py --ignore=tests/test_token_budget.py
+```
+
+## Worth fixing when you are next in `review_shape.py`
+
+`_node_to_item` falls back to `node["qualified_name"]`, which for file-kind
+nodes is an **absolute path** — so `facets.changed_nodes[].id` and `.title`
+carry `/Users/…/cartograph/engine/…`. That is exactly the noise `_relativise`
+exists to prevent, in the one place it was not applied. Cheap, and it is
+context an agent pays for on every call.
 
 ## Gotchas that cost time already
 
@@ -84,22 +100,26 @@ command inherits it rather than each reimplementing it. `_emit_tool_result` in
 - **`code-review-graph` is still the package name.** The rename pass has not
   happened; several internal messages still tell agents to run
   `code-review-graph build`. Remediation strings already say `carto build`.
-- The engine graph for this repo is built and current (272 files, 5796 nodes).
+- **Token budget semantics** are in `docs/design/token-budget.md`. Two traps
+  it records: the size block is part of what it measures (so `_with_size`
+  iterates to a fixed point), and truncation flags cost characters too (so they
+  are installed *before* fitting, not after).
+- The engine graph for this repo is built and current (253 files, 5746 nodes).
   Rebuild: `PYTHONPATH=engine engine/.venv/bin/python -m code_review_graph build --repo .`
 
 ## After that, in rough priority
 
-1. **The skills pack** — five skills are designed in the vault
-   (`docs/decisions/T09-skills-resolution.md`), with `review-changes` drafted in
-   full. This is what makes any of it reachable by an agent rather than only at
-   a terminal.
-2. **The rename pass** — `code_review_graph` → `cartograph`. Cheap now, worse
+1. **The rename pass** — `code_review_graph` → `cartograph`. Cheap now, worse
    later, and agents act on remediation strings literally.
+2. **Triage the 56 failing tests** (see above) — mostly delete-or-update, but
+   it has to be done before the suite is a safety net again.
 3. **`carto-hook` + detached launcher** — makes it fire automatically.
    Copilot has no async hook type and `&` does not detach on Windows.
-4. **Cursors** — `next_cursor` is honestly `null`; `has_more` is inferred from a
-   full page. Must be bound to query hash + provenance so page 2 cannot continue
-   against a rebuilt graph.
+4. **Cursors** — `next_cursor` is honestly `null`; `has_more` is inferred from
+   a full page. Must be bound to query hash + provenance so page 2 cannot
+   continue against a rebuilt graph. Note `fit()` already synthesises a `page`
+   block when a budget forces a trim, so cursors must account for a page the
+   caller never asked for.
 
 ## Decided, do not relitigate
 
