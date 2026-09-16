@@ -24,22 +24,49 @@ _MAX_SAVED_PERCENT = 99
 
 
 def _relativise(path: Optional[str], root: Optional[Path]) -> Optional[str]:
-    """Absolute paths are noise in an agent's context; make them repo-relative."""
+    """Absolute paths are noise in an agent's context; make them repo-relative.
+
+    Emitted in POSIX form, not the platform's. The graph stores forward slashes
+    as identity (see ``parser.normalize_file_path``), and an ``id`` here is
+    meant to be handed straight back to ``carto query`` — so a Windows-shaped
+    ``engine\\cartograph\\cli.py`` would look right and resolve to nothing.
+    """
     if not path or root is None:
         return path
     try:
-        return str(Path(path).relative_to(root))
+        return Path(path).relative_to(root).as_posix()
     except (ValueError, TypeError):
         return path
 
 
+def _relativise_qualified(name: Optional[str], root: Optional[Path]) -> Optional[str]:
+    """Relativise the path half of a qualified name, keeping the rest intact.
+
+    A qualified name is ``<path>`` or ``<path>::<symbol>``; only the path is
+    absolute. The suffix is what makes the name resolvable, so it is carried
+    through untouched — and `carto query` re-anchors a repo-relative target
+    against the repo root, so the shortened form still round-trips.
+    """
+    if not name:
+        return name
+    path, separator, symbol = name.partition("::")
+    return f"{_relativise(path, root)}{separator}{symbol}"
+
+
 def _node_to_item(node: dict[str, Any], root: Optional[Path]) -> dict[str, Any]:
     """Map a graph node onto the contract's stable item fields."""
+    title = node.get("name")
+    # A file node's name is its own path, which `location.file` already carries.
+    # Repeating it here buys the reader nothing but the leaf.
+    if title and node.get("kind") == "File":
+        title = title.rsplit("/", 1)[-1]
     return {
         # qualified_name, not the numeric row id: it is stable across rebuilds
         # and is what an agent can feed back into `carto query`.
-        "id": node.get("qualified_name") or node.get("name"),
-        "title": node.get("name"),
+        "id": _relativise_qualified(
+            node.get("qualified_name") or node.get("name"), root
+        ),
+        "title": title,
         "kind": node.get("kind"),
         "location": {
             "file": _relativise(node.get("file_path"), root),
@@ -58,8 +85,9 @@ def _node_to_item(node: dict[str, Any], root: Optional[Path]) -> dict[str, Any]:
 def _edge_to_dict(edge: dict[str, Any], root: Optional[Path]) -> dict[str, Any]:
     return {
         "kind": edge.get("kind"),
-        "source": edge.get("source"),
-        "target": edge.get("target"),
+        # Edge endpoints are qualified names too, and carry the same paths.
+        "source": _relativise_qualified(edge.get("source"), root),
+        "target": _relativise_qualified(edge.get("target"), root),
         "file": _relativise(edge.get("file_path"), root),
         "line": edge.get("line"),
         "confidence": edge.get("confidence_tier") or edge.get("confidence"),
