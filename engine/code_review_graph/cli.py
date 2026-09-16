@@ -1202,6 +1202,30 @@ def main() -> None:
         help="External directory containing the graph database",
     )
 
+    # capabilities — the machine-readable catalogue. Agents that skipped or
+    # lack the skills pack discover the surface through this.
+    caps_cmd = sub.add_parser(
+        "capabilities",
+        help="Machine-readable catalogue of commands, flags and examples",
+    )
+    caps_cmd.add_argument(
+        "--command",
+        default=None,
+        dest="command_name",
+        help="Full argument and flag detail for one command",
+    )
+    caps_cmd.add_argument(
+        "--format",
+        choices=["json", "text"],
+        default="json",
+        dest="output_format",
+        help="Output format (defaults to json — this command is agent-facing)",
+    )
+    caps_cmd.add_argument(
+        "--max-tokens", type=int, default=None, dest="max_tokens",
+        help="Token budget for the response",
+    )
+
     # Graph tool wrappers
     query_cmd = sub.add_parser("query", help="Query graph relationships")
     query_cmd.add_argument(
@@ -1464,6 +1488,27 @@ def main() -> None:
     if args.version:
         print(f"code-review-graph {_get_version()}")
         return
+
+    if args.command == "capabilities":
+        # Dispatched here, before repo resolution and any database access:
+        # capabilities must answer on a machine with no graph, which is exactly
+        # when an agent most needs to know what it can run.
+        from . import capabilities as _caps
+        from . import envelope as _env
+
+        try:
+            catalogue = _caps.build_catalogue(
+                ap, command=args.command_name, version=_get_version()
+            )
+        except KeyError as exc:
+            raise SystemExit(
+                _env.emit(
+                    _env.error("capabilities", _env.Exit.USAGE, str(exc.args[0])),
+                    args.output_format,
+                )
+            )
+        env = _env.ok("capabilities", data=catalogue)
+        raise SystemExit(_env.emit(env, args.output_format))
 
     if not args.command:
         _print_banner()

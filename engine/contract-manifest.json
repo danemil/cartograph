@@ -1,31 +1,93 @@
 {
   "name": "engine",
-  "command": [".venv/bin/python", "-m", "code_review_graph"],
+  "command": [
+    ".venv/bin/python",
+    "-m",
+    "code_review_graph"
+  ],
   "cwd": "engine",
   "operations": {
     "status": {
-      "args": ["status", "--repo", "."],
+      "args": [
+        "status",
+        "--repo",
+        "."
+      ],
       "expect": "ok"
     },
     "status-no-graph": {
-      "args": ["status", "--repo", "{tmpdir}"],
+      "args": [
+        "status",
+        "--repo",
+        "{tmpdir}"
+      ],
       "expect": "precondition"
     },
     "query-hit": {
-      "args": ["query", "callers_of", "attach_context_savings", "--repo", ".", "--limit", "3"],
+      "args": [
+        "query",
+        "callers_of",
+        "attach_context_savings",
+        "--repo",
+        ".",
+        "--limit",
+        "3"
+      ],
       "expect": "ok"
     },
     "query-miss": {
-      "args": ["query", "callers_of", "definitely_not_a_real_symbol_xyz", "--repo", "."],
+      "args": [
+        "query",
+        "callers_of",
+        "definitely_not_a_real_symbol_xyz",
+        "--repo",
+        "."
+      ],
       "expect": "ok"
     },
     "query-new-pattern": {
-      "args": ["query", "references_to", "GraphStore", "--repo", ".", "--limit", "5"],
+      "args": [
+        "query",
+        "references_to",
+        "GraphStore",
+        "--repo",
+        ".",
+        "--limit",
+        "5"
+      ],
       "expect": "ok"
     },
     "query-no-graph": {
-      "args": ["query", "callers_of", "x", "--repo", "{tmpdir}"],
+      "args": [
+        "query",
+        "callers_of",
+        "x",
+        "--repo",
+        "{tmpdir}"
+      ],
       "expect": "precondition"
+    },
+    "capabilities": {
+      "args": [
+        "capabilities"
+      ],
+      "expect": "ok"
+    },
+    "capabilities-detail": {
+      "args": [
+        "capabilities",
+        "--command",
+        "query"
+      ],
+      "expect": "ok"
+    },
+    "capabilities-unknown": {
+      "args": [
+        "capabilities",
+        "--command",
+        "nope"
+      ],
+      "expect": "usage"
     }
   }
 }
