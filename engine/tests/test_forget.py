@@ -179,5 +179,5 @@ def test_forget_without_a_graph_exits_nonzero(tmp_path, capsys):
     repo_root = tmp_path.resolve()
     with pytest.raises(SystemExit) as excinfo:
         _run_forget(repo_root, "anything.py")
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err

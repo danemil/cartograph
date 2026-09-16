@@ -1,5 +1,6 @@
 """Tests for MCP tool functions."""
 
+import importlib.util
 import os
 import tempfile
 import time
@@ -28,6 +29,17 @@ from cartograph.tools import (
     list_flows,
     list_graph_stats,
     query_graph,
+)
+
+
+# MCP is banned in the environment Cartograph targets, so `fastmcp` is
+# deliberately not installed and `cartograph.main` (the MCP server) cannot be
+# imported. The MCP surface survives only as an opt-in extra, so the handful of
+# tests that reach into it are gated on the optional dependency rather than
+# deleted — the same reason tests/test_main.py and friends are ignored wholesale.
+_HAS_FASTMCP = importlib.util.find_spec("fastmcp") is not None
+_NEEDS_FASTMCP = pytest.mark.skipif(
+    not _HAS_FASTMCP, reason="fastmcp not installed (MCP is banned in this fork)"
 )
 
 
@@ -2107,6 +2119,7 @@ class TestGetMinimalContext:
         assert not db_path.exists()
         assert not db_path.parent.exists()
 
+    @_NEEDS_FASTMCP
     def test_mcp_wrapper_reports_missing_graph_without_creating_state(self, tmp_path):
         from cartograph.main import get_minimal_context_tool
 
@@ -2419,6 +2432,7 @@ class TestGraphProvenance:
         assert common_module.with_provenance(existing, str(repo)) is existing
         assert existing["_graph"] == {"updated_at": "existing"}
 
+    @_NEEDS_FASTMCP
     def test_registered_sync_tool_preserves_existing_fields(self, tmp_path):
         from cartograph.main import list_graph_stats_tool
 

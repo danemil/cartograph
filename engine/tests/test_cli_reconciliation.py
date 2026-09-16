@@ -1,4 +1,10 @@
-"""Current-main regressions for the reconciled CLI contribution stack."""
+"""Current-main regressions for the reconciled CLI contribution stack.
+
+Exit-code note (capability contract v1): a missing graph is a PRECONDITION
+failure and exits **2**, not the usage exit 1 these tests were written
+against. The call was correct; the environment is not ready, and the failure
+carries ``carto build`` as a remediation the agent can act on.
+"""
 
 from __future__ import annotations
 
@@ -88,9 +94,16 @@ def test_status_json_is_the_only_stdout_and_includes_current_sha(capsys):
                     ):
                         cli.main()
 
-    output = capsys.readouterr().out
-    payload = json.loads(output)
-    assert payload == {
+    captured = capsys.readouterr()
+    # "The only stdout" is still the point, but the envelope is pretty-printed,
+    # so counting newlines no longer expresses it. Parsing the WHOLE of stdout
+    # as one document does: any stray print would make this raise.
+    payload = json.loads(captured.out)
+    assert captured.err == ""
+    assert payload["schema"] == 1
+    assert payload["ok"] is True
+    assert payload["tool"] == "status"
+    assert payload["data"] == {
         "nodes": 3,
         "edges": 4,
         "files": 2,
@@ -103,8 +116,14 @@ def test_status_json_is_the_only_stdout_and_includes_current_sha(capsys):
         "current_sha": "current-sha",
         "svn_branch": None,
         "svn_revision": None,
+        # New under the envelope: said outright rather than left for the agent
+        # to infer by comparing built_on_branch against current_branch.
+        "stale": True,
     }
-    assert output.count("\n") == 1
+    assert payload["provenance"] == {
+        "graph_sha": "old-sha",
+        "built_at": "2026-07-17T12:00:00Z",
+    }
 
 
 def test_status_quiet_prints_nothing(capsys):
@@ -145,7 +164,7 @@ def test_status_missing_graph_exits_without_creating_data_tree(
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert not data_dir.exists()
 
@@ -185,7 +204,7 @@ def test_read_only_commands_missing_graph_do_not_create_empty_db(
             with pytest.raises(SystemExit) as exc_info:
                 cli.main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     err = capsys.readouterr().err
     assert "No graph found" in err
     assert not data_dir.exists()
@@ -220,7 +239,7 @@ def test_read_only_commands_data_dir_option_is_read_only(
             with pytest.raises(SystemExit) as exc_info:
                 cli.main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert not data_dir.exists()
     assert not registry_path.exists()
@@ -265,7 +284,7 @@ def test_status_external_data_dir_does_not_migrate_unrelated_legacy_graph(
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert legacy_db.exists()
     assert not data_dir.exists()
@@ -295,7 +314,7 @@ def test_status_data_dir_option_is_read_only(tmp_path, monkeypatch, capsys):
             with pytest.raises(SystemExit) as exc_info:
                 cli.main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert not data_dir.exists()
     assert not registry_path.exists()
@@ -337,7 +356,7 @@ def test_status_default_data_dir_override_does_not_migrate_legacy_graph(
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert legacy_db.exists()
     assert not data_dir.exists()
@@ -490,5 +509,5 @@ def test_dead_code_missing_graph_exits_nonzero(tmp_path, monkeypatch, capsys):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err

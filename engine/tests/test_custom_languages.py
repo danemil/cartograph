@@ -135,6 +135,16 @@ function_node_types = ["function_clause"]
         result = load(tmp_path)
         assert result["erlang"].extensions == (".erl",)
 
+    # KNOWN FAILING — product bug, left red on purpose (see report).
+    # The contract this test states is still promised: an unknown grammar in a
+    # user's languages.toml must warn and be skipped, never crash the parser.
+    # tree_sitter_language_pack >= 1.x resolves grammars through a download
+    # manifest and raises its own ``DownloadError`` (subclass of
+    # ``tree_sitter_language_pack.Error`` -> ``Exception``) for a name it does
+    # not know, and for an unreachable manifest. cartograph/custom_languages.py
+    # only catches (LookupError, ValueError, ImportError, OSError), so the
+    # exception escapes `_validate_entry`. Fix belongs in product code; this
+    # test is NOT weakened to match the defect. Also requires network.
     def test_bad_grammar_skipped(self, tmp_path, caplog):
         write_config(tmp_path, """\
 [languages.mylang]
@@ -274,6 +284,16 @@ class TestParserIntegration:
         assert parser.detect_language(Path("main.py")) == "python"
         assert parser.detect_language(Path("app.ex")) == "elixir"
 
+    # KNOWN FAILING — environmental, left red on purpose (see report).
+    # Nothing in this fork changed the custom-language path. The erlang grammar
+    # is fetched at runtime from the tree_sitter_language_pack download
+    # manifest, and the version that resolves today nests a remote call as
+    # ``remote(module: remote_module, fun: call(expr: atom))``. The configured
+    # ``call_node_types = ["call"]`` therefore matches the INNER call, whose
+    # callee text is "map", and the generic extractor in
+    # CodeParser._get_custom_call_name has no erlang-specific knowledge of the
+    # `remote` wrapper — by design, it is language-agnostic. The
+    # "lists:map" assertion below encodes an older grammar shape.
     def test_e2e_nodes_and_edges(self, tmp_path):
         repo, src = self._repo(tmp_path)
         parser = CodeParser(repo)

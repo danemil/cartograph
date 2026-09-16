@@ -1,5 +1,6 @@
 """Tests for CLI helpers and MCP serve command wiring."""
 
+import importlib.util
 import io
 import json
 import logging
@@ -8,7 +9,19 @@ from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cartograph import cli
+
+# MCP is banned in the environment Cartograph targets, so `fastmcp` is
+# deliberately not installed here and `cartograph.main` (the stdio/HTTP MCP
+# server) cannot be imported. `carto serve` / `carto mcp` still exist as an
+# opt-in extra, so these tests are gated on the optional dependency rather
+# than deleted — the same reason tests/test_main.py and friends are ignored.
+_HAS_FASTMCP = importlib.util.find_spec("fastmcp") is not None
+_NEEDS_FASTMCP = pytest.mark.skipif(
+    not _HAS_FASTMCP, reason="fastmcp not installed (MCP is banned in this fork)"
+)
 
 
 def test_main_handles_legacy_stdio_encoding(monkeypatch):
@@ -71,6 +84,7 @@ def test_get_version_returns_dev_when_both_sources_fail(monkeypatch, caplog):
     assert version == "dev"
 
 
+@_NEEDS_FASTMCP
 class TestServeCommand:
     def test_serve_passes_auto_watch_flag(self):
         argv = [
@@ -551,9 +565,19 @@ def test_explicit_monorepo_subproject_runs_a_real_graph_search(
         str(nested),
     ]
     with patch.object(sys, "argv", argv):
-        cli.main()
+        # Graph-tool commands terminate by raising SystemExit(emit(...)); a
+        # successful search is exit 0.
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
 
-    result = json.loads(capsys.readouterr().out)
+    assert exc_info.value.code == 0
+    envelope = json.loads(capsys.readouterr().out)
+    assert envelope["ok"] is True
+    # Search-like results must always declare how they were answered, and the
+    # envelope normalises upstream's "fts" to the contract's "keyword" so a
+    # lexical fallback can never be mistaken for a semantic hit.
+    assert envelope["search_mode"] == "keyword"
+    result = envelope["data"]
     assert result["status"] == "ok"
     assert any(row["name"] == "raw_stream_lookup" for row in result["results"])
 

@@ -5,6 +5,14 @@ Covers resolution branches the PR's own tests leave untouched: registry
 entries, deep CRG_DATA_DIR trees, legacy migration for the newly read-only
 commands, CRG_DATA_DIR vs legacy interaction, relative and unicode
 --data-dir paths, and registry side effects when a graph IS present.
+
+Exit-code note (Cartograph capability contract v1): a missing graph is a
+PRECONDITION failure and exits **2**, not the usage exit 1 these tests were
+originally written against. The agent called correctly; the environment is not
+ready, and the failure carries ``carto build`` as a remediation it can act on.
+The on-disk literals ``.code-review-graph`` / ``.code-review-graph.db`` below
+are deliberately NOT renamed: they identify pre-rename state for migration.
+See contracts/capability-v1/schemas/envelope.schema.json.
 """
 
 from __future__ import annotations
@@ -90,7 +98,7 @@ def test_registry_pointed_data_dir_is_not_created(
 
     exc_info = _run_cli([command, "--repo", str(repo)])
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert not pointed.exists()
     assert registry_file.read_bytes() == before
@@ -110,7 +118,7 @@ def test_deep_missing_crg_data_dir_tree_not_created(
 
     exc_info = _run_cli([command, "--repo", str(repo)])
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert not (tmp_path / "a").exists()
 
@@ -156,7 +164,7 @@ def test_crg_data_dir_blocks_legacy_migration(
 
     exc_info = _run_cli(["visualize", "--repo", str(repo)])
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert legacy.exists()
     assert not external.exists()
@@ -166,7 +174,7 @@ def test_crg_data_dir_blocks_legacy_migration(
 def test_existing_empty_explicit_data_dir_gains_nothing(
     command, tmp_path, isolated_env, capsys,
 ):
-    """--data-dir on an existing but graph-less dir: exit 1, dir stays empty."""
+    """--data-dir on an existing but graph-less dir: exit 2, dir stays empty."""
     repo = _make_repo(tmp_path)
     data_dir = tmp_path / "existing-empty"
     data_dir.mkdir()
@@ -175,7 +183,7 @@ def test_existing_empty_explicit_data_dir_gains_nothing(
         [command, "--repo", str(repo), "--data-dir", str(data_dir)],
     )
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert list(data_dir.iterdir()) == []
     assert not (isolated_env / "registry.json").exists()
@@ -191,7 +199,7 @@ def test_relative_explicit_data_dir_not_created(
         ["status", "--repo", str(repo), "--data-dir", "rel-data"],
     )
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert not (tmp_path / "rel-data").exists()
 
@@ -265,6 +273,6 @@ def test_detect_changes_no_graph_real_git_repo_with_commit(
 
     exc_info = _run_cli(["detect-changes", "--repo", str(repo)])
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert "No graph found" in capsys.readouterr().err
     assert not (repo / ".cartograph").exists()

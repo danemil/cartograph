@@ -1,7 +1,16 @@
-"""End-to-end regression for MCP stdio executor shutdown (PR #615)."""
+"""End-to-end regression for MCP stdio executor shutdown (PR #615).
+
+This module spawns the real `carto serve` stdio server, which lives in
+`cartograph.main` and needs `fastmcp`. MCP is banned in the environment
+Cartograph targets, so `fastmcp` is deliberately not installed and the
+server cannot start — the subprocess dies before answering `initialize`.
+`carto serve` survives only as an opt-in extra, so the module is gated on
+the optional dependency rather than deleted.
+"""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import select
@@ -45,6 +54,10 @@ def _read_response(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="select() cannot poll Windows pipes")
+@pytest.mark.skipif(
+    importlib.util.find_spec("fastmcp") is None,
+    reason="fastmcp not installed (MCP is banned in this fork)",
+)
 def test_stdio_server_parallel_build_then_eof_exits_cleanly(tmp_path):
     """The real stdio server must build in parallel and exit cleanly on EOF."""
     (tmp_path / ".git").mkdir()

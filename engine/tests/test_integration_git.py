@@ -10,6 +10,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import importlib.util
 import inspect
 import json
 import subprocess
@@ -33,6 +34,17 @@ from cartograph.incremental import (
 )
 from cartograph.tools.build import build_or_update_graph
 from cartograph.wiki import get_wiki_page
+
+
+# MCP is banned in the environment Cartograph targets, so `fastmcp` is
+# deliberately not installed and `cartograph.main` (the MCP server) cannot be
+# imported. The MCP surface survives only as an opt-in extra, so the handful of
+# tests that reach into it are gated on the optional dependency rather than
+# deleted — the same reason tests/test_main.py and friends are ignored wholesale.
+_HAS_FASTMCP = importlib.util.find_spec("fastmcp") is not None
+_NEEDS_FASTMCP = pytest.mark.skipif(
+    not _HAS_FASTMCP, reason="fastmcp not installed (MCP is banned in this fork)"
+)
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -647,7 +659,7 @@ def test_status_then_update_builds_complete_queryable_graph(
     )
     with pytest.raises(SystemExit) as exc_info:
         cli.main()
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
     assert not data_dir.exists()
     capsys.readouterr()
 
@@ -694,6 +706,7 @@ def test_update_explicit_base_bypasses_auto_resolution(tmp_path: Path) -> None:
     assert res["changed_files"] == ["gamma.py"]
 
 
+@_NEEDS_FASTMCP
 def test_mcp_tool_base_defaults_to_none() -> None:
     """The MCP wrapper must default base to None so omitted-base calls reach
     the auto-resolution path instead of a hardcoded HEAD~1."""

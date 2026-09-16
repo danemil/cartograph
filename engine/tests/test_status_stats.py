@@ -161,6 +161,10 @@ class TestStatusCli:
         with patch.object(sys, "argv", argv):
             cli.main()
 
-        payload = json.loads(capsys.readouterr().out)
+        # `status --json` now speaks the capability envelope: the stats it used
+        # to print bare on stdout live under `data`.
+        envelope = json.loads(capsys.readouterr().out)
+        assert envelope["ok"] is True
+        payload = envelope["data"]
         assert payload["files"] == 4
         assert payload["languages"] == ["java", "python"]

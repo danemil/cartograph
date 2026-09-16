@@ -1,4 +1,10 @@
-"""CLI wrappers for graph tools reconciled from PR #95."""
+"""CLI wrappers for graph tools reconciled from PR #95.
+
+Exit-code note (capability contract v1): a missing graph is a PRECONDITION
+failure and exits **2**, not the usage exit 1 these tests were written
+against. The call was correct; the environment is not ready, and the failure
+carries ``carto build`` as a remediation the agent can act on.
+"""
 
 from __future__ import annotations
 
@@ -16,9 +22,17 @@ from cartograph import cli
     ("arguments", "tool_name", "expected"),
     [
         (
+            # `query` gained --detail-level and --limit when the fork closed the
+            # CLI/MCP parity gap (PROVENANCE.md, "~12 commands gained missing
+            # flags"), so their defaults are now forwarded too.
             ["query", "callers_of", "target"],
             "query_graph",
-            {"pattern": "callers_of", "target": "target"},
+            {
+                "pattern": "callers_of",
+                "target": "target",
+                "detail_level": "standard",
+                "max_results": 100,
+            },
         ),
         (
             ["impact", "--files", "a.py", "b.py", "--depth", "3", "--max-results", "20"],
@@ -103,9 +117,21 @@ def test_tool_command_forwards_typed_arguments_as_json(
 
     with patch.object(sys, "argv", argv):
         with patch(f"cartograph.tools.{tool_name}", return_value=result) as tool:
-            cli.main()
+            # Graph-tool commands now terminate by raising SystemExit(emit(...)):
+            # the envelope IS the return value, so there is no plain return path.
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
 
-    assert json.loads(capsys.readouterr().out) == result
+    assert exc_info.value.code == 0
+    # The tool's own dict is no longer stdout on its own — it is carried as the
+    # envelope's `data`, which is the only thing json mode may write to stdout.
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == 1
+    assert payload["ok"] is True
+    # `tool` is the logical operation (the CLI subcommand), stable across
+    # renames — deliberately not the underlying cartograph.tools function name.
+    assert payload["tool"] == arguments[0]
+    assert payload["data"] == result
     tool.assert_called_once_with(repo_root=str(repo), **expected)
 
 
@@ -128,7 +154,17 @@ def test_tool_commands_reject_invalid_or_ambiguous_arguments(arguments):
     assert exc_info.value.code == 2
 
 
-def test_tool_command_missing_graph_exits_nonzero(tmp_path, monkeypatch, capsys):
+def test_tool_command_missing_graph_reports_a_recoverable_precondition(
+    tmp_path, monkeypatch, capsys,
+):
+    """A missing graph is a precondition the agent can self-heal from.
+
+    Exit 2 (not 1), and — because graph-tool commands default to json — the
+    failure arrives as an envelope on STDOUT carrying a machine-readable
+    remediation, so an agent parsing json never has to scrape stderr. The
+    pre-fork test looked for bare prose on stderr; that path now only runs
+    under ``--format text``.
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
@@ -142,5 +178,14 @@ def test_tool_command_missing_graph_exits_nonzero(tmp_path, monkeypatch, capsys)
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
 
-    assert exc_info.value.code == 1
-    assert "No graph found" in capsys.readouterr().err
+    assert exc_info.value.code == 2  # precondition, not usage: no graph
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["tool"] == "query"
+    assert payload["error"]["code"] == "precondition"
+    assert "No graph found" in payload["error"]["message"]
+    # Required for precondition errors: it is what lets the agent recover
+    # instead of failing the user's task.
+    assert payload["error"]["remediation"] == "carto build"

@@ -337,9 +337,22 @@ def _validate_entry(
     # grammar set. See PROVENANCE.md.
     try:
         import tree_sitter_language_pack as tslp
+    except ImportError as exc:
+        logger.warning(
+            "%s: custom language %r: tree_sitter_language_pack is not "
+            "installed (%s) — skipping",
+            config_path, name, exc,
+        )
+        return None
 
+    # `tslp.Error` matters: since the package started resolving grammars
+    # through a download manifest, both an unknown name and an unreachable
+    # manifest raise `DownloadError`, which inherits from `tslp.Error` and so
+    # from nothing else listed here. Without it a single typo in a user's
+    # languages.toml does not warn and skip — it takes the whole parser down.
+    try:
         tslp.get_language(grammar)  # type: ignore[arg-type]
-    except (LookupError, ValueError, ImportError, OSError) as exc:
+    except (LookupError, ValueError, OSError, tslp.Error) as exc:
         logger.warning(
             "%s: custom language %r: grammar %r is not available in "
             "tree_sitter_language_pack (%s) — skipping",
