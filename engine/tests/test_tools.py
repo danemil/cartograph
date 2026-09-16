@@ -8,14 +8,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import code_review_graph.tools._common as common_module
-import code_review_graph.tools.analysis_tools as analysis_module
-import code_review_graph.tools.docs as docs_module
-import code_review_graph.tools.query as query_module
-from code_review_graph.graph import GraphStore, _sanitize_name, node_to_dict
-from code_review_graph.incremental import full_build
-from code_review_graph.parser import EdgeInfo, NodeInfo
-from code_review_graph.tools import (
+import cartograph.tools._common as common_module
+import cartograph.tools.analysis_tools as analysis_module
+import cartograph.tools.docs as docs_module
+import cartograph.tools.query as query_module
+from cartograph.graph import GraphStore, _sanitize_name, node_to_dict
+from cartograph.incremental import full_build
+from cartograph.parser import EdgeInfo, NodeInfo
+from cartograph.tools import (
     _validate_repo_root,
     get_affected_flows_func,
     get_architecture_overview_func,
@@ -154,9 +154,9 @@ class TestTools:
 
     def test_search_mode_fts(self, monkeypatch, tmp_path):
         """semantic_search_nodes reports search_mode='fts' when only FTS contributes."""
-        import code_review_graph.tools.query as query_mod
-        from code_review_graph.search import rebuild_fts_index
-        from code_review_graph.tools.query import semantic_search_nodes
+        import cartograph.tools.query as query_mod
+        from cartograph.search import rebuild_fts_index
+        from cartograph.tools.query import semantic_search_nodes
 
         tmp_db = tmp_path / "test.db"
         store = GraphStore(tmp_db)
@@ -243,12 +243,12 @@ class TestQueryGraphCallTargetFallbacks:
         self.tmp_dir = tempfile.mkdtemp()
         self.root = Path(self.tmp_dir).resolve()
         (self.root / ".git").mkdir()
-        (self.root / ".code-review-graph").mkdir()
+        (self.root / ".cartograph").mkdir()
 
         self.target_file = (self.root / "target.m").as_posix()
         self.cross_file = (self.root / "cross.m").as_posix()
         self.dispatch_file = (self.root / "dispatch.m").as_posix()
-        self.db_path = str(self.root / ".code-review-graph" / "graph.db")
+        self.db_path = str(self.root / ".cartograph" / "graph.db")
         self._seed_data()
 
     def teardown_method(self):
@@ -505,7 +505,7 @@ class TestQueryGraphCallTargetFallbacks:
             "}\n",
             encoding="utf-8",
         )
-        graph_dir = tmp_path / ".code-review-graph"
+        graph_dir = tmp_path / ".cartograph"
         graph_dir.mkdir()
         monkeypatch.setenv("CRG_SERIAL_PARSE", "1")
         with GraphStore(graph_dir / "graph.db") as store:
@@ -523,7 +523,7 @@ class TestQueryGraphCallTargetFallbacks:
 
 def _seed_repo_relative_graph(root: Path) -> None:
     """Seed graph data with cwd-relative paths, as eval repos currently do."""
-    graph_dir = root / ".code-review-graph"
+    graph_dir = root / ".cartograph"
     graph_dir.mkdir()
     store = GraphStore(graph_dir / "graph.db")
     stored_path = "fixtures/sample_repo/src/app.py"
@@ -621,7 +621,7 @@ class TestRepoRootValidation:
         assert _validate_repo_root(tmp_path) == tmp_path.resolve()
 
     def test_validate_repo_root_error_mentions_svn_marker(self, tmp_path):
-        with pytest.raises(ValueError, match=r"\.git, \.svn, or \.code-review-graph"):
+        with pytest.raises(ValueError, match=r"\.git, \.svn, or \.cartograph"):
             _validate_repo_root(tmp_path)
 
 
@@ -635,10 +635,10 @@ class TestQueryGraphTestsFor:
         import tempfile as _tempfile
         self._tmpdir = _tempfile.TemporaryDirectory()
         self.repo_root = Path(self._tmpdir.name)
-        # _validate_repo_root requires .git or .code-review-graph.
-        (self.repo_root / ".code-review-graph").mkdir()
+        # _validate_repo_root requires .git or .cartograph.
+        (self.repo_root / ".cartograph").mkdir()
         # find_project_root / get_db_path look here for the DB.
-        from code_review_graph.incremental import get_db_path
+        from cartograph.incremental import get_db_path
         self.db_path = get_db_path(self.repo_root)
         self.store = GraphStore(str(self.db_path))
         self._seed_graph()
@@ -702,7 +702,7 @@ class TestQueryGraphTestsFor:
         self.store.close()
 
     def test_query_graph_tests_for_finds_direct_edge(self):
-        from code_review_graph.tools import query_graph
+        from cartograph.tools import query_graph
         result = query_graph(
             pattern="tests_for",
             target="/src/calc.py::combine",
@@ -722,7 +722,7 @@ class TestQueryGraphTestsFor:
         }
 
     def test_query_graph_marks_naming_only_test_as_inferred(self):
-        from code_review_graph.tools import query_graph
+        from cartograph.tools import query_graph
 
         result = query_graph(
             pattern="tests_for",
@@ -734,7 +734,7 @@ class TestQueryGraphTestsFor:
         assert match["inferred_by"] == "naming_convention"
 
     def test_query_graph_tests_for_finds_one_hop_indirect_test(self):
-        from code_review_graph.tools import query_graph
+        from cartograph.tools import query_graph
 
         result = query_graph(
             pattern="tests_for",
@@ -759,7 +759,7 @@ class TestQueryGraphTestsFor:
         assert minimal["results"][0]["indirect"] is True
 
     def test_query_graph_tests_for_keeps_ambiguous_target_explicit(self):
-        from code_review_graph.tools import query_graph
+        from cartograph.tools import query_graph
 
         result = query_graph(
             pattern="tests_for",
@@ -775,7 +775,7 @@ class TestGetDocsSection:
     """Tests for the get_docs_section tool."""
 
     def test_explicit_repo_root_uses_that_docs_file(self, tmp_path):
-        (tmp_path / ".code-review-graph").mkdir()
+        (tmp_path / ".cartograph").mkdir()
         docs_dir = tmp_path / "docs"
         docs_dir.mkdir()
         (docs_dir / "LLM-OPTIMIZED-REFERENCE.md").write_text(
@@ -819,7 +819,7 @@ class TestGetDocsSection:
         assert len(result["content"]) > 0
 
     def test_packaged_docs_lookup_from_outside_repo(self, tmp_path, monkeypatch):
-        package_dir = tmp_path / "site-packages" / "code_review_graph"
+        package_dir = tmp_path / "site-packages" / "cartograph"
         tools_dir = package_dir / "tools"
         docs_dir = package_dir / "docs"
         tools_dir.mkdir(parents=True)
@@ -846,7 +846,7 @@ class TestEmbedGraphProviderErrors:
     never as a traceback, and must always close its GraphStore."""
 
     def test_unknown_provider_returns_structured_error(self, tmp_path):
-        (tmp_path / ".code-review-graph").mkdir()
+        (tmp_path / ".cartograph").mkdir()
         result = docs_module.embed_graph(
             repo_root=str(tmp_path), provider="moonbase",
         )
@@ -856,7 +856,7 @@ class TestEmbedGraphProviderErrors:
         assert "Valid: local, openai, google, minimax, voyage" in result["error"]
 
     def test_missing_env_vars_return_structured_error(self, tmp_path, monkeypatch):
-        (tmp_path / ".code-review-graph").mkdir()
+        (tmp_path / ".cartograph").mkdir()
         for var in ("CRG_OPENAI_API_KEY", "CRG_OPENAI_BASE_URL", "CRG_OPENAI_MODEL"):
             monkeypatch.delenv(var, raising=False)
         result = docs_module.embed_graph(
@@ -866,7 +866,7 @@ class TestEmbedGraphProviderErrors:
         assert "CRG_OPENAI_API_KEY" in result["error"]
 
     def test_store_closed_when_provider_unknown(self, tmp_path, monkeypatch):
-        (tmp_path / ".code-review-graph").mkdir()
+        (tmp_path / ".cartograph").mkdir()
         store = MagicMock()
         monkeypatch.setattr(
             docs_module, "_get_store", lambda repo_root=None: (store, tmp_path),
@@ -944,7 +944,7 @@ class TestGetWikiPageNoStoreLeak:
     resolve the repo root and discarded it without closing."""
 
     def test_get_wiki_page_does_not_open_graph_store(self, tmp_path, monkeypatch):
-        (tmp_path / ".code-review-graph").mkdir()
+        (tmp_path / ".cartograph").mkdir()
         store_cls = MagicMock()
         monkeypatch.setattr(common_module, "GraphStore", store_cls)
         result = docs_module.get_wiki_page_func(
@@ -1045,7 +1045,7 @@ class TestSanitizeName:
 
     def test_node_to_dict_uses_sanitize(self):
         """Verify that node_to_dict actually calls _sanitize_name."""
-        from code_review_graph.graph import GraphNode
+        from cartograph.graph import GraphNode
         node = GraphNode(
             id=1, kind="Function", name="evil\x00name",
             qualified_name="/test.py::evil\x00name", file_path="/test.py",
@@ -1062,7 +1062,7 @@ class TestFlowTools:
     """Tests for flow-related MCP tool functions."""
 
     def setup_method(self):
-        """Set up a temp dir with .git and .code-review-graph, seed data, build flows."""
+        """Set up a temp dir with .git and .cartograph, seed data, build flows."""
         self.tmp_dir = tempfile.mkdtemp()
         # Resolve symlinks (macOS /var -> /private/var) so paths match
         # what _validate_repo_root returns via Path.resolve().
@@ -1070,9 +1070,9 @@ class TestFlowTools:
 
         # Create markers so _validate_repo_root accepts this directory
         (self.root / ".git").mkdir()
-        (self.root / ".code-review-graph").mkdir()
+        (self.root / ".cartograph").mkdir()
 
-        db_path = str(self.root / ".code-review-graph" / "graph.db")
+        db_path = str(self.root / ".cartograph" / "graph.db")
         self.store = GraphStore(db_path)
         self._seed_data()
         self._build_flows()
@@ -1137,7 +1137,7 @@ class TestFlowTools:
 
     def _build_flows(self):
         """Trace and store flows."""
-        from code_review_graph.flows import store_flows, trace_flows
+        from cartograph.flows import store_flows, trace_flows
         flows = trace_flows(self.store)
         store_flows(self.store, flows)
 
@@ -1309,15 +1309,15 @@ class TestCommunityTools:
     """Tests for community-related MCP tool functions."""
 
     def setup_method(self):
-        """Set up a temp dir with .git and .code-review-graph, seed clustered graph."""
+        """Set up a temp dir with .git and .cartograph, seed clustered graph."""
         self.tmp_dir = tempfile.mkdtemp()
         self.root = Path(self.tmp_dir).resolve()
 
         # Create markers so _validate_repo_root accepts this directory
         (self.root / ".git").mkdir()
-        (self.root / ".code-review-graph").mkdir()
+        (self.root / ".cartograph").mkdir()
 
-        db_path = str(self.root / ".code-review-graph" / "graph.db")
+        db_path = str(self.root / ".cartograph" / "graph.db")
         self.store = GraphStore(db_path)
         self._seed_data()
         self._build_communities()
@@ -1412,7 +1412,7 @@ class TestCommunityTools:
 
     def _build_communities(self):
         """Detect and store communities."""
-        from code_review_graph.communities import detect_communities, store_communities
+        from cartograph.communities import detect_communities, store_communities
         comms = detect_communities(self.store)
         store_communities(self.store, comms)
 
@@ -1579,10 +1579,10 @@ class TestBuildPostprocess:
     def test_postprocess_none_produces_nodes_no_flows(self):
         from unittest.mock import patch
 
-        from code_review_graph.tools.build import build_or_update_graph
+        from cartograph.tools.build import build_or_update_graph
 
         with patch(
-            "code_review_graph.incremental.get_all_tracked_files",
+            "cartograph.incremental.get_all_tracked_files",
             return_value=["sample.py"],
         ):
             result = build_or_update_graph(
@@ -1599,10 +1599,10 @@ class TestBuildPostprocess:
     def test_postprocess_minimal_has_fts_no_flows(self, capsys):
         from unittest.mock import patch
 
-        from code_review_graph.tools.build import build_or_update_graph
+        from cartograph.tools.build import build_or_update_graph
 
         with patch(
-            "code_review_graph.incremental.get_all_tracked_files",
+            "cartograph.incremental.get_all_tracked_files",
             return_value=["sample.py"],
         ):
             result = build_or_update_graph(
@@ -1625,10 +1625,10 @@ class TestBuildPostprocess:
     def test_postprocess_full_matches_default(self, capsys):
         from unittest.mock import patch
 
-        from code_review_graph.tools.build import build_or_update_graph
+        from cartograph.tools.build import build_or_update_graph
 
         with patch(
-            "code_review_graph.incremental.get_all_tracked_files",
+            "cartograph.incremental.get_all_tracked_files",
             return_value=["sample.py"],
         ):
             result = build_or_update_graph(
@@ -1713,7 +1713,7 @@ class TestBuildPostprocessResolvesBareEndpoints:
         return row["source_qualified"]
 
     def test_minimal_build_postprocess_resolves(self):
-        from code_review_graph.tools.build import _run_postprocess
+        from cartograph.tools.build import _run_postprocess
 
         result: dict = {}
         warnings = _run_postprocess(self.store, result, "minimal")
@@ -1723,7 +1723,7 @@ class TestBuildPostprocessResolvesBareEndpoints:
         assert self._tested_by_source(self.store) == "/repo/src/app.py::parse"
 
     def test_none_build_postprocess_skips_resolution(self):
-        from code_review_graph.tools.build import _run_postprocess
+        from cartograph.tools.build import _run_postprocess
 
         result: dict = {}
         _run_postprocess(self.store, result, "none")
@@ -1732,7 +1732,7 @@ class TestBuildPostprocessResolvesBareEndpoints:
         assert self._tested_by_source(self.store) == "parse"
 
     def test_manual_run_postprocess_resolves(self, monkeypatch):
-        import code_review_graph.tools.build as build_module
+        import cartograph.tools.build as build_module
 
         monkeypatch.setattr(
             build_module,
@@ -1888,7 +1888,7 @@ class TestComputeSummaries:
         """risk_index rows must match per-node caller counts, test
         coverage, security flag, and risk scores derived from the
         seeded graph."""
-        from code_review_graph.tools.build import _compute_summaries
+        from cartograph.tools.build import _compute_summaries
 
         _compute_summaries(self.store)
 
@@ -1952,7 +1952,7 @@ class TestComputeSummaries:
         symbols, size, and dominant language."""
         import json as _json
 
-        from code_review_graph.tools.build import _compute_summaries
+        from cartograph.tools.build import _compute_summaries
 
         _compute_summaries(self.store)
 
@@ -2009,7 +2009,7 @@ class TestComputeSummaries:
         """
         import re
 
-        from code_review_graph.tools.build import _compute_summaries
+        from cartograph.tools.build import _compute_summaries
 
         conn = self.store._conn
         per_row_selects: list[str] = []
@@ -2061,9 +2061,9 @@ class TestGetMinimalContext:
         self.tmp = tempfile.mkdtemp()
         self.root = Path(self.tmp)
         (self.root / ".git").mkdir()
-        (self.root / ".code-review-graph").mkdir()
+        (self.root / ".cartograph").mkdir()
         # Create a small graph
-        db_path = self.root / ".code-review-graph" / "graph.db"
+        db_path = self.root / ".cartograph" / "graph.db"
         self.store = GraphStore(str(db_path))
         self.store.upsert_node(NodeInfo(
             kind="File", name="app.py", file_path=str(self.root / "app.py"),
@@ -2081,7 +2081,7 @@ class TestGetMinimalContext:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_returns_required_keys(self):
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
         result = get_minimal_context(
             task="explore codebase", repo_root=str(self.root),
@@ -2091,13 +2091,13 @@ class TestGetMinimalContext:
         assert "next_tool_suggestions" in result
 
     def test_missing_graph_returns_not_ready_without_creating_database(self, tmp_path):
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
         repo = tmp_path / "cold-worktree"
         repo.mkdir()
         # Linked worktrees use a .git pointer file instead of a directory.
         (repo / ".git").write_text("gitdir: ../main/.git/worktrees/cold\n")
-        db_path = repo / ".code-review-graph" / "graph.db"
+        db_path = repo / ".cartograph" / "graph.db"
 
         result = get_minimal_context(repo_root=str(repo))
 
@@ -2108,7 +2108,7 @@ class TestGetMinimalContext:
         assert not db_path.parent.exists()
 
     def test_mcp_wrapper_reports_missing_graph_without_creating_state(self, tmp_path):
-        from code_review_graph.main import get_minimal_context_tool
+        from cartograph.main import get_minimal_context_tool
 
         repo = tmp_path / "cold-worktree"
         repo.mkdir()
@@ -2118,10 +2118,10 @@ class TestGetMinimalContext:
 
         assert result["status"] == "not_ready"
         assert result["reason"] == "missing_graph"
-        assert not (repo / ".code-review-graph").exists()
+        assert not (repo / ".cartograph").exists()
 
     def test_missing_graph_does_not_create_external_data_dir(self, tmp_path, monkeypatch):
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -2140,7 +2140,7 @@ class TestGetMinimalContext:
     ):
         import json
 
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -2160,12 +2160,12 @@ class TestGetMinimalContext:
         assert not external_data.exists()
 
     def test_empty_graph_returns_not_ready(self, tmp_path):
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
         repo = tmp_path / "empty-graph"
         repo.mkdir()
         (repo / ".git").mkdir()
-        graph_dir = repo / ".code-review-graph"
+        graph_dir = repo / ".cartograph"
         graph_dir.mkdir()
         store = GraphStore(graph_dir / "graph.db")
         store.close()
@@ -2177,9 +2177,9 @@ class TestGetMinimalContext:
         assert result["next_tool_suggestions"] == ["build_or_update_graph"]
 
     def test_graph_built_at_another_commit_returns_not_ready(self, monkeypatch):
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
-        db_path = self.root / ".code-review-graph" / "graph.db"
+        db_path = self.root / ".cartograph" / "graph.db"
         store = GraphStore(db_path)
         store.set_metadata("git_head_sha", "built-sha")
         store.commit()
@@ -2195,7 +2195,7 @@ class TestGetMinimalContext:
     def test_output_is_compact(self):
         import json
 
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
         result = get_minimal_context(
             task="review changes", repo_root=str(self.root),
@@ -2204,7 +2204,7 @@ class TestGetMinimalContext:
         assert len(serialized) < 800
 
     def test_task_routing_review(self):
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
         result = get_minimal_context(
             task="review PR #42", repo_root=str(self.root),
@@ -2212,7 +2212,7 @@ class TestGetMinimalContext:
         assert "detect_changes" in result["next_tool_suggestions"]
 
     def test_task_routing_debug(self):
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
         result = get_minimal_context(
             task="debug login bug", repo_root=str(self.root),
@@ -2220,7 +2220,7 @@ class TestGetMinimalContext:
         assert "semantic_search_nodes" in result["next_tool_suggestions"]
 
     def test_task_routing_refactor(self):
-        from code_review_graph.tools.context import get_minimal_context
+        from cartograph.tools.context import get_minimal_context
 
         result = get_minimal_context(
             task="refactor auth module", repo_root=str(self.root),
@@ -2236,7 +2236,7 @@ class TestGraphProvenance:
         repo = tmp_path / name
         repo.mkdir(parents=True)
         (repo / ".git").mkdir()
-        graph_dir = repo / ".code-review-graph"
+        graph_dir = repo / ".cartograph"
         graph_dir.mkdir()
         store = GraphStore(graph_dir / "graph.db")
         try:
@@ -2282,7 +2282,7 @@ class TestGraphProvenance:
         repo = self._make_repo(
             tmp_path, {"last_updated": "2000-01-02T03:04:05"},
         )
-        db_path = repo / ".code-review-graph" / "graph.db"
+        db_path = repo / ".cartograph" / "graph.db"
         locker = common_module.sqlite3.connect(db_path)
         try:
             # GraphStore uses WAL, where writers do not block readers. Switch
@@ -2379,12 +2379,12 @@ class TestGraphProvenance:
         repo.mkdir()
         (repo / ".git").mkdir()
         assert common_module.graph_provenance(str(repo)) is None
-        assert not (repo / ".code-review-graph").exists()
+        assert not (repo / ".cartograph").exists()
 
     def test_corrupt_graph_database_has_no_envelope(self, tmp_path):
         repo = tmp_path / "repo"
         (repo / ".git").mkdir(parents=True)
-        graph_dir = repo / ".code-review-graph"
+        graph_dir = repo / ".cartograph"
         graph_dir.mkdir()
         (graph_dir / "graph.db").write_bytes(b"not a sqlite database")
         assert common_module.graph_provenance(str(repo)) is None
@@ -2420,7 +2420,7 @@ class TestGraphProvenance:
         assert existing["_graph"] == {"updated_at": "existing"}
 
     def test_registered_sync_tool_preserves_existing_fields(self, tmp_path):
-        from code_review_graph.main import list_graph_stats_tool
+        from cartograph.main import list_graph_stats_tool
 
         repo = self._make_repo(tmp_path, {
             "last_updated": "2000-01-02T03:04:05",

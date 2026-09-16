@@ -12,7 +12,7 @@ A manifest maps abstract operations to whatever concrete command that tool uses:
 
     {
       "name": "engine",
-      "command": [".venv/bin/python", "-m", "code_review_graph"],
+      "command": [".venv/bin/python", "-m", "cartograph"],
       "cwd": "engine",
       "operations": {
         "status": {"args": ["status"], "expect": "ok"},

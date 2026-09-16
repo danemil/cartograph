@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Lint with ruff
-        run: ruff check code_review_graph/
+        run: ruff check cartograph/
 
   type-check:
     runs-on: ubuntu-latest
@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]" mypy types-networkx
       - name: Run mypy
-        run: mypy code_review_graph/ --ignore-missing-imports --no-strict-optional
+        run: mypy cartograph/ --ignore-missing-imports --no-strict-optional
 
   security:
     runs-on: ubuntu-latest
@@ -47,7 +47,7 @@ jobs:
       - name: Install bandit
         run: pip install bandit[toml]
       - name: Run bandit security scan
-        run: bandit -r code_review_graph/ -c pyproject.toml
+        run: bandit -r cartograph/ -c pyproject.toml
 
   schema-sync:
     runs-on: ubuntu-latest
@@ -55,14 +55,14 @@ jobs:
       - uses: actions/checkout@v7
       - name: Check Python/VSCode schema versions match
         run: |
-          PY_VER=$(grep -oP 'LATEST_VERSION\s*=\s*max\(MIGRATIONS\.keys\(\)\)' code_review_graph/migrations.py > /dev/null && python3 -c "
+          PY_VER=$(grep -oP 'LATEST_VERSION\s*=\s*max\(MIGRATIONS\.keys\(\)\)' cartograph/migrations.py > /dev/null && python3 -c "
           import re, ast
-          src = open('code_review_graph/migrations.py').read()
+          src = open('cartograph/migrations.py').read()
           m = re.search(r'MIGRATIONS:\s*dict\[.*?\]\s*=\s*\{([^}]+)\}', src)
           keys = [int(k.strip().rstrip(':')) for k in re.findall(r'(\d+):', m.group(1))]
           print(max(keys))
           ")
-          TS_VER=$(grep -oP 'SUPPORTED_SCHEMA_VERSION\s*=\s*\K\d+' code-review-graph-vscode/src/backend/sqlite.ts)
+          TS_VER=$(grep -oP 'SUPPORTED_SCHEMA_VERSION\s*=\s*\K\d+' cartograph-vscode/src/backend/sqlite.ts)
           echo "Python LATEST_VERSION: $PY_VER"
           echo "VSCode SUPPORTED_SCHEMA_VERSION: $TS_VER"
           if [ "$PY_VER" != "$TS_VER" ]; then
@@ -85,7 +85,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]" pytest-cov
       - name: Run tests with coverage
-        run: pytest --tb=short -q --cov=code_review_graph --cov-report=term-missing --cov-fail-under=65
+        run: pytest --tb=short -q --cov=cartograph --cov-report=term-missing --cov-fail-under=65
 
   google-embeddings:
     name: Google embeddings (${{ matrix.extra }})

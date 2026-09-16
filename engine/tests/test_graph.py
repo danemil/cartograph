@@ -8,10 +8,10 @@ from pathlib import Path, PureWindowsPath
 
 import pytest
 
-import code_review_graph.constants as constants_module
-from code_review_graph.graph import GraphStore
-from code_review_graph.incremental import full_build
-from code_review_graph.parser import EdgeInfo, NodeInfo
+import cartograph.constants as constants_module
+from cartograph.graph import GraphStore
+from cartograph.incremental import full_build
+from cartograph.parser import EdgeInfo, NodeInfo
 
 
 class TestGraphStore:
@@ -577,7 +577,7 @@ class TestGraphStore:
         target=test) to the consumer query, so a future parser flip would
         break this test even if every hand-seeded fixture test still passed.
         """
-        from code_review_graph.parser import CodeParser
+        from cartograph.parser import CodeParser
 
         fixtures = Path(__file__).parent / "fixtures"
         parser = CodeParser()
@@ -629,7 +629,7 @@ class TestGraphStore:
         store = GraphStore.__new__(GraphStore)
         store._conn = conn
 
-        with caplog.at_level(logging.DEBUG, logger="code_review_graph.graph"):
+        with caplog.at_level(logging.DEBUG, logger="cartograph.graph"):
             result = store.get_all_community_ids()
 
         assert result == {}
@@ -642,7 +642,7 @@ class TestGraphStore:
         store = GraphStore.__new__(GraphStore)
         store._conn = conn
 
-        with caplog.at_level(logging.DEBUG, logger="code_review_graph.graph"):
+        with caplog.at_level(logging.DEBUG, logger="cartograph.graph"):
             result = store.get_communities_list()
 
         assert result == []

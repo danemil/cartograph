@@ -8,7 +8,7 @@ from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from code_review_graph import cli
+from cartograph import cli
 
 
 def test_main_handles_legacy_stdio_encoding(monkeypatch):
@@ -19,7 +19,7 @@ def test_main_handles_legacy_stdio_encoding(monkeypatch):
     legacy_stderr = io.TextIOWrapper(raw_stderr, encoding="cp1252")
     monkeypatch.setattr(sys, "stdout", legacy_stdout)
     monkeypatch.setattr(sys, "stderr", legacy_stderr)
-    monkeypatch.setattr(sys, "argv", ["code-review-graph"])
+    monkeypatch.setattr(sys, "argv", ["cartograph"])
 
     cli.main()
 
@@ -27,7 +27,7 @@ def test_main_handles_legacy_stdio_encoding(monkeypatch):
     output = raw_stdout.getvalue().decode(legacy_stdout.encoding)
     assert legacy_stdout.encoding == "utf-8"
     assert legacy_stderr.encoding == "utf-8"
-    assert "code-review-graph" in output
+    assert "cartograph" in output
     assert "Commands:" in output
 
 
@@ -42,15 +42,15 @@ def test_get_version_falls_back_to_package_attr_when_metadata_missing(
     output for installed users whose lookup happened to fail.
     """
     def _raise_package_not_found(_dist_name: str) -> str:
-        raise PackageNotFoundError("code-review-graph")
+        raise PackageNotFoundError("cartograph")
 
     monkeypatch.setattr(cli, "pkg_version", _raise_package_not_found)
 
-    with caplog.at_level(logging.DEBUG, logger="code_review_graph.cli"):
+    with caplog.at_level(logging.DEBUG, logger="cartograph.cli"):
         version = cli._get_version()
 
     # Falls back to the package's __version__, not "dev"
-    from code_review_graph import __version__ as expected
+    from cartograph import __version__ as expected
     assert version == expected
     assert "Package metadata unavailable" in caplog.text
 
@@ -58,14 +58,14 @@ def test_get_version_falls_back_to_package_attr_when_metadata_missing(
 def test_get_version_returns_dev_when_both_sources_fail(monkeypatch, caplog):
     """The literal "dev" fallback still fires when __version__ also fails."""
     def _raise_package_not_found(_dist_name: str) -> str:
-        raise PackageNotFoundError("code-review-graph")
+        raise PackageNotFoundError("cartograph")
 
     monkeypatch.setattr(cli, "pkg_version", _raise_package_not_found)
 
-    import code_review_graph
-    monkeypatch.delattr(code_review_graph, "__version__", raising=False)
+    import cartograph
+    monkeypatch.delattr(cartograph, "__version__", raising=False)
 
-    with caplog.at_level(logging.DEBUG, logger="code_review_graph.cli"):
+    with caplog.at_level(logging.DEBUG, logger="cartograph.cli"):
         version = cli._get_version()
 
     assert version == "dev"
@@ -74,14 +74,14 @@ def test_get_version_returns_dev_when_both_sources_fail(monkeypatch, caplog):
 class TestServeCommand:
     def test_serve_passes_auto_watch_flag(self):
         argv = [
-            "code-review-graph",
+            "cartograph",
             "serve",
             "--repo",
             "repo-root",
             "--auto-watch",
         ]
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.main.main") as mock_serve:
+            with patch("cartograph.main.main") as mock_serve:
                 cli.main()
 
         mock_serve.assert_called_once_with(
@@ -92,13 +92,13 @@ class TestServeCommand:
 
     def test_mcp_alias_maps_to_serve(self):
         argv = [
-            "code-review-graph",
+            "cartograph",
             "mcp",
             "--repo",
             "repo-root",
         ]
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.main.main") as mock_serve:
+            with patch("cartograph.main.main") as mock_serve:
                 cli.main()
 
         mock_serve.assert_called_once_with(
@@ -109,13 +109,13 @@ class TestServeCommand:
 
 class TestWatchInteraction:
     def test_watch_exits_when_lock_is_held(self):
-        argv = ["code-review-graph", "watch", "--repo", "repo-root"]
+        argv = ["cartograph", "watch", "--repo", "repo-root"]
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.graph.GraphStore") as mock_store:
+            with patch("cartograph.graph.GraphStore") as mock_store:
                 mock_store.return_value = MagicMock()
-                with patch("code_review_graph.incremental.get_db_path") as mock_db:
+                with patch("cartograph.incremental.get_db_path") as mock_db:
                     mock_db.return_value = MagicMock()
-                    with patch("code_review_graph.incremental.watch") as mock_watch:
+                    with patch("cartograph.incremental.watch") as mock_watch:
                         mock_watch.side_effect = RuntimeError("watcher already running")
                         try:
                             cli.main()
@@ -126,14 +126,14 @@ class TestWatchInteraction:
 
 def test_visualize_json_uses_local_export(tmp_path, capsys):
     argv = [
-        "code-review-graph",
+        "cartograph",
         "visualize",
         "--repo",
         str(tmp_path),
         "--format",
         "json",
     ]
-    data_dir = tmp_path / ".code-review-graph"
+    data_dir = tmp_path / ".cartograph"
     data_dir.mkdir()
     # visualize is read-only for missing graphs (#803); the path must exist.
     db_path = data_dir / "graph.db"
@@ -141,17 +141,17 @@ def test_visualize_json_uses_local_export(tmp_path, capsys):
     store = MagicMock()
 
     with patch.object(sys, "argv", argv):
-        with patch("code_review_graph.graph.GraphStore", return_value=store):
+        with patch("cartograph.graph.GraphStore", return_value=store):
             with patch(
-                "code_review_graph.incremental.get_db_path",
+                "cartograph.incremental.get_db_path",
                 return_value=db_path,
             ):
                 with patch(
-                    "code_review_graph.incremental.get_data_dir",
+                    "cartograph.incremental.get_data_dir",
                     return_value=data_dir,
                 ):
                     with patch(
-                        "code_review_graph.exports.export_json",
+                        "cartograph.exports.export_json",
                         return_value=data_dir / "graph.json",
                     ) as export_json:
                         cli.main()
@@ -164,7 +164,7 @@ def test_visualize_json_uses_local_export(tmp_path, capsys):
 class TestBuildUpdateCommands:
     def test_build_skip_postprocess_does_not_run_extra_cli_postprocess(self):
         argv = [
-            "code-review-graph",
+            "cartograph",
             "build",
             "--skip-postprocess",
             "--repo",
@@ -178,16 +178,16 @@ class TestBuildUpdateCommands:
         }
 
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.graph.GraphStore") as mock_store:
+            with patch("cartograph.graph.GraphStore") as mock_store:
                 mock_store.return_value = MagicMock()
-                with patch("code_review_graph.incremental.get_db_path") as mock_db:
+                with patch("cartograph.incremental.get_db_path") as mock_db:
                     mock_db.return_value = MagicMock()
                     with patch(
-                        "code_review_graph.tools.build.build_or_update_graph",
+                        "cartograph.tools.build.build_or_update_graph",
                         return_value=result,
                     ) as mock_build:
                         with patch(
-                            "code_review_graph.postprocessing.run_post_processing",
+                            "cartograph.postprocessing.run_post_processing",
                         ) as mock_postprocess:
                             cli.main()
 
@@ -200,7 +200,7 @@ class TestBuildUpdateCommands:
 
     def test_update_skip_flows_does_not_run_extra_cli_postprocess(self):
         argv = [
-            "code-review-graph",
+            "cartograph",
             "update",
             "--skip-flows",
             "--repo",
@@ -214,16 +214,16 @@ class TestBuildUpdateCommands:
         }
 
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.graph.GraphStore") as mock_store:
+            with patch("cartograph.graph.GraphStore") as mock_store:
                 mock_store.return_value = MagicMock()
-                with patch("code_review_graph.incremental.get_db_path") as mock_db:
+                with patch("cartograph.incremental.get_db_path") as mock_db:
                     mock_db.return_value = MagicMock()
                     with patch(
-                        "code_review_graph.tools.build.build_or_update_graph",
+                        "cartograph.tools.build.build_or_update_graph",
                         return_value=result,
                     ) as mock_build:
                         with patch(
-                            "code_review_graph.postprocessing.run_post_processing",
+                            "cartograph.postprocessing.run_post_processing",
                         ) as mock_postprocess:
                             cli.main()
 
@@ -239,7 +239,7 @@ class TestBuildUpdateCommands:
 
     def test_update_forwards_explicit_base_verbatim(self):
         argv = [
-            "code-review-graph",
+            "cartograph",
             "update",
             "--base",
             "HEAD~3",
@@ -255,23 +255,23 @@ class TestBuildUpdateCommands:
         }
 
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.graph.GraphStore") as mock_store:
+            with patch("cartograph.graph.GraphStore") as mock_store:
                 mock_store.return_value = MagicMock()
-                with patch("code_review_graph.incremental.get_db_path") as mock_db:
+                with patch("cartograph.incremental.get_db_path") as mock_db:
                     mock_db.return_value = MagicMock()
                     with patch(
-                        "code_review_graph.tools.build.build_or_update_graph",
+                        "cartograph.tools.build.build_or_update_graph",
                         return_value=result,
                     ) as mock_build:
                         with patch(
-                            "code_review_graph.postprocessing.run_post_processing",
+                            "cartograph.postprocessing.run_post_processing",
                         ):
                             cli.main()
 
         assert mock_build.call_args.kwargs["base"] == "HEAD~3"
 
     def test_update_reports_full_rebuild_fallback(self, capsys):
-        argv = ["code-review-graph", "update", "--repo", "repo-root"]
+        argv = ["cartograph", "update", "--repo", "repo-root"]
         # build_or_update_graph falls back to a full rebuild when there is no
         # usable incremental base; the CLI must say so rather than print
         # "Incremental: 0 files updated", which reads as "nothing happened".
@@ -285,16 +285,16 @@ class TestBuildUpdateCommands:
         }
 
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.graph.GraphStore") as mock_store:
+            with patch("cartograph.graph.GraphStore") as mock_store:
                 mock_store.return_value = MagicMock()
-                with patch("code_review_graph.incremental.get_db_path") as mock_db:
+                with patch("cartograph.incremental.get_db_path") as mock_db:
                     mock_db.return_value = MagicMock()
                     with patch(
-                        "code_review_graph.tools.build.build_or_update_graph",
+                        "cartograph.tools.build.build_or_update_graph",
                         return_value=result,
                     ):
                         with patch(
-                            "code_review_graph.postprocessing.run_post_processing",
+                            "cartograph.postprocessing.run_post_processing",
                         ):
                             cli.main()
 
@@ -310,7 +310,7 @@ class TestDetectChangesCommand:
         (repo / ".git").mkdir()
         (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
         argv = [
-            "code-review-graph",
+            "cartograph",
             "detect-changes",
             "--repo",
             str(repo),
@@ -318,16 +318,16 @@ class TestDetectChangesCommand:
         ]
 
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.graph.GraphStore") as mock_store:
+            with patch("cartograph.graph.GraphStore") as mock_store:
                 mock_store.return_value = MagicMock()
-                with patch("code_review_graph.incremental.get_db_path") as mock_db:
+                with patch("cartograph.incremental.get_db_path") as mock_db:
                     mock_db.return_value = MagicMock()
                     with patch(
-                        "code_review_graph.incremental.get_changed_files",
+                        "cartograph.incremental.get_changed_files",
                         return_value=["app.py"],
                     ):
                         with patch(
-                            "code_review_graph.changes.analyze_changes",
+                            "cartograph.changes.analyze_changes",
                             return_value={"summary": "with churn"},
                         ) as analyze:
                             cli.main()
@@ -347,7 +347,7 @@ class TestDetectChangesCommand:
         (repo / ".git").mkdir()
         (repo / "app.py").write_text("x" * 2000, encoding="utf-8")
         argv = [
-            "code-review-graph",
+            "cartograph",
             "detect-changes",
             "--repo",
             str(repo),
@@ -355,16 +355,16 @@ class TestDetectChangesCommand:
         ]
 
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.graph.GraphStore") as mock_store:
+            with patch("cartograph.graph.GraphStore") as mock_store:
                 mock_store.return_value = MagicMock()
-                with patch("code_review_graph.incremental.get_db_path") as mock_db:
+                with patch("cartograph.incremental.get_db_path") as mock_db:
                     mock_db.return_value = MagicMock()
                     with patch(
-                        "code_review_graph.incremental.get_changed_files",
+                        "cartograph.incremental.get_changed_files",
                         return_value=["app.py"],
                     ):
                         with patch(
-                            "code_review_graph.changes.analyze_changes",
+                            "cartograph.changes.analyze_changes",
                             return_value={"summary": "summary only"},
                         ):
                             cli.main()
@@ -385,23 +385,23 @@ class TestDetectChangesCommand:
         (repo / ".git").mkdir()
         (repo / "app.py").write_text("x" * 2000, encoding="utf-8")
         argv = [
-            "code-review-graph",
+            "cartograph",
             "detect-changes",
             "--repo",
             str(repo),
         ]
 
         with patch.object(sys, "argv", argv):
-            with patch("code_review_graph.graph.GraphStore") as mock_store:
+            with patch("cartograph.graph.GraphStore") as mock_store:
                 mock_store.return_value = MagicMock()
-                with patch("code_review_graph.incremental.get_db_path") as mock_db:
+                with patch("cartograph.incremental.get_db_path") as mock_db:
                     mock_db.return_value = MagicMock()
                     with patch(
-                        "code_review_graph.incremental.get_changed_files",
+                        "cartograph.incremental.get_changed_files",
                         return_value=["app.py"],
                     ):
                         with patch(
-                            "code_review_graph.changes.analyze_changes",
+                            "cartograph.changes.analyze_changes",
                             return_value={"summary": "json summary"},
                         ):
                             cli.main()
@@ -474,8 +474,8 @@ class TestDetectChangesEndToEnd:
         self._git(repo, "commit", "-q", "-m", "change greet")
 
         # Build the graph after the change (stores absolute native paths).
-        from code_review_graph.graph import GraphStore
-        from code_review_graph.incremental import full_build, get_db_path
+        from cartograph.graph import GraphStore
+        from cartograph.incremental import full_build, get_db_path
 
         store = GraphStore(get_db_path(repo))
         try:
@@ -483,7 +483,7 @@ class TestDetectChangesEndToEnd:
         finally:
             store.close()
 
-        argv = ["code-review-graph", "detect-changes", "--repo", str(repo)]
+        argv = ["cartograph", "detect-changes", "--repo", str(repo)]
         with patch.object(sys, "argv", argv):
             cli.main()
 
@@ -520,7 +520,7 @@ def test_explicit_monorepo_subproject_runs_a_real_graph_search(
     # Keep registry writes away from the developer's real home.
     state_dir = tmp_path / "state"
     monkeypatch.setenv("CRG_HOME", str(state_dir))
-    from code_review_graph import registry as registry_module
+    from cartograph import registry as registry_module
 
     monkeypatch.setattr(
         registry_module,
@@ -530,11 +530,11 @@ def test_explicit_monorepo_subproject_runs_a_real_graph_search(
     )
     monkeypatch.setenv("CRG_SERIAL_PARSE", "1")
 
-    from code_review_graph.graph import GraphStore
-    from code_review_graph.incremental import full_build
-    from code_review_graph.search import rebuild_fts_index
+    from cartograph.graph import GraphStore
+    from cartograph.incremental import full_build
+    from cartograph.search import rebuild_fts_index
 
-    db_path = module / ".code-review-graph" / "graph.db"
+    db_path = module / ".cartograph" / "graph.db"
     db_path.parent.mkdir(parents=True)
     store = GraphStore(db_path)
     try:
@@ -544,7 +544,7 @@ def test_explicit_monorepo_subproject_runs_a_real_graph_search(
         store.close()
 
     argv = [
-        "code-review-graph",
+        "cartograph",
         "search",
         "raw_stream_lookup",
         "--repo",
@@ -565,14 +565,14 @@ class TestGraphToolExplicitRepoResolution:
         mono = tmp_path / "mono"
         (mono / ".git").mkdir(parents=True)
         module = mono / "llvm"
-        crg = module / ".code-review-graph"
+        crg = module / ".cartograph"
         crg.mkdir(parents=True)
         (crg / "graph.db").write_bytes(b"")
         return mono, module
 
     def test_explicit_repo_in_monorepo_uses_subproject_root(self, tmp_path):
         _, module = self._make_monorepo(tmp_path)
-        argv = ["code-review-graph", "search", "raw_ostream", "--repo", str(module)]
+        argv = ["cartograph", "search", "raw_ostream", "--repo", str(module)]
         with patch.object(sys, "argv", argv):
             with patch.object(cli, "_run_graph_tool_command") as mock_run:
                 cli.main()
@@ -584,7 +584,7 @@ class TestGraphToolExplicitRepoResolution:
     def test_explicit_repo_without_markers_errors_cleanly(self, tmp_path, capsys):
         bare = tmp_path / "not-a-project"
         bare.mkdir()
-        argv = ["code-review-graph", "search", "x", "--repo", str(bare)]
+        argv = ["cartograph", "search", "x", "--repo", str(bare)]
         with patch.object(sys, "argv", argv):
             with patch.object(cli, "_run_graph_tool_command") as mock_run:
                 try:
@@ -600,7 +600,7 @@ class TestGraphToolExplicitRepoResolution:
         _, module = self._make_monorepo(tmp_path)
         nested = module / "src" / "deep"
         nested.mkdir(parents=True)
-        argv = ["code-review-graph", "search", "x", "--repo", str(nested)]
+        argv = ["cartograph", "search", "x", "--repo", str(nested)]
         with patch.object(sys, "argv", argv):
             with patch.object(cli, "_run_graph_tool_command") as mock_run:
                 cli.main()

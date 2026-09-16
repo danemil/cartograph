@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from code_review_graph.parser import CodeParser
+from cartograph.parser import CodeParser
 
 
 def _parents(nodes):

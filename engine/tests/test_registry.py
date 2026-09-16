@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from code_review_graph.registry import ConnectionPool, Registry, resolve_repo
+from cartograph.registry import ConnectionPool, Registry, resolve_repo
 
 
 class TestRegistry:
@@ -21,7 +21,7 @@ class TestRegistry:
 
         self.repo2 = Path(self.tmp_dir) / "repo2"
         self.repo2.mkdir()
-        (self.repo2 / ".code-review-graph").mkdir()
+        (self.repo2 / ".cartograph").mkdir()
 
     def teardown_method(self):
         import shutil
@@ -54,7 +54,7 @@ class TestRegistry:
             self.registry.register("/nonexistent/path/repo")
 
     def test_register_not_a_repo(self):
-        """Registering a dir without .git or .code-review-graph raises ValueError."""
+        """Registering a dir without .git or .cartograph raises ValueError."""
         import pytest
         bare_dir = Path(self.tmp_dir) / "bare"
         bare_dir.mkdir()
@@ -223,11 +223,11 @@ class TestConnectionPool:
 class TestCrossRepoSearch:
     def test_cross_repo_search_no_repos(self):
         """cross_repo_search with empty registry returns empty results."""
-        from code_review_graph.tools import cross_repo_search_func
+        from cartograph.tools import cross_repo_search_func
 
         tmp_dir = tempfile.mkdtemp()
 
-        with patch("code_review_graph.registry.Registry") as mock_registry_cls:
+        with patch("cartograph.registry.Registry") as mock_registry_cls:
             mock_instance = MagicMock()
             mock_instance.list_repos.return_value = []
             mock_registry_cls.return_value = mock_instance
@@ -241,7 +241,7 @@ class TestCrossRepoSearch:
 
     def test_cross_repo_search_merges_by_local_rank(self, tmp_path):
         """Cross-repo results use local rank instead of incomparable raw scores."""
-        from code_review_graph.tools import cross_repo_search_func
+        from cartograph.tools import cross_repo_search_func
 
         android_repo = tmp_path / "android"
         ios_repo = tmp_path / "ios"
@@ -262,14 +262,14 @@ class TestCrossRepoSearch:
         ]
 
         with (
-            patch("code_review_graph.registry.Registry") as mock_registry_cls,
+            patch("cartograph.registry.Registry") as mock_registry_cls,
             patch(
-                "code_review_graph.tools.registry_tools.get_db_path",
+                "cartograph.tools.registry_tools.get_db_path",
                 side_effect=[android_db, ios_db],
             ),
-            patch("code_review_graph.tools.registry_tools.GraphStore") as mock_store_cls,
+            patch("cartograph.tools.registry_tools.GraphStore") as mock_store_cls,
             patch(
-                "code_review_graph.tools.registry_tools.hybrid_search",
+                "cartograph.tools.registry_tools.hybrid_search",
                 side_effect=[android_results, ios_results],
             ) as mock_search,
         ):
@@ -419,7 +419,7 @@ class TestRegistryLocationIsolation:
     """The registry must never fall back to the real home directory in tests."""
 
     def test_default_path_follows_the_env_override(self, tmp_path, monkeypatch):
-        from code_review_graph.registry import default_registry_path
+        from cartograph.registry import default_registry_path
 
         monkeypatch.setenv("CRG_HOME", str(tmp_path / "elsewhere"))
         assert default_registry_path() == tmp_path / "elsewhere" / "registry.json"
@@ -431,7 +431,7 @@ class TestRegistryLocationIsolation:
         import-time constant would capture the wrong directory and every later
         override would be ignored.
         """
-        from code_review_graph.registry import default_registry_path
+        from cartograph.registry import default_registry_path
 
         monkeypatch.setenv("CRG_HOME", str(tmp_path / "first"))
         first = default_registry_path()
@@ -440,16 +440,16 @@ class TestRegistryLocationIsolation:
         assert default_registry_path() == tmp_path / "second" / "registry.json"
 
     def test_blank_override_falls_back_to_home(self, monkeypatch):
-        from code_review_graph.constants import crg_home
+        from cartograph.constants import crg_home
 
         monkeypatch.setenv("CRG_HOME", "   ")
-        assert crg_home() == Path.home() / ".code-review-graph"
+        assert crg_home() == Path.home() / ".cartograph"
 
     def test_bare_registry_writes_under_the_override(self, tmp_path, monkeypatch):
         """Registry() with no path argument must land in the sandbox.
 
         This is the leak that put pytest tmp paths into a developer's real
-        ~/.code-review-graph/registry.json.
+        ~/.cartograph/registry.json.
         """
         # Point Path.home() at a fake home too, so the assertion that nothing
         # was written there needs no access to the developer's real one.
@@ -469,11 +469,11 @@ class TestRegistryLocationIsolation:
         sandboxed = sandbox / "registry.json"
         assert sandboxed.exists()
         assert "leaky" in sandboxed.read_text(encoding="utf-8")
-        assert not (fake_home / ".code-review-graph").exists()
+        assert not (fake_home / ".cartograph").exists()
 
     def test_get_data_dir_uses_the_sandboxed_registry(self, tmp_path, monkeypatch):
         """incremental.get_data_dir() builds its own Registry() internally."""
-        from code_review_graph.incremental import get_data_dir
+        from cartograph.incremental import get_data_dir
 
         monkeypatch.setenv("CRG_HOME", str(tmp_path / "sandbox"))
         monkeypatch.delenv("CRG_DATA_DIR", raising=False)

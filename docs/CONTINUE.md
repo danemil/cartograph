@@ -132,7 +132,7 @@ context an agent pays for on every call.
 
 - **Run from the repo root**, not `engine/`. The conformance manifest uses
   `cwd: engine`; running from inside `engine/` makes it look for `engine/engine`.
-- **`PYTHONPATH=engine`** is needed when invoking `python -m code_review_graph`
+- **`PYTHONPATH=engine`** is needed when invoking `python -m cartograph`
   from the repo root (the package is not pip-installed). The venv is at
   `engine/.venv`.
 - **Repo-root divergence is real.** `engine/` has no `.git`, so `find_project_root`
@@ -147,11 +147,11 @@ context an agent pays for on every call.
   iterates to a fixed point), and truncation flags cost characters too (so they
   are installed *before* fitting, not after).
 - The engine graph for this repo is built and current (253 files, 5746 nodes).
-  Rebuild: `PYTHONPATH=engine engine/.venv/bin/python -m code_review_graph build --repo .`
+  Rebuild: `PYTHONPATH=engine engine/.venv/bin/python -m cartograph build --repo .`
 
 ## After that, in rough priority
 
-1. **The rename pass** — `code_review_graph` → `cartograph`. Cheap now, worse
+1. **The rename pass** — `code_review_graph` → `cartograph` (done). Cheap now, worse
    later, and agents act on remediation strings literally.
 2. **Triage the 56 failing tests** (see above) — mostly delete-or-update, but
    it has to be done before the suite is a safety net again.

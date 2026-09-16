@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from code_review_graph.parser import CodeParser
+from cartograph.parser import CodeParser
 
 
 @pytest.fixture()

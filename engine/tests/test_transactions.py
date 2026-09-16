@@ -8,10 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
-from code_review_graph.graph import GraphStore
-from code_review_graph.parser import NodeInfo, EdgeInfo
-from code_review_graph.communities import store_communities
-from code_review_graph.flows import store_flows
+from cartograph.graph import GraphStore
+from cartograph.parser import NodeInfo, EdgeInfo
+from cartograph.communities import store_communities
+from cartograph.flows import store_flows
 
 @pytest.fixture
 def store():

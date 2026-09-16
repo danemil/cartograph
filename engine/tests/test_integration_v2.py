@@ -8,28 +8,28 @@ generate_wiki, and the Registry API.
 import tempfile
 from pathlib import Path
 
-from code_review_graph.changes import analyze_changes
-from code_review_graph.communities import (
+from cartograph.changes import analyze_changes
+from cartograph.communities import (
     detect_communities,
     get_architecture_overview,
     get_communities,
     store_communities,
 )
-from code_review_graph.flows import (
+from cartograph.flows import (
     get_affected_flows,
     get_flow_by_id,
     get_flows,
     store_flows,
     trace_flows,
 )
-from code_review_graph.graph import GraphStore
-from code_review_graph.hints import generate_hints, get_session, reset_session
-from code_review_graph.parser import EdgeInfo, NodeInfo
-from code_review_graph.prompts import review_changes_prompt
-from code_review_graph.refactor import find_dead_code, rename_preview
-from code_review_graph.registry import Registry
-from code_review_graph.search import hybrid_search, rebuild_fts_index
-from code_review_graph.wiki import generate_wiki
+from cartograph.graph import GraphStore
+from cartograph.hints import generate_hints, get_session, reset_session
+from cartograph.parser import EdgeInfo, NodeInfo
+from cartograph.prompts import review_changes_prompt
+from cartograph.refactor import find_dead_code, rename_preview
+from cartograph.registry import Registry
+from cartograph.search import hybrid_search, rebuild_fts_index
+from cartograph.wiki import generate_wiki
 
 
 class TestV2Integration:

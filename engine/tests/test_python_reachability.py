@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from code_review_graph.graph import GraphStore
-from code_review_graph.parser import CodeParser
-from code_review_graph.refactor import find_dead_code
+from cartograph.graph import GraphStore
+from cartograph.parser import CodeParser
+from cartograph.refactor import find_dead_code
 
 
 def _call_targets(source: bytes) -> set[str]:

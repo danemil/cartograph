@@ -8,7 +8,7 @@ malformed input. Also guards that the now-shared branch left C# behavior
 untouched.
 """
 
-from code_review_graph.parser import CodeParser
+from cartograph.parser import CodeParser
 
 
 def _java_funcs(source: str, tmp_path):

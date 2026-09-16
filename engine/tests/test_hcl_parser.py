@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from code_review_graph.graph import GraphStore
-from code_review_graph.incremental import full_build
-from code_review_graph.parser import CodeParser
+from cartograph.graph import GraphStore
+from cartograph.incremental import full_build
+from cartograph.parser import CodeParser
 
 
 def test_for_expression_references_are_emitted_for_local_binding() -> None:
@@ -69,7 +69,7 @@ module "network" {
         encoding="utf-8",
     )
 
-    store = GraphStore(tmp_path / ".code-review-graph" / "graph.db")
+    store = GraphStore(tmp_path / ".cartograph" / "graph.db")
     try:
         result = full_build(tmp_path, store)
 

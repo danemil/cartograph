@@ -16,7 +16,7 @@ echo "== capability envelope =="
 echo
 echo "== skills match the CLI =="
 ( cd engine && PYTHONPATH=. .venv/bin/python ../contracts/capability-v1/check_skills.py \
-    --skills ../skills --command .venv/bin/python -m code_review_graph ) | tail -1 || fail=1
+    --skills ../skills --command .venv/bin/python -m cartograph ) | tail -1 || fail=1
 
 echo
 echo "== skills are installed where hosts look =="

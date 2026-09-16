@@ -3,7 +3,7 @@
   "command": [
     ".venv/bin/python",
     "-m",
-    "code_review_graph"
+    "cartograph"
   ],
   "cwd": "engine",
   "operations": {
@@ -132,7 +132,7 @@
         "--repo",
         ".",
         "--files",
-        "engine/code_review_graph/cli.py",
+        "engine/cartograph/cli.py",
         "--limit",
         "5"
       ],
@@ -147,7 +147,7 @@
         "--repo",
         ".",
         "--files",
-        "engine/code_review_graph/cli.py",
+        "engine/cartograph/cli.py",
         "--limit",
         "5"
       ],

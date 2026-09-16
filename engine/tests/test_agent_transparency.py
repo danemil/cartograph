@@ -8,19 +8,19 @@ from types import SimpleNamespace
 
 import pytest
 
-import code_review_graph.main as main_module
-import code_review_graph.tools._common as common_module
-import code_review_graph.tools.query as query_module
-from code_review_graph.graph import GraphStore
-from code_review_graph.parser import EdgeInfo, NodeInfo
-from code_review_graph.tools.query import query_graph, semantic_search_nodes
+import cartograph.main as main_module
+import cartograph.tools._common as common_module
+import cartograph.tools.query as query_module
+from cartograph.graph import GraphStore
+from cartograph.parser import EdgeInfo, NodeInfo
+from cartograph.tools.query import query_graph, semantic_search_nodes
 
 
 def _make_repo(tmp_path: Path, name: str = "repo") -> tuple[Path, GraphStore]:
     root = tmp_path / name
     root.mkdir()
     (root / ".git").mkdir()
-    graph_dir = root / ".code-review-graph"
+    graph_dir = root / ".cartograph"
     graph_dir.mkdir()
     return root, GraphStore(graph_dir / "graph.db")
 

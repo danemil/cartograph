@@ -10,9 +10,9 @@ and that risk scoring still sees the exempt nodes.
 import tempfile
 from pathlib import Path
 
-from code_review_graph.changes import _TEST_GAP_EXEMPT_NAMES, analyze_changes
-from code_review_graph.graph import GraphStore
-from code_review_graph.parser import EdgeInfo, NodeInfo
+from cartograph.changes import _TEST_GAP_EXEMPT_NAMES, analyze_changes
+from cartograph.graph import GraphStore
+from cartograph.parser import EdgeInfo, NodeInfo
 
 
 class TestExemptListEdges:

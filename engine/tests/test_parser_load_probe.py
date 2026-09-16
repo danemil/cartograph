@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from code_review_graph import parser as parser_module
-from code_review_graph.parser import CodeParser
+from cartograph import parser as parser_module
+from cartograph.parser import CodeParser
 
 
 @pytest.fixture(autouse=True)

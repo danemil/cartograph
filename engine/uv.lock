@@ -217,6 +217,113 @@ wheels = [
 ]
 
 [[package]]
+name = "cartograph"
+version = "2.3.8"
+source = { editable = "." }
+dependencies = [
+    { name = "fastmcp" },
+    { name = "mcp" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pyyaml" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-language-pack" },
+    { name = "watchdog" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "google-genai" },
+    { name = "igraph" },
+    { name = "jedi" },
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "ollama" },
+    { name = "pyyaml" },
+    { name = "sentence-transformers" },
+]
+communities = [
+    { name = "igraph" },
+]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+]
+embeddings = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sentence-transformers" },
+]
+enrichment = [
+    { name = "jedi" },
+]
+eval = [
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pyyaml" },
+]
+google-embeddings = [
+    { name = "google-genai" },
+]
+wiki = [
+    { name = "ollama" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cartograph", extras = ["communities"], marker = "extra == 'all'" },
+    { name = "cartograph", extras = ["embeddings"], marker = "extra == 'all'" },
+    { name = "cartograph", extras = ["enrichment"], marker = "extra == 'all'" },
+    { name = "cartograph", extras = ["eval"], marker = "extra == 'all'" },
+    { name = "cartograph", extras = ["google-embeddings"], marker = "extra == 'all'" },
+    { name = "cartograph", extras = ["wiki"], marker = "extra == 'all'" },
+    { name = "fastmcp", specifier = ">=3.2.4,<4" },
+    { name = "google-genai", marker = "extra == 'google-embeddings'", specifier = ">=1.0.0,<3" },
+    { name = "igraph", marker = "extra == 'communities'", specifier = ">=0.11.0" },
+    { name = "jedi", marker = "extra == 'enrichment'", specifier = ">=0.19.2" },
+    { name = "matplotlib", marker = "extra == 'eval'", specifier = ">=3.7.0" },
+    { name = "mcp", specifier = ">=1.0.0,<3" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10,<3" },
+    { name = "networkx", specifier = ">=3.2,<4" },
+    { name = "numpy", marker = "extra == 'embeddings'", specifier = ">=1.26,<3" },
+    { name = "ollama", marker = "extra == 'wiki'", specifier = ">=0.1.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0,<9" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23,<2" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0,<8" },
+    { name = "pyyaml", specifier = ">=6.0,<7" },
+    { name = "pyyaml", marker = "extra == 'eval'", specifier = ">=6.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0,<1" },
+    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=3.0.0,<6" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0,<3" },
+    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'dev'", specifier = ">=2.0" },
+    { name = "tree-sitter", specifier = ">=0.23.0,<1" },
+    { name = "tree-sitter-language-pack", specifier = ">=0.3.0,<1" },
+    { name = "watchdog", specifier = ">=4.0.0,<7" },
+]
+provides-extras = ["embeddings", "google-embeddings", "communities", "eval", "wiki", "all", "enrichment", "dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-asyncio", specifier = ">=0.23,<2" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.7.22"
 source = { registry = "https://pypi.org/simple" }
@@ -432,113 +539,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/e2/79c688af8b210d232694e31e59da9f6ec747bae31c3f5946e4e9b98860d5/click-8.4.2-py3-none-any.whl", hash = "sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76", size = 119243, upload-time = "2026-06-24T17:45:13.73Z" },
-]
-
-[[package]]
-name = "code-review-graph"
-version = "2.3.8"
-source = { editable = "." }
-dependencies = [
-    { name = "fastmcp" },
-    { name = "mcp" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pyyaml" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-    { name = "tree-sitter" },
-    { name = "tree-sitter-language-pack" },
-    { name = "watchdog" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "google-genai" },
-    { name = "igraph" },
-    { name = "jedi" },
-    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "ollama" },
-    { name = "pyyaml" },
-    { name = "sentence-transformers" },
-]
-communities = [
-    { name = "igraph" },
-]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-]
-embeddings = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "sentence-transformers" },
-]
-enrichment = [
-    { name = "jedi" },
-]
-eval = [
-    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pyyaml" },
-]
-google-embeddings = [
-    { name = "google-genai" },
-]
-wiki = [
-    { name = "ollama" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "code-review-graph", extras = ["communities"], marker = "extra == 'all'" },
-    { name = "code-review-graph", extras = ["embeddings"], marker = "extra == 'all'" },
-    { name = "code-review-graph", extras = ["enrichment"], marker = "extra == 'all'" },
-    { name = "code-review-graph", extras = ["eval"], marker = "extra == 'all'" },
-    { name = "code-review-graph", extras = ["google-embeddings"], marker = "extra == 'all'" },
-    { name = "code-review-graph", extras = ["wiki"], marker = "extra == 'all'" },
-    { name = "fastmcp", specifier = ">=3.2.4,<4" },
-    { name = "google-genai", marker = "extra == 'google-embeddings'", specifier = ">=1.0.0,<3" },
-    { name = "igraph", marker = "extra == 'communities'", specifier = ">=0.11.0" },
-    { name = "jedi", marker = "extra == 'enrichment'", specifier = ">=0.19.2" },
-    { name = "matplotlib", marker = "extra == 'eval'", specifier = ">=3.7.0" },
-    { name = "mcp", specifier = ">=1.0.0,<3" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10,<3" },
-    { name = "networkx", specifier = ">=3.2,<4" },
-    { name = "numpy", marker = "extra == 'embeddings'", specifier = ">=1.26,<3" },
-    { name = "ollama", marker = "extra == 'wiki'", specifier = ">=0.1.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0,<9" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23,<2" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0,<8" },
-    { name = "pyyaml", specifier = ">=6.0,<7" },
-    { name = "pyyaml", marker = "extra == 'eval'", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0,<1" },
-    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=3.0.0,<6" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0,<3" },
-    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'dev'", specifier = ">=2.0" },
-    { name = "tree-sitter", specifier = ">=0.23.0,<1" },
-    { name = "tree-sitter-language-pack", specifier = ">=0.3.0,<1" },
-    { name = "watchdog", specifier = ">=4.0.0,<7" },
-]
-provides-extras = ["embeddings", "google-embeddings", "communities", "eval", "wiki", "all", "enrichment", "dev"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest-asyncio", specifier = ">=0.23,<2" },
 ]
 
 [[package]]

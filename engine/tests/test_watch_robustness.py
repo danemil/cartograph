@@ -23,15 +23,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from code_review_graph.daemon import (
+from cartograph.daemon import (
     DaemonConfig,
     WatchRepo,
     read_watch_health,
     watch_health_path,
     watcher_status,
 )
-from code_review_graph.graph import GraphStore
-from code_review_graph.incremental import (
+from cartograph.graph import GraphStore
+from cartograph.incremental import (
     _WATCH_SPLIT_MIN_DIRS,
     _load_ignore_patterns,
     _plan_watch_paths,
@@ -41,7 +41,7 @@ from code_review_graph.incremental import (
     incremental_update,
     watch,
 )
-from code_review_graph.parser import NodeInfo
+from cartograph.parser import NodeInfo
 
 
 @pytest.fixture(autouse=True)
@@ -260,7 +260,7 @@ class TestIgnoreAwareScheduling:
     def test_a_single_path_can_opt_out(self, tmp_path):
         """Dropping files from the graph needs an escape smaller than a kill switch."""
         _maven_repo(tmp_path)
-        (tmp_path / ".code-review-graphignore").write_text(
+        (tmp_path / ".cartographignore").write_text(
             "# keep our hand-written module\n!intranet-backend/target\n", encoding="utf-8"
         )
         clear_nested_ignore_cache()
@@ -275,11 +275,11 @@ class TestIgnoreAwareScheduling:
         _maven_repo(tmp_path)
         clear_nested_ignore_cache()
 
-        with caplog.at_level(logging.INFO, logger="code_review_graph.incremental"):
+        with caplog.at_level(logging.INFO, logger="cartograph.incremental"):
             _load_ignore_patterns(tmp_path)
 
         assert "intranet-backend/target" in caplog.text
-        assert ".code-review-graphignore" in caplog.text
+        assert ".cartographignore" in caplog.text
 
 
 class TestNewDirectoryAdoption:
@@ -669,7 +669,7 @@ class TestObserverLiveness:
         instead of only where inode reuse happens to occur.
         """
         monkeypatch.setattr(
-            "code_review_graph.incremental._watch_identity", lambda path: (1, 2, 0.0)
+            "cartograph.incremental._watch_identity", lambda path: (1, 2, 0.0)
         )
         supervisor, observer, watched, thread, gate = self._watched_as_planned(tmp_path)
 
@@ -742,7 +742,7 @@ class TestWatchLoop:
             patch("watchdog.observers.Observer", return_value=observer),
             patch("time.sleep", side_effect=sleeper),
             patch(
-                "code_review_graph.incremental._WATCH_HEALTH_INTERVAL",
+                "cartograph.incremental._WATCH_HEALTH_INTERVAL",
                 health_interval,
             ),
         ):
@@ -784,15 +784,15 @@ class TestWatchLoop:
 
     def test_cli_watch_turns_a_dead_observer_into_exit_code_1(self):
         """The daemon restarts on process exit, so the exit code has to be non-zero."""
-        from code_review_graph import cli
+        from cartograph import cli
 
-        argv = ["code-review-graph", "watch", "--repo", "repo-root"]
+        argv = ["cartograph", "watch", "--repo", "repo-root"]
         with (
             patch.object(sys, "argv", argv),
-            patch("code_review_graph.graph.GraphStore", return_value=MagicMock()),
-            patch("code_review_graph.incremental.get_db_path", return_value=MagicMock()),
+            patch("cartograph.graph.GraphStore", return_value=MagicMock()),
+            patch("cartograph.incremental.get_db_path", return_value=MagicMock()),
             patch(
-                "code_review_graph.incremental.watch",
+                "cartograph.incremental.watch",
                 side_effect=RuntimeError("watch observer stopped: dead thread(s) Thread-3"),
             ),
             pytest.raises(SystemExit) as exit_info,
@@ -977,7 +977,7 @@ class TestWatchLoop:
                 real_sleep(0.05)
 
         try:
-            with patch("code_review_graph.incremental._DEBOUNCE_SECONDS", 0.01):
+            with patch("cartograph.incremental._DEBOUNCE_SECONDS", 0.01):
                 self._watch_with(
                     tmp_path,
                     store,
@@ -1012,7 +1012,7 @@ class TestWatchLoop:
                 patch("watchdog.observers.Observer", return_value=FakeObserver()),
                 patch("time.sleep", side_effect=KeyboardInterrupt),
                 patch(
-                    "code_review_graph.incremental.incremental_update",
+                    "cartograph.incremental.incremental_update",
                     side_effect=record_initial_health,
                 ),
             ):
@@ -1104,7 +1104,7 @@ class TestRealObserver:
             except BaseException as exc:  # noqa: BLE001 - surfaced by the assertions
                 failure.append(exc)
 
-        with patch("code_review_graph.incremental._WATCH_TICK_SECONDS", 0.05):
+        with patch("cartograph.incremental._WATCH_TICK_SECONDS", 0.05):
             thread = threading.Thread(target=run_watch, name="watch-under-test", daemon=True)
             thread.start()
             try:
@@ -1161,7 +1161,7 @@ class TestRealObserver:
             except BaseException as exc:  # noqa: BLE001 - surfaced by the assertions
                 failure.append(exc)
 
-        with patch("code_review_graph.incremental._WATCH_TICK_SECONDS", 0.05):
+        with patch("cartograph.incremental._WATCH_TICK_SECONDS", 0.05):
             thread = threading.Thread(target=run_watch, name="watch-under-test", daemon=True)
             thread.start()
             try:
@@ -1206,7 +1206,7 @@ class TestRealObserver:
             except BaseException as exc:  # noqa: BLE001 - surfaced by the assertions
                 failure.append(exc)
 
-        with patch("code_review_graph.incremental._WATCH_TICK_SECONDS", 0.05):
+        with patch("cartograph.incremental._WATCH_TICK_SECONDS", 0.05):
             thread = threading.Thread(target=run_watch, name="watch-under-test", daemon=True)
             thread.start()
             try:
@@ -1286,7 +1286,7 @@ class TestStatusSurfacesStalls:
         assert watcher_status(True, health) == "ok"
 
     def test_daemon_status_reports_the_stall(self, tmp_path):
-        from code_review_graph.daemon import WatchDaemon
+        from cartograph.daemon import WatchDaemon
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -1298,9 +1298,9 @@ class TestStatusSurfacesStalls:
         daemon = WatchDaemon(config=config, config_path=tmp_path / "watch.toml")
 
         with patch(
-            "code_review_graph.daemon.load_state",
+            "cartograph.daemon.load_state",
             return_value={"repo": {"pid": 4242, "path": str(repo)}},
-        ), patch("code_review_graph.daemon._is_pid_alive", return_value=True):
+        ), patch("cartograph.daemon._is_pid_alive", return_value=True):
             entry = daemon.status()["repos"][0]
 
         assert entry["alive"] is True, "the process really is still running"
@@ -1308,7 +1308,7 @@ class TestStatusSurfacesStalls:
         assert entry["observer_alive"] is False
 
     def test_daemon_cli_status_prints_a_stalled_watcher(self, tmp_path):
-        from code_review_graph.daemon_cli import _handle_status
+        from cartograph.daemon_cli import _handle_status
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -1319,14 +1319,14 @@ class TestStatusSurfacesStalls:
         )
 
         with (
-            patch("code_review_graph.daemon.is_daemon_running", return_value=True),
-            patch("code_review_graph.daemon.load_config", return_value=config),
-            patch("code_review_graph.daemon.read_pid", return_value=4242),
+            patch("cartograph.daemon.is_daemon_running", return_value=True),
+            patch("cartograph.daemon.load_config", return_value=config),
+            patch("cartograph.daemon.read_pid", return_value=4242),
             patch(
-                "code_review_graph.daemon.load_state",
+                "cartograph.daemon.load_state",
                 return_value={"repo": {"pid": 4242, "path": str(repo)}},
             ),
-            patch("code_review_graph.daemon.pid_alive", return_value=True),
+            patch("cartograph.daemon.pid_alive", return_value=True),
             patch("builtins.print") as printer,
         ):
             _handle_status(MagicMock())
@@ -1337,7 +1337,7 @@ class TestStatusSurfacesStalls:
 
     def test_restart_backs_off_instead_of_looping(self, tmp_path, caplog):
         """A watcher that keeps dying must not repay a full build every 30s."""
-        from code_review_graph.daemon import WatchDaemon
+        from cartograph.daemon import WatchDaemon
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -1368,7 +1368,7 @@ class TestStatusSurfacesStalls:
             assert daemon.restart_count("repo") == 2
 
     def test_restart_counter_resets_after_a_healthy_run(self, tmp_path):
-        from code_review_graph.daemon import WatchDaemon
+        from cartograph.daemon import WatchDaemon
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -1394,7 +1394,7 @@ class TestStatusSurfacesStalls:
 
     def test_reaping_a_child_clears_its_health_file(self, tmp_path):
         """A killed child cannot clear its own file; the leftover reads as stalled."""
-        from code_review_graph.daemon import WatchDaemon
+        from cartograph.daemon import WatchDaemon
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -1408,7 +1408,7 @@ class TestStatusSurfacesStalls:
         assert not watch_health_path(repo).exists()
 
     def test_daemon_health_check_warns_about_a_stalled_watcher(self, tmp_path, caplog):
-        from code_review_graph.daemon import WatchDaemon
+        from cartograph.daemon import WatchDaemon
 
         repo = tmp_path / "repo"
         repo.mkdir()

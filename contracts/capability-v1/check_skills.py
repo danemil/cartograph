@@ -14,7 +14,7 @@ from the live argparse parser. Skill -> capabilities -> parser, with no
 hand-maintained link anywhere in the chain.
 
     python contracts/capability-v1/check_skills.py --skills skills \\
-        --command engine/.venv/bin/python -m code_review_graph
+        --command engine/.venv/bin/python -m cartograph
 
 It shells out; it must never import product code.
 """
