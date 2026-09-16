@@ -112,21 +112,24 @@ class TestStripJsonc:
         assert json.loads(_strip_jsonc(src)) == json.loads(src)
 
 
+
+#: The canonical pack is the source of truth for which skills exist. A
+#: hand-written list here is one more copy to drift — which is the defect this
+#: whole area was rewritten to remove.
+CANONICAL_SKILLS = Path(__file__).parents[2] / "skills"
+PACK_NAMES = sorted(p.parent.name for p in CANONICAL_SKILLS.glob("*/SKILL.md"))
+
+
 class TestGenerateSkills:
     def test_creates_skills_directory(self, tmp_path):
         result = generate_skills(tmp_path)
         assert result.is_dir()
         assert result == tmp_path / ".claude" / "skills"
 
-    def test_creates_four_skill_subdirs(self, tmp_path):
+    def test_creates_a_subdir_per_pack_skill(self, tmp_path):
         skills_dir = generate_skills(tmp_path)
         subdirs = sorted(f.name for f in skills_dir.iterdir() if f.is_dir())
-        assert subdirs == [
-            "debug-issue",
-            "explore-codebase",
-            "refactor-safely",
-            "review-changes",
-        ]
+        assert subdirs == PACK_NAMES
         for d in skills_dir.iterdir():
             assert (d / "SKILL.md").is_file()
 
@@ -147,17 +150,11 @@ class TestGenerateSkills:
     def test_skill_frontmatter_names_match_lowercase_directories(self, tmp_path):
         """Generated and bundled skills use the discovery-safe name format."""
         generated = generate_skills(tmp_path)
-        bundled = Path(__file__).parents[1] / "skills"
 
-        for skill_name in (
-            "debug-issue",
-            "explore-codebase",
-            "refactor-safely",
-            "review-changes",
-        ):
+        for skill_name in PACK_NAMES:
             for skill_file in (
                 generated / skill_name / "SKILL.md",
-                bundled / skill_name / "SKILL.md",
+                CANONICAL_SKILLS / skill_name / "SKILL.md",
             ):
                 content = skill_file.read_text(encoding="utf-8")
                 assert f"\nname: {skill_name}\n" in content
@@ -167,69 +164,28 @@ class TestGenerateSkills:
         result = generate_skills(tmp_path, skills_dir=custom)
         assert result == custom
         assert result.is_dir()
-        assert len(list(result.iterdir())) == 4
+        assert len(list(result.iterdir())) == len(PACK_NAMES)
 
-    def test_skill_content_includes_get_minimal_context(self, tmp_path):
-        """Every skill template must reference get_minimal_context_tool."""
+    def test_every_skill_invokes_the_cli_and_never_an_mcp_tool(self, tmp_path):
+        """Replaces two upstream tests that required MCP tool names.
+
+        They asserted every skill mentioned `get_minimal_context_tool` and a
+        `detail_level` argument. Cartograph ships no MCP server, so both now
+        describe something an agent cannot call. What matters instead is that
+        each skill drives the CLI.
+        """
         skills_dir = generate_skills(tmp_path)
         for subdir in skills_dir.iterdir():
             content = (subdir / "SKILL.md").read_text()
-            assert "get_minimal_context_tool" in content, (
-                f"{subdir.name} missing get_minimal_context_tool reference"
-            )
-
-    def test_skill_templates_use_exported_tool_names(self, tmp_path):
-        generated = generate_skills(tmp_path)
-        bundled = Path(__file__).parents[1] / "skills"
-
-        expected_tools = {
-            "explore-codebase": [
-                "get_minimal_context_tool",
-                "list_graph_stats_tool",
-                "get_community_tool",
-                "list_flows_tool",
-                "get_flow_tool",
-                "find_large_functions_tool",
-            ],
-            "review-changes": ["get_minimal_context_tool", "get_affected_flows_tool"],
-            "debug-issue": ["get_minimal_context_tool", "get_flow_tool"],
-            "refactor-safely": ["get_minimal_context_tool", "find_large_functions_tool"],
-        }
-        legacy_tools = [
-            "get_minimal_context",
-            "list_graph_stats",
-            "get_community",
-            "list_flows",
-            "get_flow",
-            "find_large_functions",
-        ]
-
-        for skill_name, tool_names in expected_tools.items():
-            for skill_file in (
-                generated / skill_name / "SKILL.md",
-                bundled / skill_name / "SKILL.md",
-            ):
-                content = skill_file.read_text(encoding="utf-8")
-                for tool_name in tool_names:
-                    assert tool_name in content, skill_file
-                for legacy_tool in legacy_tools:
-                    assert f"`{legacy_tool}`" not in content, skill_file
-
-    def test_skill_content_includes_detail_level(self, tmp_path):
-        """Every skill template must reference detail_level."""
-        skills_dir = generate_skills(tmp_path)
-        for subdir in skills_dir.iterdir():
-            content = (subdir / "SKILL.md").read_text()
-            assert "detail_level" in content, (
-                f"{subdir.name} missing detail_level reference"
-            )
+            assert "carto " in content, f"{subdir.name} invokes no carto command"
+            assert "_tool" not in content, f"{subdir.name} names an MCP tool"
 
     def test_idempotent(self, tmp_path):
         """Running twice should not fail and files should still be valid."""
         generate_skills(tmp_path)
         generate_skills(tmp_path)
         skills_dir = tmp_path / ".claude" / "skills"
-        assert len(list(skills_dir.iterdir())) == 4
+        assert len(list(skills_dir.iterdir())) == len(PACK_NAMES)
 
 
 class TestGenerateHooksConfig:
@@ -671,7 +627,7 @@ class TestInjectClaudeMd:
         inject_claude_md(tmp_path)
         content = (tmp_path / "CLAUDE.md").read_text()
         assert _CLAUDE_MD_SECTION_MARKER in content
-        assert "MCP Tools" in content
+        assert "## Code knowledge graph" in content
 
     def test_appends_to_existing_file(self, tmp_path):
         claude_md = tmp_path / "CLAUDE.md"
@@ -948,7 +904,7 @@ class TestInjectPlatformInstructionsFiltering:
         assert second == []
         content = (tmp_path / "CODEBUDDY.md").read_text(encoding="utf-8")
         assert content.count(_CLAUDE_MD_SECTION_MARKER) == 1
-        assert "detect_changes_tool" in content
+        assert "carto review-summary" in content
         assert not (tmp_path / "CLAUDE.md").exists()
         assert not (tmp_path / "AGENTS.md").exists()
 
@@ -1008,7 +964,10 @@ class TestInstructionGuardrails:
         for filename, skill in skills_module._SKILLS.items():
             body = skill["body"]
             assert "ALWAYS start with" not in body, filename
-            assert "Read the implementation and its tests before changing code." in body, filename
+            # Upstream demanded one exact sentence. The point is the guardrail,
+            # not the wording: a skill must not present the graph as a
+            # substitute for reading the code.
+            assert "read" in body.lower(), filename
 
 
 class TestCodeBuddyPlatform:
@@ -1101,18 +1060,15 @@ class TestCodeBuddyPlatform:
         skills_root = install_codebuddy_skills(tmp_path)
 
         assert skills_root == tmp_path / ".codebuddy" / "skills"
-        assert {path.name for path in skills_root.iterdir()} == {
-            "debug-issue",
-            "explore-codebase",
-            "refactor-safely",
-            "review-changes",
-        }
+        assert {path.name for path in skills_root.iterdir()} == set(PACK_NAMES)
         for skill_dir in skills_root.iterdir():
             content = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
             assert content.startswith("---\n")
             assert f"name: {skill_dir.name}\n" in content
             assert "description:" in content
-            assert "get_minimal_context" in content
+            # Was `get_minimal_context`, an MCP tool. CodeBuddy gets the same
+            # pack as every other host, and that pack drives the CLI.
+            assert "carto " in content
 
     def test_project_hooks_preserve_user_settings_and_resolve_repo_at_runtime(
         self, tmp_path

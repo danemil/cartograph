@@ -49,43 +49,15 @@ built into VS Code 1.135.0), installing from a private repo, default-deny egress
 The envelope contract is now fully honoured: everything it declares, it does.
 And the capability is reachable by an agent, not only at a terminal.
 
-## NEXT TASK — `carto install` destroys the skills pack
+## NEXT TASK — `carto-hook` + detached launcher
 
-Found while renaming, and it defeats the work two commits earlier.
+Makes Cartograph fire automatically instead of only when an agent chooses to
+call it. Two known obstacles, both recorded in the vault: Copilot has no async
+hook type, and `&` does not detach on Windows.
 
-`generate_skills()` (`engine/cartograph/skills.py:995`) writes upstream's
-bundled skills into `repo_root/.claude/skills/<name>/SKILL.md`. **All five of
-its names collide exactly with ours** — build-graph, debug-issue,
-explore-codebase, refactor-safely, review-changes — and upstream's bodies tell
-the agent to *"use the cartograph MCP tools"*, which do not exist here. So a
-normal `carto install` silently overwrites five verified skills with five that
-instruct the agent to call a banned, absent MCP server.
-
-The content lives in three places that must agree:
-
-| Where | What |
-|---|---|
-| `skills/*/SKILL.md` | ours, canonical, verified by `check_skills.py` |
-| `engine/cartograph/skills.py:875` `_SKILLS` | a Python dict of name/description/body — what `install` actually writes |
-| `engine/skills/*/SKILL.md` | a bundled mirror; `test_pr779_edges` asserts it is byte-identical to `_SKILLS` |
-
-**Recommended fix — make `skills/` the only source.** Ship the pack as package
-data (`engine/cartograph/skills_data/`) and have `generate_skills()` read it
-with `importlib.resources` instead of carrying bodies in a Python dict. Then
-`install-skills.py` syncs one more destination, `verify.sh` covers it, and the
-byte-identical test becomes true by construction rather than by discipline.
-Drop `review-delta` and `review-pr` at the same time — T09 collapsed both into
-`review-changes`, and they differ only in scope.
-
-Do not simply edit `_SKILLS` to match: three copies kept in step by hand is how
-this happened.
-
-### Related, same root cause
-
-- **`_legacy_instructions.py` is live.** `carto install` injects instruction
-  files describing MCP tools, gated by `--no-instructions`. Same problem, same
-  command, different artifact.
-- **`engine/.mcp.json`** still ships an MCP server definition.
+The SessionStart one-liner is designed in `T09-skills-resolution.md` §2: one
+prescriptive line per state, no tool listing. `carto status --format json`
+already reports `data.stale`, which is the whole input it needs.
 
 ## The skills pack, and how it stays true
 
@@ -94,8 +66,16 @@ Five skills in `skills/<name>/SKILL.md`, copied into `.claude/skills/`,
 Copies, not symlinks: git on Windows checks a symlink out as a text file
 containing its target path, which a host reads as a skill body and ignores.
 
-**Never hand-edit the copies** — edit `skills/`, then re-run the installer.
+It is also synced into `engine/cartograph/skills_data/`, the package data the
+engine ships so `carto install` can write the pack on a machine that never
+cloned this repo.
+
+**Never hand-edit a copy** — edit `skills/`, then re-run the installer.
 `--check` catches stale, missing and orphaned copies and runs in `verify.sh`.
+
+`carto install` writes the pack to `.claude/skills/`, `.github/skills/` and
+`.agents/skills/` (plus Gemini and CodeBuddy), byte-identical to canonical,
+and **registers no MCP server** unless `--with-mcp` is passed.
 
 `contracts/capability-v1/check_skills.py` extracts every `carto` line from
 every skill body and validates it against `carto capabilities`. This is not

@@ -282,7 +282,10 @@ def _match_files_to_forget(
 
 
 def _handle_init(args: argparse.Namespace) -> None:
-    """Set up MCP config for detected AI coding platforms."""
+    """Install skills, hooks and instructions for detected AI coding platforms.
+
+    MCP server registration is opt-in via ``--with-mcp``; see the note below.
+    """
     from .incremental import ensure_repo_gitignore_excludes_crg, find_repo_root
     from .skills import install_platform_configs
 
@@ -297,13 +300,21 @@ def _handle_init(args: argparse.Namespace) -> None:
     auto_yes = getattr(args, "yes", False)
     skip_instructions = getattr(args, "no_instructions", False)
 
-    print("Installing MCP server config...")
-    configured = install_platform_configs(repo_root, target=target, dry_run=dry_run)
-
-    if not configured:
-        print("No platforms detected.")
+    # MCP registration is OFF by default. Cartograph exists because MCP servers
+    # are prohibited in the target environment, so writing .mcp.json,
+    # .cursor/mcp.json, .vscode/mcp.json and the rest would have `install`
+    # violate the constraint the whole project is built around. The server code
+    # is still here for anyone who can use it, behind an explicit opt-in.
+    if getattr(args, "with_mcp", False):
+        print("Installing MCP server config...")
+        configured = install_platform_configs(repo_root, target=target, dry_run=dry_run)
+        if not configured:
+            print("No platforms detected.")
+        else:
+            print(f"\nConfigured {len(configured)} platform(s): {', '.join(configured)}")
     else:
-        print(f"\nConfigured {len(configured)} platform(s): {', '.join(configured)}")
+        configured = []
+        print("Skipping MCP server config (pass --with-mcp to register one).")
 
     # Preview the instruction files that would be touched (#173).
     instr_targets = _instruction_files_to_modify(repo_root, target)
@@ -335,8 +346,8 @@ def _handle_init(args: argparse.Namespace) -> None:
 
     from .skills import (
         PLATFORMS,
-        generate_skills,
         inject_instruction_files,
+        install_host_skills,
         install_codebuddy_hooks,
         install_codebuddy_skills,
         install_codex_hooks,
@@ -351,10 +362,12 @@ def _handle_init(args: argparse.Namespace) -> None:
     )
 
     if not skip_skills:
-        # Claude Code skills are only relevant for Claude (or full install).
-        if target in ("claude", "all"):
-            skills_dir = generate_skills(repo_root)
-            print(f"Generated Claude Code skills in {skills_dir}")
+        # Claude Code, Copilot CLI and Copilot Chat are the tier-1 hosts and
+        # share one pack; Copilot reads `.github/skills/`, which nothing wrote
+        # before, so a Copilot-only user installed and got no skills at all.
+        if target in ("claude", "copilot", "copilot-cli", "all"):
+            for skills_dir in install_host_skills(repo_root):
+                print(f"Installed skills in {skills_dir}")
 
         # Gemini CLI skills are workspace-scoped under .gemini/.
         if target in ("gemini-cli", "all"):
@@ -781,6 +794,16 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Show what would be done without writing files",
+    )
+    install_cmd.add_argument(
+        "--with-mcp",
+        action="store_true",
+        dest="with_mcp",
+        help=(
+            "Also register an MCP server with detected platforms. Off by default: "
+            "Cartograph is the CLI-and-skills answer to environments where MCP "
+            "servers are not permitted."
+        ),
     )
     install_cmd.add_argument(
         "--no-skills",

@@ -16,6 +16,8 @@ import shutil
 import stat
 import subprocess
 import sys
+from collections.abc import Mapping
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -872,126 +874,114 @@ def install_platform_configs(
 
 # --- Skill file contents ---
 
-_SKILLS: dict[str, dict[str, str]] = {
-    "explore-codebase.md": {
-        "name": "explore-codebase",
-        "description": "Navigate and understand codebase structure using the knowledge graph",
-        "body": (
-            "## Explore Codebase\n\n"
-            "Use the cartograph MCP tools to explore and understand the codebase.\n\n"
-            "### Steps\n\n"
-            "1. Run `list_graph_stats_tool` to see overall codebase metrics.\n"
-            "2. Run `get_architecture_overview_tool` for high-level community structure.\n"
-            "3. Use `list_communities_tool` to find major modules, then `get_community_tool` "
-            "for details.\n"
-            "4. Use `semantic_search_nodes_tool` to find specific functions or classes.\n"
-            "5. Use `query_graph_tool` with patterns like `callers_of`, `callees_of`, "
-            "`imports_of` to trace relationships.\n"
-            "6. Use `list_flows_tool` and `get_flow_tool` to understand execution paths.\n\n"
-            "### Tips\n\n"
-            "- Start broad (stats, architecture) then narrow down to specific areas.\n"
-            "- Use `children_of` on a file to see all its functions and classes.\n"
-            "- Use `find_large_functions_tool` to identify complex code.\n\n"
-            "## Token Efficiency Rules\n"
-            '- Start with `get_minimal_context_tool(task="<your task>")` '
-            "before other graph tools.\n"
-            '- Use `detail_level="minimal"` on all calls. Only escalate to '
-            '"standard" when minimal is insufficient.\n'
-            "- Target: complete any review/debug/refactor task in ≤5 tool calls "
-            "and ≤800 total output tokens.\n"
-            "- Read the implementation and its tests before changing code. The graph "
-            "narrows scope; it does not replace the source."
-        ),
-    },
-    "review-changes.md": {
-        "name": "review-changes",
-        "description": "Perform a structured code review using change detection and impact",
-        "body": (
-            "## Review Changes\n\n"
-            "Perform a thorough, risk-aware code review using the knowledge graph.\n\n"
-            "### Steps\n\n"
-            "1. Run `detect_changes_tool` to get risk-scored change analysis.\n"
-            "2. Run `get_affected_flows_tool` to find impacted execution paths.\n"
-            "3. For each high-risk function, run `query_graph_tool` with "
-            'pattern="tests_for" to check test coverage.\n'
-            "4. Run `get_impact_radius_tool` to understand the blast radius.\n"
-            "5. For any untested changes, suggest specific test cases.\n\n"
-            "### Output Format\n\n"
-            "Provide findings grouped by risk level (high/medium/low) with:\n"
-            "- What changed and why it matters\n"
-            "- Test coverage status\n"
-            "- Suggested improvements\n"
-            "- Overall merge recommendation\n\n"
-            "## Token Efficiency Rules\n"
-            '- Start with `get_minimal_context_tool(task="<your task>")` '
-            "before other graph tools.\n"
-            '- Use `detail_level="minimal"` on all calls. Only escalate to '
-            '"standard" when minimal is insufficient.\n'
-            "- Target: complete any review/debug/refactor task in ≤5 tool calls "
-            "and ≤800 total output tokens.\n"
-            "- Read the implementation and its tests before changing code. The graph "
-            "narrows scope; it does not replace the source."
-        ),
-    },
-    "debug-issue.md": {
-        "name": "debug-issue",
-        "description": "Systematically debug issues using graph-powered code navigation",
-        "body": (
-            "## Debug Issue\n\n"
-            "Use the knowledge graph to systematically trace and debug issues.\n\n"
-            "### Steps\n\n"
-            "1. Use `semantic_search_nodes_tool` to find code related to the issue.\n"
-            "2. Use `query_graph_tool` with `callers_of` and `callees_of` to trace "
-            "call chains.\n"
-            "3. Use `get_flow_tool` to see full execution paths through suspected areas.\n"
-            "4. Run `detect_changes_tool` to check if recent changes caused the issue.\n"
-            "5. Use `get_impact_radius_tool` on suspected files to see what else is affected.\n\n"
-            "### Tips\n\n"
-            "- Check both callers and callees to understand the full context.\n"
-            "- Look at affected flows to find the entry point that triggers the bug.\n"
-            "- Recent changes are the most common source of new issues.\n\n"
-            "## Token Efficiency Rules\n"
-            '- Start with `get_minimal_context_tool(task="<your task>")` '
-            "before other graph tools.\n"
-            '- Use `detail_level="minimal"` on all calls. Only escalate to '
-            '"standard" when minimal is insufficient.\n'
-            "- Target: complete any review/debug/refactor task in ≤5 tool calls "
-            "and ≤800 total output tokens.\n"
-            "- Read the implementation and its tests before changing code. The graph "
-            "narrows scope; it does not replace the source."
-        ),
-    },
-    "refactor-safely.md": {
-        "name": "refactor-safely",
-        "description": "Plan and execute safe refactoring using dependency analysis",
-        "body": (
-            "## Refactor Safely\n\n"
-            "Use the knowledge graph to plan and execute refactoring with confidence.\n\n"
-            "### Steps\n\n"
-            '1. Use `refactor_tool` with mode="suggest" for community-driven '
-            "refactoring suggestions.\n"
-            '2. Use `refactor_tool` with mode="dead_code" to find unreferenced code.\n'
-            '3. For renames, use `refactor_tool` with mode="rename" to preview all '
-            "affected locations.\n"
-            "4. Use `apply_refactor_tool` with the refactor_id to apply renames.\n"
-            "5. After changes, run `detect_changes_tool` to verify the refactoring impact.\n\n"
-            "### Safety Checks\n\n"
-            "- Always preview before applying (rename mode gives you an edit list).\n"
-            "- Check `get_impact_radius_tool` before major refactors.\n"
-            "- Use `get_affected_flows_tool` to ensure no critical paths are broken.\n"
-            "- Run `find_large_functions_tool` to identify decomposition targets.\n\n"
-            "## Token Efficiency Rules\n"
-            '- Start with `get_minimal_context_tool(task="<your task>")` '
-            "before other graph tools.\n"
-            '- Use `detail_level="minimal"` on all calls. Only escalate to '
-            '"standard" when minimal is insufficient.\n'
-            "- Target: complete any review/debug/refactor task in ≤5 tool calls "
-            "and ≤800 total output tokens.\n"
-            "- Read the implementation and its tests before changing code. The graph "
-            "narrows scope; it does not replace the source."
-        ),
-    },
-}
+#: The skills pack, loaded from package data rather than carried as Python
+#: string literals.
+#:
+#: It used to be a dict of {name, description, body} that five installers each
+#: reassembled into markdown. Three copies of the same content — this dict, the
+#: bundled `skills/` tree, and the files actually written — had to be kept in
+#: step by hand, and an upstream test exists precisely because they drifted.
+#: They drifted again here: the bodies still instructed agents to call MCP
+#: tools, which Cartograph does not have, and `install` overwrote the real
+#: skills pack with them.
+#:
+#: So there is now one copy. `skills_data/` is synced from the repo's canonical
+#: `skills/` by `scripts/install-skills.py`, and every installer writes the
+#: file **verbatim** — no reassembly, so no divergence to test for.
+_SKILLS_PACKAGE = "cartograph.skills_data"
+
+
+@lru_cache(maxsize=1)
+def skill_documents() -> dict[str, str]:
+    """Return ``{slug: SKILL.md text}`` for the bundled skills pack."""
+    from importlib import resources
+
+    out: dict[str, str] = {}
+    root = resources.files(_SKILLS_PACKAGE)
+    for entry in sorted(root.iterdir(), key=lambda e: e.name):
+        doc = entry / "SKILL.md"
+        if doc.is_file():
+            out[entry.name] = doc.read_text(encoding="utf-8")
+    return out
+
+
+def _parse_frontmatter(text: str) -> tuple[str, str]:
+    """Split a SKILL.md into (description, body). Name comes from the slug."""
+    description, body = "", text
+    if text.startswith("---"):
+        close = text.find("\n---", 3)
+        if close != -1:
+            for line in text[3:close].splitlines():
+                key, _, value = line.partition(":")
+                if key.strip() == "description":
+                    description = value.strip()
+            body = text[close + 4:].lstrip("\n")
+    return description, body
+
+
+def _skills_index() -> dict[str, dict[str, str]]:
+    """Back-compat view of the pack, keyed by ``<slug>.md``.
+
+    Kept because uninstall enumerates installed skills through it; the
+    installers no longer use it, because reassembling a file from its parts is
+    what this change removes.
+    """
+    index: dict[str, dict[str, str]] = {}
+    for slug, text in skill_documents().items():
+        description, body = _parse_frontmatter(text)
+        index[f"{slug}.md"] = {"name": slug, "description": description, "body": body}
+    return index
+
+
+class _SkillsView(Mapping):
+    """Lazy mapping so module import does not touch the filesystem."""
+
+    def __iter__(self):
+        return iter(_skills_index())
+
+    def __len__(self) -> int:
+        return len(_skills_index())
+
+    def __getitem__(self, key: str) -> dict[str, str]:
+        return _skills_index()[key]
+
+
+_SKILLS: Mapping[str, dict[str, str]] = _SkillsView()
+
+
+def _write_skills_pack(skills_dir: Path) -> Path:
+    """Write the bundled skills pack into ``<dir>/<slug>/SKILL.md``.
+
+    Every host that discovers Agent Skills uses this layout and this
+    frontmatter, so there is one writer rather than one per host. The file is
+    copied byte for byte: reassembling it from parsed parts is what let the
+    installed skills drift from the pack in the first place.
+    """
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    for slug, text in skill_documents().items():
+        target = skills_dir / slug
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / "SKILL.md"
+        path.write_text(text, encoding="utf-8")
+        logger.info("Wrote skill: %s", path)
+    return skills_dir
+
+
+#: Where the tier-1 hosts look for Agent Skills. Same bodies in all three —
+#: this is a discovery problem, not a per-host content problem, which is the
+#: whole premise of having no per-host adapter on the query path.
+HOST_SKILL_DIRS = (".claude/skills", ".github/skills", ".agents/skills")
+
+
+def install_host_skills(repo_root: Path) -> list[Path]:
+    """Install the pack everywhere a tier-1 host will find it.
+
+    Claude Code reads `.claude/skills/`; GitHub Copilot (CLI and Chat) reads
+    `.github/skills/`; `.agents/skills/` is the host-agnostic convention. Only
+    the first was written before, so a Copilot user installed Cartograph and
+    got no skills at all — the one host combination the project has to reach.
+    """
+    return [_write_skills_pack(repo_root / d) for d in HOST_SKILL_DIRS]
 
 
 def generate_skills(repo_root: Path, skills_dir: Path | None = None) -> Path:
@@ -1009,25 +999,7 @@ def generate_skills(repo_root: Path, skills_dir: Path | None = None) -> Path:
     """
     if skills_dir is None:
         skills_dir = repo_root / ".claude" / "skills"
-    skills_dir.mkdir(parents=True, exist_ok=True)
-
-    for filename, skill in _SKILLS.items():
-        # Claude Code expects skills at .claude/skills/<name>/SKILL.md
-        skill_name = filename.removesuffix(".md")
-        skill_subdir = skills_dir / skill_name
-        skill_subdir.mkdir(parents=True, exist_ok=True)
-        path = skill_subdir / "SKILL.md"
-        content = (
-            "---\n"
-            f"name: {skill['name']}\n"
-            f"description: {skill['description']}\n"
-            "---\n\n"
-            f"{skill['body']}\n"
-        )
-        path.write_text(content, encoding="utf-8")
-        logger.info("Wrote skill: %s", path)
-
-    return skills_dir
+    return _write_skills_pack(skills_dir)
 
 
 def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
@@ -1340,6 +1312,10 @@ def install_codex_hooks(repo_root: Path) -> Path:
     return hooks_path
 
 
+# NOTE: the marker still says "MCP tools" and must not change. It is how a
+# reinstall finds and replaces a block written by an earlier version — and the
+# blocks worth replacing most urgently are exactly the ones that described MCP
+# tools. Changing it would leave those in place and append a second section.
 _CLAUDE_MD_SECTION_MARKER = "<!-- cartograph MCP tools -->"
 
 # Closes the managed block so reinstall can replace it without guessing where it
@@ -1348,9 +1324,12 @@ _CLAUDE_MD_SECTION_MARKER = "<!-- cartograph MCP tools -->"
 _CLAUDE_MD_SECTION_END_MARKER = "<!-- /cartograph MCP tools -->"
 
 # Shared across every platform instruction file so the wording stays identical.
-_INSTRUCTION_INTRO = """**This project has a knowledge graph. Start with the cartograph
-MCP tools to narrow scope, then read the source.** The graph is cheaper than scanning files and
-gives you structural context (callers, dependents, test coverage) that file search cannot."""
+_INSTRUCTION_INTRO = """**This project has a knowledge graph. Query it with the `carto` CLI to
+narrow scope, then read the source.** Cheaper than scanning files, and it gives you structural
+context (callers, dependents, test coverage) that file search cannot.
+
+There is no MCP server; `carto` is a plain command. If your tool reads Agent Skills
+(`.claude/skills/`, `.github/skills/`, `.agents/skills/`), prefer those — this is the fallback."""
 
 _INSTRUCTION_GUARDRAILS = """### Verify in the source
 
@@ -1362,88 +1341,66 @@ _INSTRUCTION_GUARDRAILS = """### Verify in the source
   model that relationship.
 - An empty graph result can mean "not indexed" or "not statically visible", not "does not exist"."""
 
+# Every command here is checked against the live parser by
+# contracts/capability-v1/check_skills.py, which is why this table can be
+# trusted where the MCP tool list it replaced could not.
+_INSTRUCTION_COMMANDS = """### Commands
+
+Every one is checked against the live parser by the skills conformance suite,
+which is why this table can be trusted where the tool list it replaced could not.
+
+| Command | Use when |
+| --- | --- |
+| `carto review-summary --base <ref>` | First look at a change: risk, counts, test gaps |
+| `carto review-context --base <ref>` | Full review context, once the summary warrants it |
+| `carto impact --files <file>` | Blast radius of a change |
+| `carto query callers_of <symbol>` | Callers, callees, imports, tests (16 patterns) |
+| `carto search "<text>"` | Find code when you do not know the symbol name |
+| `carto architecture` | Shape of an unfamiliar codebase |
+| `carto refactor rename --old-name <a> --new-name <b>` | Plan a rename; preview only, never edits |
+| `carto build` / `carto update` | Create or refresh the graph |
+
+Pass `--format json` always, and `--max-tokens N` to bound a response (truncation is
+semantic, so the JSON stays valid). Exit `2` is a precondition: run `error.remediation`,
+then retry. Full reference: `carto capabilities --format json`."""
+
+
 _CLAUDE_MD_SECTION = f"""{_CLAUDE_MD_SECTION_MARKER}
-## MCP Tools: cartograph
+## Code knowledge graph: cartograph
 
 {_INSTRUCTION_INTRO}
 
-### When to use graph tools FIRST
-
-- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
-- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
-- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
-- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
-
 {_INSTRUCTION_GUARDRAILS}
 
-### Key Tools
+{_INSTRUCTION_COMMANDS}
 
-| Tool | Use when |
-| ------ | ---------- |
-| `detect_changes_tool` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context_tool` | Need source snippets for review — token-efficient |
-| `get_impact_radius_tool` | Understanding blast radius of a change |
-| `get_affected_flows_tool` | Finding which execution paths are impacted |
-| `query_graph_tool` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes_tool` | Finding functions/classes by name or keyword |
-| `get_architecture_overview_tool` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
-
-### Workflow
-
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes_tool` for code review.
-3. Use `get_affected_flows_tool` to understand impact.
-4. Use `query_graph_tool` pattern=\"tests_for\" to check coverage.
+The graph auto-updates on file changes, via hooks.
 {_CLAUDE_MD_SECTION_END_MARKER}
 """
 
-# Copilot-specific instruction file content: uses VS Code tool references and
-# includes YAML front matter so Copilot Chat applies it across the workspace.
+# Copilot-specific instruction file: adds YAML front matter so Copilot Chat
+# applies it across the workspace. The body is the same — there is no per-host
+# adapter, which is the point of the capability contract.
 _COPILOT_SECTION = f"""---
 applyTo: '**'
 description: >-
-  Use cartograph MCP tools for token-efficient
-  codebase exploration and code review.
+  Use the carto CLI for token-efficient codebase
+  exploration and code review.
 ---
 
 {_CLAUDE_MD_SECTION_MARKER}
-## MCP Tools: cartograph
+## Code knowledge graph: cartograph
 
 {_INSTRUCTION_INTRO}
 
-### When to use graph tools FIRST
-
-- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool`
-- **Understanding impact**: `get_impact_radius_tool`
-- **Code review**: `detect_changes_tool` + `get_review_context_tool`
-- **Finding relationships**: `query_graph_tool` callers_of/callees_of
-- **Architecture questions**: `get_architecture_overview_tool`
-
 {_INSTRUCTION_GUARDRAILS}
 
-### Key Tools
+{_INSTRUCTION_COMMANDS}
 
-| Tool | Use when |
-| ------ | ---------- |
-| `detect_changes_tool` | Risk-scored change analysis |
-| `get_review_context_tool` | Token-efficient source snippets |
-| `get_impact_radius_tool` | Blast radius of a change |
-| `get_affected_flows_tool` | Impacted execution paths |
-| `query_graph_tool` | Trace callers, callees, imports, tests |
-| `semantic_search_nodes_tool` | Find functions/classes by keyword |
-| `get_architecture_overview_tool` | High-level structure |
-| `refactor_tool` | Rename planning, dead code |
-
-### Workflow
-
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes_tool` for code review.
-3. Use `get_affected_flows_tool` to understand impact.
-4. Use `query_graph_tool` pattern=\"tests_for\" to check coverage.
+The graph auto-updates on file changes, via hooks.
 {_CLAUDE_MD_SECTION_END_MARKER}
 """
+
 
 # Maps instruction file path → (marker, section) for files that need content
 # different from the default _CLAUDE_MD_SECTION. Legacy paths remain here so
@@ -1478,10 +1435,17 @@ def _upgrade_managed_block(existing: str, section: str) -> str | None:
     Returns the new file content, or None when the marker is present but no
     known block is, meaning someone edited the block by hand.
     """
+    # Look for stale blocks only in the text that is NOT already current.
+    # One generated section can be a substring of another — the Copilot file is
+    # the shared block with YAML front matter prepended — and matching against
+    # the raw text would see the shared block inside the current one, call it
+    # stale, and "upgrade" it by prepending a second copy of the front matter
+    # on every reinstall.
+    outside = existing.replace(section, "")
     stale = [
         block
         for block in _known_instruction_sections()
-        if block != section and block in existing
+        if block != section and block in outside
     ]
     if not stale:
         return None
@@ -1736,47 +1700,13 @@ exit 0
 def install_gemini_cli_skills(repo_root: Path) -> Path:
     """Install Gemini CLI Agent Skills in .gemini/skills/<skill>/SKILL.md."""
     skills_root = repo_root / ".gemini" / "skills"
-    skills_root.mkdir(parents=True, exist_ok=True)
-
-    for filename, skill in _SKILLS.items():
-        slug = filename.rsplit(".", 1)[0]
-        skill_dir = skills_root / slug
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        skill_path = skill_dir / "SKILL.md"
-        content = (
-            "---\n"
-            f"name: {slug}\n"
-            f"description: {skill['description']}\n"
-            "---\n\n"
-            f"{skill['body']}\n"
-        )
-        skill_path.write_text(content, encoding="utf-8")
-        logger.info("Wrote Gemini CLI skill: %s", skill_path)
-
-    return skills_root
+    return _write_skills_pack(skills_root)
 
 
 def install_codebuddy_skills(repo_root: Path) -> Path:
     """Install project skills in .codebuddy/skills/<name>/SKILL.md."""
     skills_root = repo_root / ".codebuddy" / "skills"
-    skills_root.mkdir(parents=True, exist_ok=True)
-
-    for filename, skill in _SKILLS.items():
-        slug = filename.rsplit(".", 1)[0]
-        skill_dir = skills_root / slug
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        skill_path = skill_dir / "SKILL.md"
-        content = (
-            "---\n"
-            f"name: {slug}\n"
-            f"description: {skill['description']}\n"
-            "---\n\n"
-            f"{skill['body']}\n"
-        )
-        skill_path.write_text(content, encoding="utf-8")
-        logger.info("Wrote CodeBuddy skill: %s", skill_path)
-
-    return skills_root
+    return _write_skills_pack(skills_root)
 
 
 def inject_platform_instructions(repo_root: Path, target: str = "all") -> list[str]:

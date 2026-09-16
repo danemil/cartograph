@@ -10,12 +10,22 @@ from cartograph import skills, uninstall
 from cartograph.cli import _handle_init
 
 
-def _args(tmp_path: Path, platform: str) -> argparse.Namespace:
+def _args(
+    tmp_path: Path, platform: str, *, with_mcp: bool = True
+) -> argparse.Namespace:
+    """Install arguments for a test.
+
+    ``with_mcp`` defaults to True here and False in the CLI. These tests cover
+    the MCP registration lifecycle, which still exists behind ``--with-mcp``;
+    the shipped default does not write MCP config at all, because MCP servers
+    are prohibited in the environment Cartograph is built for.
+    """
     return argparse.Namespace(
         repo=str(tmp_path),
         dry_run=False,
         platform=platform,
         yes=True,
+        with_mcp=with_mcp,
         no_instructions=True,
         no_skills=False,
         no_hooks=False,
@@ -253,3 +263,22 @@ def test_handle_init_codebuddy_installs_only_codebuddy_native_files(
     }
     assert "Installed CodeBuddy skills" in out
     assert "Installed CodeBuddy hooks" in out
+
+
+def test_install_writes_no_mcp_config_by_default(monkeypatch, tmp_path):
+    """The shipped default must not register an MCP server.
+
+    Cartograph exists because MCP servers are prohibited in the target
+    environment. An install that writes .mcp.json breaks the one constraint the
+    project is built around, so the default is asserted, not assumed.
+    """
+    repo = tmp_path / "repo"
+    (repo / ".git" / "hooks").mkdir(parents=True)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    _handle_init(_args(repo, "all", with_mcp=False))
+
+    written = [p for p in repo.rglob("*") if p.is_file() and "mcp" in p.name.lower()]
+    assert written == [], f"install wrote MCP config: {written}"

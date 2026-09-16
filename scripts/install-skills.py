@@ -31,6 +31,11 @@ from pathlib import Path
 
 HOSTS = (".claude/skills", ".github/skills", ".agents/skills")
 
+#: The engine ships the pack as package data so `carto install` can write it on
+#: a machine that never cloned this repo. It is a build input, not a discovery
+#: path, but it drifts the same way — so it is kept in sync and checked here.
+PACKAGE_DATA = "engine/cartograph/skills_data"
+
 
 def iter_skills(source: Path):
     return sorted(p for p in source.glob("*/SKILL.md"))
@@ -52,7 +57,7 @@ def main() -> int:
         return 1
 
     drift: list[str] = []
-    for host in HOSTS:
+    for host in (*HOSTS, PACKAGE_DATA):
         root = args.target / host
         for skill in skills:
             dest = root / skill.parent.name / "SKILL.md"
@@ -78,13 +83,13 @@ def main() -> int:
     if args.check:
         for line in drift:
             print(f"  FAIL  {line}")
-        n = len(skills) * len(HOSTS)
+        n = len(skills) * (len(HOSTS) + 1)
         print(f"\nskills install: {n - len(drift)}/{n} copies current")
         return 1 if drift else 0
 
     print(f"installed {len(skills)} skills into {len(HOSTS)} discovery paths "
-          f"under {args.target}")
-    for host in HOSTS:
+          f"and the engine's package data, under {args.target}")
+    for host in (*HOSTS, PACKAGE_DATA):
         print(f"  {host}/")
     return 0
 

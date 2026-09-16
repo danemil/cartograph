@@ -99,7 +99,6 @@ packages = ["cartograph"]
 [tool.hatch.build.targets.sdist]
 include = [
     "cartograph/",
-    "skills/",
     "docs/",
     "hooks/",
     "LICENSE",
