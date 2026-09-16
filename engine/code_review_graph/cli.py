@@ -530,6 +530,8 @@ def _positive_int(value: str) -> int:
 
 
 _GRAPH_TOOL_COMMANDS = {
+    "review-context",
+    "review-summary",
     "query",
     "impact",
     "search",
@@ -606,7 +608,24 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
     from . import tools
 
     root = str(repo_root)
-    if args.command == "query":
+    if args.command in ("review-context", "review-summary"):
+        from .review_shape import shape_review_context, shape_review_summary
+        from .tools.review import get_review_context
+
+        is_full = args.command == "review-context"
+        raw = get_review_context(
+            changed_files=args.files,
+            repo_root=root,
+            base=args.base,
+            detail_level="standard" if is_full else "minimal",
+            max_depth=getattr(args, "max_depth", 2),
+            max_results=getattr(args, "max_results", 50),
+            max_files=getattr(args, "max_files", 25),
+            include_source=not getattr(args, "no_source", False),
+        )
+        shaper = shape_review_context if is_full else shape_review_summary
+        result = shaper(raw, repo_root=root)
+    elif args.command == "query":
         result = tools.query_graph(
             pattern=args.pattern,
             target=args.target,
@@ -689,6 +708,9 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
 #: pageable collection per envelope — a cursor could not be interpreted
 #: unambiguously otherwise — so this maps each command to its single one.
 _PAGEABLE_COLLECTION = {
+    # review-context pages `items` (the impacted-node work queue) — the one
+    # collection A8 permits. Everything else lives bounded in facets.
+    "review-context": "items",
     "query": "results",
     "impact": "impacted_nodes",
     "search": "results",
@@ -723,7 +745,9 @@ def _emit_tool_result(args, result: dict) -> None:
             # has_more is honest about what we can currently tell.
             has_more=len(items) >= limit,
             result_count=len(items),
-            collection=None if key == "results" else key,
+            # `collection` names the pageable list only when it is NOT the
+            # conventional `data.items`. Emitting "items" would be noise.
+            collection=None if key in ("items", "results") else key,
         )
 
     # The tool reports its own truncation; surface it rather than inventing one.
@@ -1226,6 +1250,30 @@ def main() -> None:
         help="Token budget for the response",
     )
 
+    # review-context / review-summary — the headline capability, split into two
+    # commands because `minimal` is a different typed response, not less of the
+    # same one. See docs/design/review-context-shape.md.
+    rc_cmd = sub.add_parser(
+        "review-context",
+        help="Token-efficient review context for a change set",
+    )
+    rs_cmd = sub.add_parser(
+        "review-summary",
+        help="Cheap risk-and-counts summary of a change set",
+    )
+    for _r in (rc_cmd, rs_cmd):
+        _r.add_argument("--base", default="HEAD~1", help="Git diff base (default: HEAD~1)")
+        _r.add_argument("--files", nargs="*", default=None, help="Explicit changed files")
+        _r.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+    rc_cmd.add_argument("--depth", type=int, default=2, dest="max_depth",
+                        help="Impact traversal depth")
+    rc_cmd.add_argument("--limit", type=int, default=25, dest="max_results",
+                        help="Maximum impacted nodes returned (the pageable collection)")
+    rc_cmd.add_argument("--max-files", type=int, default=25, dest="max_files",
+                        help="Maximum changed files described")
+    rc_cmd.add_argument("--no-source", action="store_true", dest="no_source",
+                        help="Omit source snippets")
+
     # Graph tool wrappers
     query_cmd = sub.add_parser("query", help="Query graph relationships")
     query_cmd.add_argument(
@@ -1345,6 +1393,7 @@ def main() -> None:
     for _graph_cmd in (
         query_cmd, impact_cmd, search_cmd, flows_cmd, flow_cmd,
         communities_cmd, community_cmd, architecture_cmd, large_cmd, refactor_cmd,
+        rc_cmd, rs_cmd,
     ):
         _graph_cmd.add_argument(
             "--format",

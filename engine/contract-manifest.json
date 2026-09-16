@@ -88,6 +88,32 @@
         "nope"
       ],
       "expect": "usage"
+    },
+    "review-summary": {
+      "args": [
+        "review-summary",
+        "--repo",
+        "."
+      ],
+      "expect": "ok"
+    },
+    "review-context": {
+      "args": [
+        "review-context",
+        "--repo",
+        ".",
+        "--limit",
+        "3"
+      ],
+      "expect": "ok"
+    },
+    "review-context-no-graph": {
+      "args": [
+        "review-context",
+        "--repo",
+        "{tmpdir}"
+      ],
+      "expect": "precondition"
     }
   }
 }
