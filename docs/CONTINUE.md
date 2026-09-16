@@ -49,17 +49,43 @@ built into VS Code 1.135.0), installing from a private repo, default-deny egress
 The envelope contract is now fully honoured: everything it declares, it does.
 And the capability is reachable by an agent, not only at a terminal.
 
-## NEXT TASK — the rename pass
+## NEXT TASK — `carto install` destroys the skills pack
 
-`code_review_graph` -> `cartograph`. Cheap now, worse later. Agents act on
-strings literally, and several internal messages still tell them to run
-`code-review-graph build`. The remediation strings already say `carto build`,
-so the two disagree.
+Found while renaming, and it defeats the work two commits earlier.
 
-Do it in one pass: package directory, imports, `prog=` in the parser, the
-conformance manifest's `command`, `scripts/verify.sh`, and the `PYTHONPATH`
-gotcha below. `./scripts/verify.sh` proves it landed — all three suites invoke
-the CLI by module name, so a missed spelling fails loudly rather than quietly.
+`generate_skills()` (`engine/cartograph/skills.py:995`) writes upstream's
+bundled skills into `repo_root/.claude/skills/<name>/SKILL.md`. **All five of
+its names collide exactly with ours** — build-graph, debug-issue,
+explore-codebase, refactor-safely, review-changes — and upstream's bodies tell
+the agent to *"use the cartograph MCP tools"*, which do not exist here. So a
+normal `carto install` silently overwrites five verified skills with five that
+instruct the agent to call a banned, absent MCP server.
+
+The content lives in three places that must agree:
+
+| Where | What |
+|---|---|
+| `skills/*/SKILL.md` | ours, canonical, verified by `check_skills.py` |
+| `engine/cartograph/skills.py:875` `_SKILLS` | a Python dict of name/description/body — what `install` actually writes |
+| `engine/skills/*/SKILL.md` | a bundled mirror; `test_pr779_edges` asserts it is byte-identical to `_SKILLS` |
+
+**Recommended fix — make `skills/` the only source.** Ship the pack as package
+data (`engine/cartograph/skills_data/`) and have `generate_skills()` read it
+with `importlib.resources` instead of carrying bodies in a Python dict. Then
+`install-skills.py` syncs one more destination, `verify.sh` covers it, and the
+byte-identical test becomes true by construction rather than by discipline.
+Drop `review-delta` and `review-pr` at the same time — T09 collapsed both into
+`review-changes`, and they differ only in scope.
+
+Do not simply edit `_SKILLS` to match: three copies kept in step by hand is how
+this happened.
+
+### Related, same root cause
+
+- **`_legacy_instructions.py` is live.** `carto install` injects instruction
+  files describing MCP tools, gated by `--no-instructions`. Same problem, same
+  command, different artifact.
+- **`engine/.mcp.json`** still ships an MCP server definition.
 
 ## The skills pack, and how it stays true
 
