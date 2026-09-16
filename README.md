@@ -31,7 +31,7 @@ See [PROVENANCE.md](PROVENANCE.md).
 | Path | What |
 |---|---|
 | `engine/` | Python — the graph and the tree-sitter parser |
-| `memory/` | TypeScript — observations and recall |
+| `engine/cartograph/mem/` | Observations and recall — same binary, same envelope |
 | `contracts/capability-v1/` | The capability contract: schemas, fixtures, conformance suite |
 | `skills/` | The skills pack — one set, read by all three hosts |
 | `hooks/` | Host hook manifests (the logic lives in `engine/cartograph/hook.py`) |
@@ -99,9 +99,15 @@ Some decisions worth knowing before changing things:
 
 ## Status
 
-**`engine/` works. `memory/` has not been started** — the build order is
-engine-first, because the memory side compiled tree-sitter grammars from C at
-runtime and will call the engine's precompiled parser instead.
+**The engine's contract is complete. The memory capability has not been
+started** — the build order was engine-first, and that debt is now paid: the
+precompiled parser exists, so memory needs no toolchain of its own.
+
+It is being built in Python inside the engine rather than as a TypeScript fork.
+Almost nothing of the upstream implementation survives this architecture, and a
+second runtime would have to be installed on every target machine, carry a
+second envelope implementation, and be held to the contract separately. See
+PROVENANCE.md.
 
 Working today: the capability envelope on ~25 commands, all 16 query patterns,
 `carto capabilities`, `carto review-context` / `review-summary`, `--max-tokens`

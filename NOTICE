@@ -9,22 +9,6 @@ This product includes software from the following projects.
 ================================================================================
 
 --------------------------------------------------------------------------------
-claude-mem  —  https://github.com/thedotmack/claude-mem
---------------------------------------------------------------------------------
-
-Portions of `memory/` are derived from claude-mem.
-
-    Claude-Mem
-    Copyright 2026 Alex Newman
-
-    This product includes software developed for the Claude-Mem project.
-
-    Licensed under the Apache License, Version 2.0.
-
-The original NOTICE is reproduced above as required by Apache License 2.0
-section 4(d). The original LICENSE is retained at memory/LICENSE.
-
---------------------------------------------------------------------------------
 code-review-graph  —  https://github.com/tirth8205/code-review-graph
 --------------------------------------------------------------------------------
 
@@ -62,3 +46,25 @@ Statement of changes (Apache License 2.0, section 4(b))
 
 Both upstream works have been modified. A file-level record of what changed and
 why is maintained in PROVENANCE.md.
+
+================================================================================
+Design references — no code included
+================================================================================
+
+--------------------------------------------------------------------------------
+claude-mem  —  https://github.com/thedotmack/claude-mem  (Apache-2.0)
+--------------------------------------------------------------------------------
+
+Cartograph's memory capability was designed with claude-mem (Copyright 2026
+Alex Newman) as its reference: the idea of durable session memory for a coding
+agent, and the shape of its query surface.
+
+**No claude-mem code is included in this product.** An earlier draft of this
+file claimed portions of `memory/` were derived from it; that was never true,
+and the architecture leaves almost nothing to derive — MCP removed, Chroma
+replaced by sqlite-vec, its tree-sitter grammars replaced by the engine's
+precompiled parser, summarisation shelled out to the host agent.
+
+Apache-2.0 section 4(d) requires reproducing a NOTICE for derivative works.
+This is not one, so nothing is reproduced here. The attribution is kept anyway,
+because where an idea came from is worth saying. See PROVENANCE.md.

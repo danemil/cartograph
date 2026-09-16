@@ -10,12 +10,28 @@ possible.
 | Path | Upstream | Licence | Pinned at | Date |
 |---|---|---|---|---|
 | `engine/` | [tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph) | MIT | `b58668751ab0c7670c078cf7cbd4d1f5b8e54f81` | 2026-08-26 |
-| `memory/` | [thedotmack/claude-mem](https://github.com/thedotmack/claude-mem) | Apache-2.0 | release **v13.24.23** | snapshot 2026-09-15 |
 
-**Note on `memory/`:** taken from a release tarball with no git metadata, so it
-is pinned by released version rather than commit SHA. Upstream `main` had moved
-to `dcfc44221deabc228b0698a0012f87ed2fe6bbe7` by 2026-09-16. Re-clone with
-history if an exact SHA becomes necessary.
+**`memory/` is NOT a fork.** This table listed claude-mem v13.24.23 as a pinned
+upstream before anything had been taken from it, and nothing ever was: the
+directory has only a LICENSE and a NOTICE, and no claude-mem code is present in
+this repository.
+
+That is now the settled position rather than an omission. The memory capability
+is being built in Python inside `engine/`, because almost nothing of the
+upstream implementation survives the architecture: MCP is removed, Chroma is
+replaced by `sqlite-vec`, the tree-sitter grammars are replaced by the engine's
+precompiled parser, and summarisation shells out to the host agent. What is left
+is a command surface, which is specified independently in the design record
+(ticket T10) and verified against this CLI, not against theirs.
+
+So claude-mem is a **design reference**, cited here for honesty about where the
+idea came from — not a dependency and not a source of vendored code. If code is
+ever taken from it, it gets a row in the table above and a NOTICE entry at that
+point, and not before.
+
+Read `thedotmack/claude-mem` upstream if you want the original; the plugin
+release distributed through the marketplace is a built artifact (no TypeScript
+sources, no licence file) and is not a substitute for the repository.
 
 ## Significant changes
 
@@ -40,16 +56,15 @@ Specific to `engine/` (ex code-review-graph):
   in), and no longer writes instruction files describing MCP tools.
 - Added `carto hook`, moving host hook logic out of per-host shell strings.
 
-Specific to `memory/` (ex claude-mem):
+Planned for the memory capability (in `engine/cartograph/mem/`, not a fork):
 
-- Replaced the `mcp-search` server with a CLI query surface under `carto mem`.
-- Replaced the Chroma vector store — reached over MCP via a `uvx`-spawned
-  `chroma-mcp` subprocess — with `sqlite-vec`, removing an MCP dependency, a
-  hidden Python/uv dependency and an egress dependency in one change.
-- Stopped compiling tree-sitter grammars from C source at runtime; `smart_*`
-  now calls `engine/`'s precompiled parser. This removes a runtime C-toolchain
-  requirement that could not be satisfied on a locked-down machine.
-- Added a `copilot` host adapter.
+- A CLI query surface under `carto mem`, on the same envelope as everything
+  else, replacing an MCP `mcp-search` server.
+- `sqlite-vec` instead of Chroma, which upstream reached over MCP via a
+  `uvx`-spawned `chroma-mcp` subprocess — removing an MCP dependency, a hidden
+  Python/uv dependency and an egress dependency in one change.
+- The engine's precompiled parser instead of compiling tree-sitter grammars
+  from C at runtime, which required a toolchain no locked-down machine has.
 
 ## Fixes offered back upstream
 
