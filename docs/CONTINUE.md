@@ -14,7 +14,7 @@ below, then pick up **Next task**.
 ```bash
 cd /Users/emidan/work/cartograph
 ./scripts/verify.sh
-# expect: 196 envelope checks, 224 skills checks, 20/20 copies, "all green"
+# expect: 214 envelope checks, 224 skills checks, 20/20 copies, "all green"
 ```
 
 If that passes, everything described here is true. If it does not, trust the
@@ -54,18 +54,21 @@ built into VS Code 1.135.0), installing from a private repo, default-deny egress
 The contract is honoured, the capability is reachable by an agent, and it now
 fires on its own.
 
-## NEXT TASK — cursors
+## NEXT TASK — pick one
 
-`next_cursor` is honestly `null` and `has_more` is inferred. A cursor must be
-bound to the **query hash plus the provenance snapshot**, so page 2 cannot
-silently continue against a graph that was rebuilt in between — that is the
-whole reason the contract made cursors opaque and versioned.
+Cursors landed, so the engine's contract is complete. Two things are left, and
+they are the remaining distance to the acceptance test (a fresh machine with
+only VS Code):
 
-Two things to account for:
-- `fit()` synthesises a `page` block when a budget forces a trim, so a cursor
-  may describe a page the caller never asked for.
-- Paging was wrong until recently (see the commit fixing `page.limit`), so do
-  not trust any older reasoning about `has_more`.
+1. **The memory side** (`memory/`) — not started. Engine-first was the decided
+   order, and the reason has now been paid off: the engine's precompiled parser
+   exists, so the memory side no longer needs a C toolchain.
+2. **The `.vsix`** — the primary delivery vehicle. Installing it also serves
+   Claude Code and Copilot CLI.
+
+Smaller, known, and written down: `search` still emits absolute paths in
+`data.results[].id` (`review_shape.py` was fixed, `tools/query.py` was not —
+same leak, different path).
 
 ## Test suite: 1 known failure, not 56
 

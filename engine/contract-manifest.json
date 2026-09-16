@@ -270,6 +270,29 @@
       "expect": "ok",
       "budget": 600,
       "expect_truncated": true
+    },
+    "search-paged": {
+      "args": [
+        "search",
+        "cli",
+        "--repo",
+        ".",
+        "--limit",
+        "5"
+      ],
+      "expect": "ok",
+      "page_twice": true
+    },
+    "cursor-garbage": {
+      "args": [
+        "search",
+        "cli",
+        "--repo",
+        ".",
+        "--cursor",
+        "not-a-real-cursor"
+      ],
+      "expect": "precondition"
     }
   }
 }

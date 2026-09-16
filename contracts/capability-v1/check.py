@@ -83,6 +83,65 @@ def validate_schema(doc: dict) -> list[str]:
     ]
 
 
+
+def _collection_of(doc: dict) -> list:
+    """The one pageable collection in a response, whatever it is named."""
+    data = doc.get("data") or {}
+    named = (doc.get("page") or {}).get("collection")
+    for key in ([named] if named else []) + ["items", "results"]:
+        if key and isinstance(data.get(key), list):
+            return data[key]
+    return []
+
+
+def _check_second_page(manifest, op_name, op, base, args, first, cwd, res) -> None:
+    """Fetch page two with the cursor page one issued, and prove it continues."""
+    tag = f"{op_name}"
+    cursor = (first.get("page") or {}).get("next_cursor")
+    res.check(f"{tag}: page one issues a cursor", bool(cursor),
+              "has_more was true but next_cursor was null")
+    if not cursor:
+        return
+
+    proc = subprocess.run(
+        base + args + ["--cursor", cursor],
+        cwd=cwd, capture_output=True, text=True, timeout=60,
+    )
+    try:
+        second = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        res.check(f"{tag}: page two is a single JSON envelope", False, str(exc))
+        return
+    res.check(f"{tag}: page two is a single JSON envelope", True)
+    res.check(f"{tag}: page two succeeds", second.get("ok") is True,
+              str(second.get("error")))
+
+    rows_one = [json.dumps(r, sort_keys=True) for r in _collection_of(first)]
+    rows_two = [json.dumps(r, sort_keys=True) for r in _collection_of(second)]
+    overlap = set(rows_one) & set(rows_two)
+    res.check(f"{tag}: page two does not repeat page one", not overlap,
+              f"{len(overlap)} row(s) returned twice")
+
+    # The real test of an offset: one call for the whole span must produce the
+    # two pages concatenated. Anything else means the fetch-and-discard slipped.
+    limit = (first.get("page") or {}).get("limit")
+    if limit and rows_two:
+        widened = [a if a != str(limit) else str(limit * 2) for a in args]
+        proc = subprocess.run(
+            base + widened, cwd=cwd, capture_output=True, text=True, timeout=60,
+        )
+        try:
+            whole = [json.dumps(r, sort_keys=True)
+                     for r in _collection_of(json.loads(proc.stdout))]
+        except json.JSONDecodeError:
+            return
+        res.check(
+            f"{tag}: the two pages are the single-call sequence",
+            whole[: len(rows_one) + len(rows_two)] == rows_one + rows_two,
+            "page one + page two diverges from one call covering both",
+        )
+
+
 def run_operation(manifest: dict, op_name: str, op: dict, tmpdir: str, res: Result) -> None:
     base = list(manifest["command"])
     args = [a.replace("{tmpdir}", tmpdir) for a in op["args"]]
@@ -153,6 +212,13 @@ def run_operation(manifest: dict, op_name: str, op: dict, tmpdir: str, res: Resu
     if doc.get("truncated"):
         res.check(f"{tag}: truncated implies truncated_reason",
                   bool(doc.get("truncated_reason")))
+
+    # A cursor must actually continue. The unit tests pin this against a
+    # synthetic collection; only the CLI can pin it against a real one, through
+    # the same fetch-and-discard path an agent would use. Above the budget gate
+    # below, because paging has nothing to do with whether a budget was set.
+    if op.get("page_twice") and doc.get("ok"):
+        _check_second_page(manifest, op_name, op, base, args, doc, cwd, res)
 
     if budget is None:
         return

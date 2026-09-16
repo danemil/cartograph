@@ -687,11 +687,41 @@ def _find_explicit_repo_root(start: Path) -> "Path | None":
         current = current.parent
 
 
-def _run_graph_tool_command(args, repo_root: Path) -> None:
+def _run_graph_tool_command(
+    args, repo_root: Path, provenance: "dict | None" = None
+) -> None:
     """Run one graph-tool CLI wrapper and emit exactly one JSON value."""
+    from . import cursor as _cursor
+    from . import envelope as _env
     from . import tools
 
     root = str(repo_root)
+
+    # The digest binds what the CALLER passed. It is taken before the fetch is
+    # widened below, or a cursor minted at --limit 25 would reject itself on
+    # redemption against the widened value.
+    query = _cursor.query_digest(
+        args.command, vars(args), extra={"repo_root": root}
+    )
+    snapshot = _cursor.provenance_digest(provenance)
+
+    offset = 0
+    if getattr(args, "cursor", None):
+        try:
+            offset = _cursor.decode(args.cursor, query=query, provenance=snapshot)
+        except _cursor.CursorError as exc:
+            raise SystemExit(
+                _env.emit(
+                    _cursor.rejection(args.command, exc),
+                    getattr(args, "output_format", None) or "json",
+                )
+            )
+
+    limit_dest, page_limit = _caller_limit(args)
+    if offset and limit_dest and page_limit:
+        # Widen the fetch so the requested window is inside it; the head is
+        # discarded in _page_for. The tools take no offset of their own.
+        setattr(args, limit_dest, page_limit + offset)
     if args.command in ("review-context", "review-summary"):
         from .review_shape import shape_review_context, shape_review_summary
         from .tools.review import get_review_context
@@ -785,7 +815,11 @@ def _run_graph_tool_command(args, repo_root: Path) -> None:
             repo_root=root,
             max_results=args.max_results,
         )
-    _emit_tool_result(args, result)
+    _emit_tool_result(
+        args, result,
+        offset=offset, page_limit=page_limit,
+        query=query, snapshot=snapshot, provenance=provenance,
+    )
 
 
 #: Result keys that are list-shaped and therefore the natural pageable
@@ -819,7 +853,23 @@ _PAGEABLE_COLLECTION: dict[str, tuple[str, ...]] = {
 _LIMIT_DESTS = ("max_results", "limit")
 
 
-def _page_for(args, command: str, result: dict) -> "object | None":
+def _caller_limit(args) -> "tuple[str | None, int | None]":
+    """The attribute holding the caller's row cap, and its value.
+
+    Returned together because offset paging has to widen the cap in place
+    before the tool runs, and report the ORIGINAL in ``page.limit`` after.
+    """
+    for dest in _LIMIT_DESTS:
+        value = getattr(args, dest, None)
+        if value:
+            return dest, value
+    return None, None
+
+
+def _page_for(
+    args, command: str, result: dict, *,
+    offset: int = 0, page_limit: "int | None" = None,
+) -> "object | None":
     """Describe the one pageable collection, or None when nothing pages.
 
     A page exists only where a cap does. Falling back to ``len(items)`` made
@@ -836,12 +886,15 @@ def _page_for(args, command: str, result: dict) -> "object | None":
          if isinstance(result.get(k), list)),
         None,
     )
-    limit = next(
-        (v for v in (getattr(args, d, None) for d in _LIMIT_DESTS) if v),
-        None,
-    )
+    limit = page_limit if page_limit is not None else _caller_limit(args)[1]
     if key is None or not limit:
         return None
+    if offset:
+        # The tools have no offset of their own, so the earlier pages' rows
+        # were fetched again and are discarded here — the one place that knows
+        # which collection pages. Before result_count is taken, or the count
+        # would describe rows the caller already has.
+        result[key] = result[key][offset:]
     items = result[key]
     return _env.Page(
         limit=limit,
@@ -857,19 +910,30 @@ def _page_for(args, command: str, result: dict) -> "object | None":
     )
 
 
-def _emit_tool_result(args, result: dict) -> None:
+def _emit_tool_result(
+    args, result: dict, *,
+    offset: int = 0, page_limit: "int | None" = None,
+    query: "str | None" = None, snapshot: "str | None" = None,
+    provenance: "dict | None" = None,
+) -> None:
     """Wrap a graph-tool result in the capability envelope and print it.
 
     This is the shared emit path for query, impact, search, flows, communities,
     architecture, large-functions, refactor, detect-changes and dead-code, so
     the envelope retrofit lands on all of them at once.
     """
+    from . import cursor as _cursor
     from . import envelope as _env
 
     fmt = getattr(args, "output_format", None) or "json"
     command = args.command
 
-    page = _page_for(args, command, result)
+    page = _page_for(args, command, result, offset=offset, page_limit=page_limit)
+    if page is not None and query is not None:
+        # Hold the cursor's width before fitting. fit() must budget with it
+        # present, because a token stamped afterwards cannot be paid for —
+        # see docs/design/token-budget.md.
+        _cursor.reserve(page)
 
     # The tool reports its own truncation; surface it rather than inventing one.
     truncated = bool(result.get("truncated")) if isinstance(result, dict) else False
@@ -877,12 +941,21 @@ def _emit_tool_result(args, result: dict) -> None:
     env = _env.ok(
         command,
         data=result,
+        provenance=provenance,
         page=page,
         truncated=truncated,
         truncated_reason="page_limit" if truncated else None,
         search_mode=result.get("search_mode") if isinstance(result, dict) else None,
     )
-    raise SystemExit(_env.emit(env, fmt, getattr(args, "max_tokens", None)))
+    env = _env.fit(env, getattr(args, "max_tokens", None))
+    if page is not None and query is not None:
+        # After fitting, so the offset counts what was EMITTED. An offset taken
+        # from the fetch would step over the rows the budget dropped and the
+        # agent would never learn they existed.
+        _cursor.finalise(env, start=offset, query=query, provenance=snapshot)
+    # Budget already applied; fitting again could trim below the count the
+    # cursor was just minted from.
+    raise SystemExit(_env.emit(env, fmt, None))
 
 
 def _normalise_output_format(args) -> None:
@@ -1584,6 +1657,19 @@ def main() -> None:
 
     # Every graph-tool command shares one emit path (_emit_tool_result), so the
     # contract flags are attached in one place rather than repeated ten times.
+    # Only commands with a pageable collection can honour a cursor.
+    # `carto capabilities` is generated from this parser, so an unpageable
+    # command advertising --cursor would make the catalogue lie.
+    for _paged_cmd in (
+        rc_cmd, query_cmd, impact_cmd, search_cmd,
+        flows_cmd, communities_cmd, large_cmd, refactor_cmd,
+    ):
+        _paged_cmd.add_argument(
+            "--cursor",
+            default=None,
+            help="Continue from a previous page (opaque; pass page.next_cursor verbatim)",
+        )
+
     for _graph_cmd in (
         query_cmd, impact_cmd, search_cmd, flows_cmd, flow_cmd,
         communities_cmd, community_cmd, architecture_cmd, large_cmd, refactor_cmd,
@@ -1825,7 +1911,17 @@ def main() -> None:
                 raise SystemExit(_env.emit(env, "json"))
             print(f"{message} Run `{remediation}` first.", file=sys.stderr)
             raise SystemExit(_env.Exit.PRECONDITION)
-        _run_graph_tool_command(args, repo_root)
+        from .graph import GraphStore as _GraphStore
+
+        # Graph-tool responses carry no provenance today. Cursors bind to it,
+        # and without it an agent cannot tell that two pages came from two
+        # different builds — which is the whole failure being designed out.
+        with _GraphStore(db_path) as _store:
+            provenance = {
+                "graph_sha": _store.get_metadata("git_head_sha"),
+                "built_at": _store.get_metadata("last_updated"),
+            }
+        _run_graph_tool_command(args, repo_root, provenance)
         return
 
     embedding_refresh_kwargs = _embedding_refresh_kwargs(args, ap)
