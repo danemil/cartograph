@@ -34,6 +34,11 @@ Specific to `engine/` (ex code-review-graph):
 - Closed the CLI/MCP parity gap: 10 new commands, ~12 commands gained missing
   flags, ~25 gained the contract envelope.
 - Became the single tree-sitter parser for the whole project.
+- Replaced the seven bundled MCP-oriented skills with a five-skill pack that
+  drives the CLI, shipped as package data and written verbatim by `install`.
+- `install` no longer registers an MCP server by default (`--with-mcp` opts
+  in), and no longer writes instruction files describing MCP tools.
+- Added `carto hook`, moving host hook logic out of per-host shell strings.
 
 Specific to `memory/` (ex claude-mem):
 
@@ -49,8 +54,14 @@ Specific to `memory/` (ex claude-mem):
 ## Fixes offered back upstream
 
 These are genuine upstream defects found while porting, independent of
-Cartograph's own direction. Each is kept as an isolated commit against pristine
-upstream so it can be offered as a PR on its own merits.
+Cartograph's own direction, so each can be offered as a PR on its own merits.
+
+**How to extract one.** They are NOT isolated commits — that was claimed here
+before it was true, and the rename would have stranded them. What exists is the
+`pre-rename` tag and the `upstream-fixes` branch, both at `ca83b92`: the last
+commit whose module paths still match upstream's layout, so a diff against
+`tirth8205/code-review-graph@b586687` is reviewable. After
+`84f6d4a` (`code_review_graph` -> `cartograph`) a direct diff is not.
 
 | # | Defect | Upstream | Location | Status |
 |---|---|---|---|---|
@@ -58,10 +69,11 @@ upstream so it can be offered as a PR on its own merits.
 | 2 | `max_results` mismatch: wrapper says 100, function says 50 | code-review-graph | `main.py:299` vs `tools/review.py:107` | not yet submitted |
 | 3 | Lossy knowledge-gap totals — caps applied before truncation | code-review-graph | `analysis.py:206-209` | not yet submitted |
 | 4 | `repos` bypasses its own response envelope | code-review-graph | `cli.py:1593-1602` | not yet submitted |
-| 5 | `build` hook uses `&`, which does not detach on Windows | code-review-graph | `hooks/hooks.json` | not yet submitted |
+| 5 | `build` hook uses `&`, which does not detach on Windows | code-review-graph | `hooks/hooks.json` | **fixed locally** — `hook.spawn_detached` uses `DETACHED_PROCESS\|CREATE_NEW_PROCESS_GROUP` on Windows and `start_new_session` on POSIX; not yet submitted |
 | 6 | `query` CLI exposes only 8 of 16 supported patterns | code-review-graph | `cli.py:1132-1140` | not yet submitted |
 | 7 | `tree_sitter_language_pack` imported at module scope for a single call site, putting ~351MB of grammars on the import path of every command — including `status`, which only reads SQLite | code-review-graph | `custom_languages.py:35` | **fixed locally**, not yet submitted |
 | 8 | Missing graph exits 1 (usage) when it is a precondition failure, and emits no machine-readable remediation | code-review-graph | `cli.py:1734-1742` | **fixed locally** (Cartograph-specific in part) |
+| 9 | A bad grammar name in `languages.toml` crashes the parser instead of warn-and-skip. `tree_sitter_language_pack` resolves grammars through a download manifest and raises `DownloadError`, whose MRO is `(DownloadError, Error, Exception)` — so it is caught by none of `LookupError, ValueError, ImportError, OSError`. One typo takes down every parse. | code-review-graph | `custom_languages.py:342` | **fixed locally** (`3fd38dc`); clean PR candidate, unrelated to Cartograph's direction |
 
 ## Design record
 
