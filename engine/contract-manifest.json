@@ -142,6 +142,18 @@
         "result_count": 0
       }
     },
+    "search-repo-relative": {
+      "args": [
+        "search",
+        "cli",
+        "--repo",
+        ".",
+        "--limit",
+        "5"
+      ],
+      "expect": "ok",
+      "expect_repo_relative": true
+    },
     "usage-bad-flag-value": {
       "args": [
         "search",
@@ -184,7 +196,8 @@
       "expect_page": {
         "limit": 5,
         "result_count": 5
-      }
+      },
+      "expect_repo_relative": true
     },
     "dead-code-no-graph": {
       "args": [

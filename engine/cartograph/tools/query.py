@@ -14,6 +14,7 @@ from ..graph import GraphNode, GraphStore, _sanitize_name, edge_to_dict, node_to
 from ..hints import generate_hints, get_session
 from ..incremental import get_changed_files, get_db_path, get_staged_and_unstaged
 from ..parser import normalize_file_path
+from ..repo_paths import relativise
 from ..search import hybrid_search
 from ..uncertainty import (
     empty_impact_confidence,
@@ -934,11 +935,9 @@ def find_large_functions(
                 if n.line_start and n.line_end
                 else 0
             )
-            # Make file_path relative for readability
-            try:
-                d["relative_path"] = str(Path(n.file_path).relative_to(root))
-            except ValueError:
-                d["relative_path"] = n.file_path
+            # Make file_path relative for readability. POSIX-shaped, like the
+            # rest of graph identity — see parser.normalize_file_path.
+            d["relative_path"] = relativise(n.file_path, root)
             results.append(d)
 
         summary_parts = [
@@ -948,9 +947,17 @@ def find_large_functions(
             + ":",
         ]
         for r in results[:10]:
+            # A File node's name is its own path, which the parenthetical
+            # already carries; printing it whole repeats the checkout prefix
+            # for nothing. The leaf is what distinguishes the row.
+            label = (
+                r["relative_path"].rsplit("/", 1)[-1]
+                if r["kind"] == "File"
+                else r["name"]
+            )
             summary_parts.append(
                 f"  {r['line_count']:>4} lines | {r['kind']:>8} | "
-                f"{r['name']} ({r['relative_path']}:{r['line_start']})"
+                f"{label} ({r['relative_path']}:{r['line_start']})"
             )
         if len(results) > 10:
             summary_parts.append(f"  ... and {len(results) - 10} more")

@@ -819,6 +819,7 @@ def _run_graph_tool_command(
         args, result,
         offset=offset, page_limit=page_limit,
         query=query, snapshot=snapshot, provenance=provenance,
+        repo_root=root,
     )
 
 
@@ -915,6 +916,7 @@ def _emit_tool_result(
     offset: int = 0, page_limit: "int | None" = None,
     query: "str | None" = None, snapshot: "str | None" = None,
     provenance: "dict | None" = None,
+    repo_root: "str | Path | None" = None,
 ) -> None:
     """Wrap a graph-tool result in the capability envelope and print it.
 
@@ -924,9 +926,17 @@ def _emit_tool_result(
     """
     from . import cursor as _cursor
     from . import envelope as _env
+    from . import repo_paths as _paths
 
     fmt = getattr(args, "output_format", None) or "json"
     command = args.command
+
+    # The graph stores absolute paths, so every id, name and edge endpoint
+    # arrives carrying this checkout's prefix — noise an agent pays for on
+    # every row. review-context is already shaped relative; this is the same
+    # shortening for the commands that have no shaper of their own. Before
+    # paging, so the rows a cursor is minted from are the rows emitted.
+    _paths.relativise_result(result, repo_root)
 
     page = _page_for(args, command, result, offset=offset, page_limit=page_limit)
     if page is not None and query is not None:
@@ -2293,7 +2303,7 @@ def main() -> None:
                     "items": shown,
                     "total": total,
                     "truncated": len(shown) < total,
-                })
+                }, repo_root=repo_root)
             else:
                 print(f"Dead code: {total} item(s); showing {len(shown)}")
                 for item in shown:
@@ -2714,7 +2724,7 @@ def main() -> None:
                         k: v for k, v in result.items()
                         if k in ("summary", "risk_score", "context_savings")
                     }
-                _emit_tool_result(args, result)
+                _emit_tool_result(args, result, repo_root=repo_root)
 
     finally:
         store.close()

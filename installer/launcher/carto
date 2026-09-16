@@ -1,0 +1,32 @@
+#!/bin/sh
+# The `carto` every host sees on PATH.
+#
+# It resolves the engine payload through a pointer file rather than being
+# generated with an absolute path baked in. A VS Code extension lives in a
+# version-stamped directory, so baking the path would leave Claude Code and
+# Copilot CLI pointing at a directory the next extension update deleted —
+# failing at the moment the user is least equipped to diagnose it.
+#
+# Written by both `installer/install.sh` and the extension. Keep the two
+# copies identical by shipping this file, never by regenerating its text.
+set -e
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+payload=$(cat "$here/../runtime.path" 2>/dev/null) || payload=
+
+if [ -z "$payload" ] || [ ! -x "$payload/runtime/carto" ]; then
+    echo "carto: no engine payload registered at $here/../runtime.path" >&2
+    echo "carto: reinstall the Cartograph VS Code extension, or re-run installer/install.sh" >&2
+    exit 127
+fi
+
+# The grammar pack fetches parser libraries on first use and caches them per
+# user. On a default-deny machine that fetch never succeeds, so the copy inside
+# the payload is pointed at explicitly. An operator who has already seeded a
+# cache of their own keeps it: the existing value wins.
+if [ -z "${TREE_SITTER_LANGUAGE_PACK_CACHE_DIR:-}" ]; then
+    TREE_SITTER_LANGUAGE_PACK_CACHE_DIR="$payload/grammars"
+    export TREE_SITTER_LANGUAGE_PACK_CACHE_DIR
+fi
+
+exec "$payload/runtime/carto" "$@"

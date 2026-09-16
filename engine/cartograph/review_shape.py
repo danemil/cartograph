@@ -18,39 +18,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+# The path helpers are shared with the CLI's emit path, which applies the same
+# shortening to every other command. See ``repo_paths``.
+from .repo_paths import relativise as _relativise
+from .repo_paths import relativise_qualified as _relativise_qualified
+
 #: Cap for saved_percent. A response is never free, so 100% is never true —
 #: and it is the number the project is marketed on.
 _MAX_SAVED_PERCENT = 99
-
-
-def _relativise(path: Optional[str], root: Optional[Path]) -> Optional[str]:
-    """Absolute paths are noise in an agent's context; make them repo-relative.
-
-    Emitted in POSIX form, not the platform's. The graph stores forward slashes
-    as identity (see ``parser.normalize_file_path``), and an ``id`` here is
-    meant to be handed straight back to ``carto query`` — so a Windows-shaped
-    ``engine\\cartograph\\cli.py`` would look right and resolve to nothing.
-    """
-    if not path or root is None:
-        return path
-    try:
-        return Path(path).relative_to(root).as_posix()
-    except (ValueError, TypeError):
-        return path
-
-
-def _relativise_qualified(name: Optional[str], root: Optional[Path]) -> Optional[str]:
-    """Relativise the path half of a qualified name, keeping the rest intact.
-
-    A qualified name is ``<path>`` or ``<path>::<symbol>``; only the path is
-    absolute. The suffix is what makes the name resolvable, so it is carried
-    through untouched — and `carto query` re-anchors a repo-relative target
-    against the repo root, so the shortened form still round-trips.
-    """
-    if not name:
-        return name
-    path, separator, symbol = name.partition("::")
-    return f"{_relativise(path, root)}{separator}{symbol}"
 
 
 def _node_to_item(node: dict[str, Any], root: Optional[Path]) -> dict[str, Any]:

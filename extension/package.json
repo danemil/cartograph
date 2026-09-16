@@ -1,0 +1,71 @@
+{
+  "name": "cartograph",
+  "displayName": "Cartograph",
+  "description": "A code knowledge graph for AI coding agents, as a CLI and a skills pack. No MCP server.",
+  "version": "0.1.0",
+  "publisher": "cartograph",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "cartograph.build",
+        "title": "Cartograph: Build Graph",
+        "category": "Cartograph"
+      },
+      {
+        "command": "cartograph.update",
+        "title": "Cartograph: Update Graph",
+        "category": "Cartograph"
+      },
+      {
+        "command": "cartograph.status",
+        "title": "Cartograph: Show Status",
+        "category": "Cartograph"
+      },
+      {
+        "command": "cartograph.installSkills",
+        "title": "Cartograph: Install Skills and Hooks into Workspace",
+        "category": "Cartograph"
+      }
+    ],
+    "configuration": {
+      "title": "Cartograph",
+      "properties": {
+        "cartograph.home": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory holding the `carto` launcher that Claude Code and Copilot CLI find on PATH. Defaults to `~/.cartograph`, which is also where the engine keeps its per-user state."
+        },
+        "cartograph.installIntoWorkspace": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "On activation, run `carto install` so the skills pack is present in `.claude/skills`, `.github/skills` and `.agents/skills`. Turn off to manage those directories yourself."
+        },
+        "cartograph.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show graph state in the status bar."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

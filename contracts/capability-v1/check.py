@@ -43,6 +43,17 @@ proves it does not advertise a page that is not there:
 
 ``"expect_page": false`` asserts the opposite — that no page block is emitted,
 which is the honest answer for a command with no result cap.
+
+An operation may also assert that nothing in ``data`` carries the checkout's
+own absolute path. Ids are what an agent hands back to the next call, so they
+have to be worth carrying; the prefix is machine-specific noise charged on
+every row of every response:
+
+    "search-repo-relative": {
+      "args": ["search", "cli", "--repo", ".", "--limit", "5"],
+      "expect": "ok",
+      "expect_repo_relative": true
+    }
 """
 
 from __future__ import annotations
@@ -82,6 +93,43 @@ def validate_schema(doc: dict) -> list[str]:
         for e in Draft202012Validator(SCHEMA).iter_errors(doc)
     ]
 
+
+
+def _checkout_root(manifest_path: Path) -> str:
+    """The checkout whose absolute prefix must never reach an agent.
+
+    Found from the manifest rather than from the current directory, so the
+    assertion cannot quietly go vacuous when the suite is run from elsewhere.
+    """
+    here = manifest_path.resolve().parent
+    for candidate in (here, *here.parents):
+        if (candidate / ".git").exists():
+            return str(candidate)
+    return str(Path.cwd().resolve())
+
+
+def _absolute_leaks(value, root: str) -> list[str]:
+    """Every string under `data` that still begins with the checkout's path.
+
+    Anchored at the start, because quoted file content legitimately mentions
+    absolute paths mid-line and rewriting a source line would be a lie.
+    """
+    found: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key, item in node.items():
+                if isinstance(key, str) and key.startswith(root):
+                    found.append(key)
+                walk(item)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, str) and node.startswith(root):
+            found.append(node)
+
+    walk(value)
+    return found
 
 
 def _collection_of(doc: dict) -> list:
@@ -142,7 +190,10 @@ def _check_second_page(manifest, op_name, op, base, args, first, cwd, res) -> No
         )
 
 
-def run_operation(manifest: dict, op_name: str, op: dict, tmpdir: str, res: Result) -> None:
+def run_operation(
+    manifest: dict, op_name: str, op: dict, tmpdir: str, res: Result,
+    checkout: str = "",
+) -> None:
     base = list(manifest["command"])
     args = [a.replace("{tmpdir}", tmpdir) for a in op["args"]]
     cwd = manifest.get("cwd")
@@ -200,6 +251,18 @@ def run_operation(manifest: dict, op_name: str, op: dict, tmpdir: str, res: Resu
                 res.check(f"{tag}: page.{field} == {value!r}",
                           isinstance(page, dict) and page.get(field) == value,
                           f"got {page.get(field)!r}" if isinstance(page, dict) else "no page")
+
+    # 5c. Ids are handed straight back to the next call, so an absolute path in
+    #     `data` is both machine-specific and charged on every row. The
+    #     resolver re-anchors a repo-relative target against the repo root, so
+    #     nothing is lost by shortening it.
+    if op.get("expect_repo_relative") and checkout:
+        leaks = _absolute_leaks(doc.get("data"), checkout)
+        res.check(
+            f"{tag}: data carries no absolute checkout paths",
+            not leaks,
+            f"{len(leaks)} value(s), e.g. {leaks[0]!r}" if leaks else "",
+        )
 
     # 6. The size block must actually describe the payload.
     size = doc.get("size", {})
@@ -276,11 +339,12 @@ def main() -> int:
 
     manifest = json.loads(args.manifest.read_text())
     res = Result()
+    checkout = _checkout_root(args.manifest)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         subprocess.run(["git", "init", "-q", tmpdir], check=False)
         for op_name, op in manifest["operations"].items():
-            run_operation(manifest, op_name, op, tmpdir, res)
+            run_operation(manifest, op_name, op, tmpdir, res, checkout)
 
     name = manifest.get("name", args.manifest.stem)
     for label in res.passed:
