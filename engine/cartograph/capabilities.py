@@ -27,6 +27,10 @@ from typing import Any, Optional
 _NOT_AGENT_FACING = frozenset({
     "install", "init", "uninstall", "serve", "mcp", "daemon", "watch", "eval",
     "register", "unregister", "capabilities",
+    # `hook` is invoked by the host, not by the agent. It speaks the hook
+    # protocol, not this one — an agent that called it would get a line of
+    # prose where it expected an envelope.
+    "hook",
 })
 
 #: A runnable example per command. Examples do more than illustrate — they are

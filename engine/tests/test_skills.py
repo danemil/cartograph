@@ -2559,7 +2559,13 @@ class TestGeneratedHooksGuardGitRepo:
         # Must short-circuit on the git check before calling update.
         assert "git rev-parse --git-dir" in cmd
         idx_guard = cmd.index("git rev-parse --git-dir")
-        idx_update = cmd.index("carto update")
+        # The hook now calls `carto hook file-update`, not `carto update`
+        # directly: the logic moved into Python so it is testable and so the
+        # same shell line does not have to be duplicated per host. The
+        # property under test (#312 — the git guard must short-circuit before
+        # any work, so a workspace root without .git no-ops instead of
+        # erroring on every tool call) is unchanged.
+        idx_update = cmd.index("carto hook file-update")
         assert idx_guard < idx_update, "git guard must precede the update call"
 
     def test_session_start_command_guarded_by_git_check(self):
@@ -2567,7 +2573,7 @@ class TestGeneratedHooksGuardGitRepo:
         cmd = config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
         assert "git rev-parse --git-dir" in cmd
         idx_guard = cmd.index("git rev-parse --git-dir")
-        idx_status = cmd.index("carto status")
+        idx_status = cmd.index("carto hook session-status")
         assert idx_guard < idx_status
 
 

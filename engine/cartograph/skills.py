@@ -1002,6 +1002,29 @@ def generate_skills(repo_root: Path, skills_dir: Path | None = None) -> Path:
     return _write_skills_pack(skills_dir)
 
 
+def hook_command(event: str) -> str:
+    """One host hook command line, for the hosts that run a POSIX shell.
+
+    The shell does three things and nothing more: consume the JSON the host
+    pipes in, exit silently when the binary is not on ``$PATH`` (#549), and
+    resolve the checkout at hook runtime so a committed ``settings.json`` works
+    for every collaborator (#558). The git guard still precedes the work, so a
+    workspace root without a ``.git`` no-ops instead of erroring (#312).
+
+    Every decision past that is ``carto hook``'s, in Python. A shell one-liner
+    copied into one JSON file per host is the version of this that cannot be
+    tested and drifts between hosts, which is what it used to be.
+    """
+    return (
+        "cat >/dev/null || true; "
+        "command -v cartograph >/dev/null 2>&1 || exit 0; "
+        "git rev-parse --git-dir >/dev/null 2>&1"
+        f" && carto hook {event}"
+        ' --repo "$(git rev-parse --show-toplevel 2>/dev/null)"'
+        " || true"
+    )
+
+
 def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
     """Generate Claude Code hooks configuration.
 
@@ -1010,11 +1033,10 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
     Claude Code event — pre-commit checks are handled by ``install_git_hook``.
 
     The ``repo_root`` parameter is retained for backward compatibility but is
-    not embedded in hook commands. Instead, the repo root is resolved at
-    runtime via ``git rev-parse --show-toplevel`` so that ``settings.json``
-    is shareable across collaborators with different checkout paths.
-    A PATH guard ensures the hook exits silently when the binary is not on
-    ``$PATH`` (e.g. installed in a project venv).
+    not embedded in hook commands; see :func:`hook_command`.
+
+    ``file-update`` returns as soon as it has launched the refresh, so its
+    timeout is a ceiling on starting a subprocess, not on building a graph.
     """
     return {
         "hooks": {
@@ -1024,14 +1046,7 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": (
-                                "cat >/dev/null || true; "
-                                "command -v cartograph >/dev/null 2>&1 || exit 0; "
-                                "git rev-parse --git-dir >/dev/null 2>&1"
-                                " && carto update --skip-flows"
-                                " --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\""
-                                " || true"
-                            ),
+                            "command": hook_command("file-update"),
                             "timeout": 30,
                         },
                     ],
@@ -1043,14 +1058,7 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": (
-                                "cat >/dev/null || true; "
-                                "command -v cartograph >/dev/null 2>&1 || exit 0; "
-                                "git rev-parse --git-dir >/dev/null 2>&1"
-                                " && carto status"
-                                " --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\""
-                                " || echo 'Not a git repo, skipping'"
-                            ),
+                            "command": hook_command("session-status"),
                             "timeout": 10,
                         },
                     ],
@@ -1598,7 +1606,9 @@ set -euo pipefail
 
 cat > /dev/null || true
 
-msg="$(carto status --repo "__CRG_REPO__" 2>&1 | head -n 1 || true)"
+# One line by construction, so nothing here has to trim it. stderr is the
+# hook's diagnostic channel and must not reach the model.
+msg="$(carto hook session-status --repo "__CRG_REPO__" 2>/dev/null || true)"
 
 CRG_MSG="$msg" python3 -c '
 import json,os
@@ -1617,7 +1627,7 @@ set -euo pipefail
 
 cat > /dev/null || true
 
-carto update --skip-flows --repo "__CRG_REPO__" >/dev/null 2>&1 || true
+carto hook file-update --repo "__CRG_REPO__" >/dev/null 2>&1 || true
 echo '{"suppressOutput": true}'
 exit 0
 """

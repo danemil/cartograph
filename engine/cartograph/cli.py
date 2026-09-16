@@ -14,6 +14,7 @@ Usage:
     carto visualize
     carto wiki
     carto detect-changes [--base BASE] [--brief]
+    carto hook <event> [--repo PATH]
     carto register <path> [--alias name]
     carto unregister <path_or_alias>
     carto repos
@@ -1214,6 +1215,16 @@ def main() -> None:
     # enrich (Claude Code PreToolUse hook; reads one JSON object from stdin)
     sub.add_parser("enrich", help="Enrich hook input with graph context")
 
+    hook_cmd = sub.add_parser(
+        "hook",
+        help="Host-invoked hook entry point (hosts call this; agents must not)",
+    )
+    hook_cmd.add_argument(
+        "event",
+        help="Hook event: session-status or file-update (host spellings accepted)",
+    )
+    hook_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+
     # dead-code
     dead_cmd = sub.add_parser(
         "dead-code",
@@ -1583,6 +1594,16 @@ def main() -> None:
         raise SystemExit(
             _env.emit(env, args.output_format, getattr(args, "max_tokens", None))
         )
+
+    if args.command == "hook":
+        # Dispatched here, ahead of repo resolution and every data-dir
+        # side effect below it. A hook runs on someone else's schedule, on a
+        # repository that may have no graph at all, and the query path's
+        # machinery — envelopes, exit codes, directory creation — is the wrong
+        # protocol for it. See cartograph.hook.
+        from .hook import run as _run_hook
+
+        raise SystemExit(_run_hook(args.event, repo=args.repo))
 
     if not args.command:
         _print_banner()

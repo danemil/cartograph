@@ -657,6 +657,25 @@ def _legacy_repo_hook_commands(repo_root: Path) -> set[str]:
     }
 
 
+def _superseded_repo_hook_commands() -> set[str]:
+    """Project hook commands written before the move to ``carto hook``.
+
+    Ownership is matched by exact command string, so an installer that changes
+    what it writes stops recognising what it wrote last time. Without these two
+    an upgrade followed by an uninstall would leave the old hook firing.
+    """
+    guard = (
+        "cat >/dev/null || true; "
+        "command -v cartograph >/dev/null 2>&1 || exit 0; "
+        "git rev-parse --git-dir >/dev/null 2>&1"
+    )
+    repo = ' --repo "$(git rev-parse --show-toplevel 2>/dev/null)"'
+    return {
+        f"{guard} && carto update --skip-flows{repo} || true",
+        f"{guard} && carto status{repo} || echo 'Not a git repo, skipping'",
+    }
+
+
 def _legacy_codex_hook_commands() -> set[str]:
     """Exact user hook commands written before the current stdin guard."""
     return {
@@ -1188,6 +1207,7 @@ def _process_repo(
 
     hook_commands = _commands(skills.generate_hooks_config(repo_root))
     hook_commands.update(_legacy_repo_hook_commands(repo_root))
+    hook_commands.update(_superseded_repo_hook_commands())
     _remove_hooks(
         repo_root / ".claude" / "settings.json",
         hook_commands,
