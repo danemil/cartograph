@@ -30,8 +30,16 @@ jobs:
     # not "modernise" this line.
     container: python:3.12-slim-bookworm
     steps:
+      # binutils is the one that is easy to miss and fails late: PyInstaller
+      # shells out to objdump to find each shared library's dependencies, so
+      # without it the freeze dies after the venv and the pip install have
+      # already run. docker/Dockerfile installs it for the same reason — this
+      # list is deliberately the same one, so the two cannot drift.
       - name: Install build prerequisites
-        run: apt-get update && apt-get install -y --no-install-recommends git zip curl ca-certificates
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils ca-certificates git zip curl
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
