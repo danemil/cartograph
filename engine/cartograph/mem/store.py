@@ -443,6 +443,18 @@ class MemoryStore:
             "observations": int(row[1]),
         }
 
+    def session_count(self, session: str) -> int:
+        """How many observations one session has recorded.
+
+        Here rather than in the caller so the ingestion budget is counted
+        against the same rows `mem search --session` returns, through the
+        index that already exists for that filter.
+        """
+        row = self._conn.execute(
+            "SELECT count(*) FROM observations WHERE session = ?", (session,)
+        ).fetchone()
+        return int(row[0])
+
     def stats(self) -> dict[str, Any]:
         row = self._conn.execute(
             "SELECT count(*), count(DISTINCT project), count(DISTINCT session), "

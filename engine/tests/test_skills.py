@@ -222,7 +222,9 @@ class TestGenerateHooksConfig:
     def test_has_only_valid_hook_types(self):
         config = generate_hooks_config(Path("/repo"))
         hook_types = set(config["hooks"].keys())
-        assert hook_types == {"PostToolUse", "SessionStart"}
+        # UserPromptSubmit joined the set when prompt capture was wired. It is
+        # a real Claude Code event, which is the property under test.
+        assert hook_types == {"PostToolUse", "SessionStart", "UserPromptSubmit"}
 
     def test_hook_entries_use_nested_hooks_array(self):
         config = generate_hooks_config(Path("/repo"))

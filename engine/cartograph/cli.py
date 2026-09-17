@@ -1540,9 +1540,21 @@ def main() -> None:
     )
     hook_cmd.add_argument(
         "event",
-        help="Hook event: session-status or file-update (host spellings accepted)",
+        help=(
+            "Hook event: session-status, file-update or prompt-capture "
+            "(host spellings accepted)"
+        ),
     )
     hook_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+    hook_cmd.add_argument(
+        "--host",
+        default=None,
+        help=(
+            "Which host is calling, e.g. claude-code. Recorded as an "
+            "observation's platform_source; only the generated host config "
+            "knows it, so nothing downstream has to infer it."
+        ),
+    )
 
     # dead-code
     dead_cmd = sub.add_parser(
@@ -1961,7 +1973,7 @@ def main() -> None:
         # protocol for it. See cartograph.hook.
         from .hook import run as _run_hook
 
-        raise SystemExit(_run_hook(args.event, repo=args.repo))
+        raise SystemExit(_run_hook(args.event, repo=args.repo, host=args.host))
 
     if not args.command:
         _print_banner()

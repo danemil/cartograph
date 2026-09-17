@@ -13,13 +13,15 @@ non-zero. A hook that cannot do its job says nothing and gets out of the way.
 
 Hosts disagree about what to call the same moment — ``SessionStart``,
 ``sessionStart``, ``startup|resume``, ``PostToolUse``, ``AfterTool``,
-``afterFileEdit``. The events below are therefore named after the *job*, with
-the host spellings as aliases, so the mapping lives in Python where it can be
-tested rather than in a command string copied into one JSON file per host.
+``afterFileEdit``, ``UserPromptSubmit``, ``beforeSubmitPrompt``. The events
+below are therefore named after the *job*, with the host spellings as aliases,
+so the mapping lives in Python where it can be tested rather than in a command
+string copied into one JSON file per host.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
@@ -172,13 +174,52 @@ def update_argv(repo_root: Path) -> list[str]:
     ]
 
 
-def _session_status(repo_root: Path) -> int:
+def _session_status(repo_root: Path, _host: Optional[str] = None) -> int:
     """Emit the one orienting line for this session, once, on stdout."""
     print(_SESSION_LINES[graph_state(repo_root)])
     return 0
 
 
-def _file_update(repo_root: Path) -> int:
+def hook_payload(stream: Any = None) -> Optional[dict]:
+    """The JSON object the host pipes in, or None.
+
+    ``isatty`` first, because a hook run by hand from a terminal has no
+    payload coming and ``read()`` would block until someone typed EOF —
+    indistinguishable, from the outside, from a hook that hangs the session.
+    """
+    stream = sys.stdin if stream is None else stream
+    try:
+        if stream is None or stream.isatty():
+            return None
+        payload = json.loads(stream.read())
+    except (OSError, ValueError, AttributeError):
+        # A host that sent nothing, or sent something that is not JSON, has
+        # given this hook no work to do. That is not a condition to report.
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _prompt_capture(repo_root: Path, host: Optional[str] = None) -> int:
+    """Record the submitted prompt, in process.
+
+    In process rather than through ``carto mem add``: the write is one SQLite
+    insert, and a subprocess — interpreter start, package import, store open —
+    would cost two orders of magnitude more than the work it wrapped.
+
+    What is worth recording, and what is refused, is
+    :mod:`cartograph.mem.ingest`'s decision, not this module's; the host
+    protocol is all that lives here.
+    """
+    payload = hook_payload()
+    if payload is None:
+        return 0
+    from .mem import ingest
+
+    ingest.capture(repo_root, payload, host=host)
+    return 0
+
+
+def _file_update(repo_root: Path, _host: Optional[str] = None) -> int:
     """Launch the graph refresh and return without waiting for it.
 
     Returning immediately is not an optimisation. Copilot has no async hook
@@ -190,13 +231,15 @@ def _file_update(repo_root: Path) -> int:
     return 0
 
 
-_EVENTS: dict[str, Callable[[Path], int]] = {
+_EVENTS: dict[str, Callable[[Path, Optional[str]], int]] = {
     "session-status": _session_status,
     "file-update": _file_update,
+    "prompt-capture": _prompt_capture,
 }
 
-#: Host spellings for the two moments, keyed by their normalised form so that
-#: SessionStart, sessionStart and session_start all arrive at the same place.
+#: Host spellings for the three moments, keyed by their normalised form so
+#: that SessionStart, sessionStart and session_start all arrive at the same
+#: place.
 _ALIASES = {
     "sessionstatus": "session-status",
     "sessionstart": "session-status",
@@ -207,6 +250,11 @@ _ALIASES = {
     "posttooluse": "file-update",
     "aftertool": "file-update",
     "afterfileedit": "file-update",
+    "promptcapture": "prompt-capture",
+    "userpromptsubmit": "prompt-capture",
+    "promptsubmit": "prompt-capture",
+    "beforesubmitprompt": "prompt-capture",
+    "userprompt": "prompt-capture",
 }
 
 
@@ -223,8 +271,14 @@ def _repo_root(repo: Optional[str]) -> Path:
     return find_project_root(Path.cwd())
 
 
-def run(event: str, repo: Optional[str] = None) -> int:
-    """Run one hook event. Always returns 0 — see the module docstring."""
+def run(event: str, repo: Optional[str] = None, host: Optional[str] = None) -> int:
+    """Run one hook event. Always returns 0 — see the module docstring.
+
+    The marker check covers capture as well as the spawning events, and has
+    to: an observation written from inside a hook-launched session would be a
+    record of Cartograph's own activity, indexed as if a person had asked for
+    it.
+    """
     if os.environ.get(REENTRY_MARKER):
         return 0
     resolved = resolve_event(event)
@@ -235,7 +289,7 @@ def run(event: str, repo: Optional[str] = None) -> int:
         print(f"carto hook: unknown event {event!r}", file=sys.stderr)
         return 0
     try:
-        return _EVENTS[resolved](_repo_root(repo))
+        return _EVENTS[resolved](_repo_root(repo), host)
     except Exception as exc:  # noqa: BLE001 — a hook must never be the thing that fails
         print(f"carto hook: {resolved} failed: {exc}", file=sys.stderr)
         return 0

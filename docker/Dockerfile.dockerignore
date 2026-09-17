@@ -1,0 +1,20 @@
+# Keep the build context to source. engine/.venv alone is ~100MB and none of
+# it reaches the payload — build-payload.py assembles its own venv.
+**/.venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.git
+**/.pytest_cache
+**/.ruff_cache
+**/.DS_Store
+**/.cartograph
+**/.code-review-graph
+**/*.db
+**/*.db-shm
+**/*.db-wal
+dist
+build
+extension/out
+extension/payload
+extension/launcher

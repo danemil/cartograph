@@ -1002,7 +1002,9 @@ def generate_skills(repo_root: Path, skills_dir: Path | None = None) -> Path:
     return _write_skills_pack(skills_dir)
 
 
-def hook_command(event: str) -> str:
+def hook_command(
+    event: str, *, host: str | None = None, reads_payload: bool = False
+) -> str:
     """One host hook command line, for the hosts that run a POSIX shell.
 
     The shell does three things and nothing more: consume the JSON the host
@@ -1014,20 +1016,31 @@ def hook_command(event: str) -> str:
     Every decision past that is ``carto hook``'s, in Python. A shell one-liner
     copied into one JSON file per host is the version of this that cannot be
     tested and drifts between hosts, which is what it used to be.
+
+    ``reads_payload`` is for an event whose entire input is that JSON. The
+    drain moves to the end of the line, where it still runs if a guard
+    short-circuits, instead of discarding the payload before ``carto`` can
+    read it.
+
+    ``host`` names the caller in the observations the event records. It is
+    passed here because this is the only place that knows it: a payload does
+    not say which host wrote it, and inferring one from its field names would
+    be a guess stored as a fact.
     """
     return (
-        "cat >/dev/null || true; "
+        ("" if reads_payload else "cat >/dev/null || true; ")
         # Guard on the binary this actually INVOKES. It used to test for
         # `cartograph`, the long alias, and then run `carto` — so an install
         # that put only `carto` on PATH, which is the primary entry point and
         # the name every remediation string uses, made every hook a silent
         # no-op. Silent is the whole problem: nothing fails, the graph simply
         # never updates.
-        "command -v carto >/dev/null 2>&1 || exit 0; "
-        "git rev-parse --git-dir >/dev/null 2>&1"
-        f" && carto hook {event}"
-        ' --repo "$(git rev-parse --show-toplevel 2>/dev/null)"'
-        " || true"
+        + "command -v carto >/dev/null 2>&1 || exit 0; "
+        + "git rev-parse --git-dir >/dev/null 2>&1"
+        + f" && carto hook {event}"
+        + (f" --host {host}" if host else "")
+        + ' --repo "$(git rev-parse --show-toplevel 2>/dev/null)"'
+        + (" || cat >/dev/null || true" if reads_payload else " || true")
     )
 
 
@@ -1043,9 +1056,29 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
 
     ``file-update`` returns as soon as it has launched the refresh, so its
     timeout is a ceiling on starting a subprocess, not on building a graph.
+
+    ``prompt-capture`` is the only entry that needs what the host pipes in,
+    and the only one that must stay silent on stdout: whatever a
+    ``UserPromptSubmit`` hook prints is prepended to the user's prompt.
     """
     return {
         "hooks": {
+            "UserPromptSubmit": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": hook_command(
+                                "prompt-capture",
+                                host="claude-code",
+                                reads_payload=True,
+                            ),
+                            "timeout": 10,
+                        },
+                    ],
+                },
+            ],
             "PostToolUse": [
                 {
                     "matcher": "Edit|Write",
@@ -1242,11 +1275,17 @@ def install_hooks(repo_root: Path, platform: str = "claude") -> None:
         repo_root: Repository root directory.
         platform: Target platform ("claude" or "qoder").
     """
+    config = generate_hooks_config(repo_root)
     if platform == "qoder":
         settings_dir = repo_root / ".qoder"
+        # Same reservation as CodeBuddy: the prompt event and its payload were
+        # verified against Claude Code, and the `--host` it records says
+        # claude-code. Installing it here would put that name on another
+        # host's observations.
+        config["hooks"].pop("UserPromptSubmit", None)
     else:
         settings_dir = repo_root / ".claude"
-    _merge_hooks_into_settings(settings_dir, generate_hooks_config(repo_root))
+    _merge_hooks_into_settings(settings_dir, config)
 
 
 def install_codebuddy_hooks(repo_root: Path) -> Path:
@@ -1262,6 +1301,11 @@ def install_codebuddy_hooks(repo_root: Path) -> Path:
     # Edit/Write, so its PostToolUse contract also observes Bash. The command
     # itself still resolves the repository dynamically at hook runtime.
     hooks_config["hooks"]["PostToolUse"][0]["matcher"] = "Edit|Write|Bash"
+    # Prompt capture is not carried over. Whether CodeBuddy emits a
+    # UserPromptSubmit event, and what it puts in the payload, has not been
+    # checked against the host — and an observation stamped with the wrong
+    # `platform_source` is worse than no observation.
+    hooks_config["hooks"].pop("UserPromptSubmit", None)
     return _merge_hooks_into_settings(
         repo_root / ".codebuddy",
         hooks_config,

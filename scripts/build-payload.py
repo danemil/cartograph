@@ -165,6 +165,39 @@ def _dereference_symlinks(root: Path) -> None:
                 shutil.copymode(target, link)
 
 
+def _make_world_readable(root: Path) -> int:
+    """Widen every mode under *root* so a user who did not build it can read it.
+
+    ``tree_sitter_language_pack`` creates its cache as a *private* per-user
+    directory: ``libs/`` comes out 0700. Right for a cache, wrong for a
+    payload, which is a distributable artifact — ``copytree`` preserves the
+    mode, so the grammars end up readable only by the account that ran this
+    script. The engine then finds an unreadable cache, treats every lookup as a
+    miss and reaches for the network on the one machine that has none; and
+    ``install.sh``'s ``cp -R`` fails outright when the installing user is not
+    the building user.
+
+    It is masked on the ``.vsix`` path, where unzip reassigns ownership to
+    whoever unpacks — so the artifact survives by accident of ownership rather
+    than by design, which holds right up until CI builds as root and a user
+    installs as themselves.
+
+    Only ever widens. Narrowing here would strip the executable bit off the
+    frozen engine, which is the other way to ship a payload that cannot run.
+    """
+    widened = 0
+    for path in [root, *root.rglob("*")]:
+        if path.is_symlink():
+            continue
+        mode = path.stat().st_mode & 0o7777
+        # Read for everyone; traverse as well, but only on directories.
+        wider = mode | (0o055 if path.is_dir() else 0o044)
+        if wider != mode:
+            path.chmod(wider)
+            widened += 1
+    return widened
+
+
 def engine_languages(python: Path) -> list[str]:
     """The languages the engine's own extension map can reach.
 
@@ -288,8 +321,11 @@ def main() -> int:
         encoding="utf-8",
     )
 
+    # Last, so it covers everything every step above put there.
+    widened = _make_world_readable(payload)
+
     size = sum(f.stat().st_size for f in payload.rglob("*") if f.is_file())
-    print(f"\npayload: {payload}  ({size / 1e6:.0f} MB)")
+    print(f"\npayload: {payload}  ({size / 1e6:.0f} MB, {widened} modes widened)")
     return 0
 
 

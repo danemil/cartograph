@@ -91,7 +91,16 @@ The 7 ignored modules import `fastmcp`, which is deliberately absent.
 
 `carto hook <event>` (`engine/cartograph/hook.py`) is what hosts call; agents
 never do (it is in `_NOT_AGENT_FACING`). Events are named for the job —
-`session-status`, `file-update` — with nine host spellings aliased onto them.
+`session-status`, `file-update`, `prompt-capture` — with fourteen host
+spellings aliased onto them.
+
+`prompt-capture` is the only event that reads the host's stdin payload, and the
+only one that writes: it records the submitted prompt into the `mem` store in
+process (`engine/cartograph/mem/ingest.py`), verbatim, ~1 ms of work inside a
+~160 ms interpreter start. What it refuses is the design — acknowledgements,
+payloads with no prompt in them, and anything past a per-session cap. Wired for
+Claude Code only; the other hosts' prompt events and payloads have not been
+checked against the host.
 
 **The hook protocol is not the query protocol.** In a hook, exit `2` means
 *blocking feedback to the model*, not "precondition failed". `hook.py` never

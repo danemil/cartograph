@@ -46,7 +46,15 @@ done
 [ -e "$PAYLOAD" ] || { echo "install.sh: no such payload: $PAYLOAD" >&2; exit 1; }
 
 staging=""
-cleanup() { [ -n "$staging" ] && rm -rf "$staging"; }
+# `return 0` is load-bearing. This runs as the EXIT trap, and a shell takes the
+# trap's own exit status as the script's — so on the directory-payload path,
+# where nothing was staged, the `[ -n ... ]` test fails and a wholly successful
+# install reports failure to whatever automation ran it. Invisible when
+# installing from a `.vsix`, because then `staging` is set and the `rm` runs.
+cleanup() {
+    [ -n "$staging" ] && rm -rf "$staging"
+    return 0
+}
 trap cleanup EXIT INT TERM
 
 # A .vsix is a zip whose payload sits under extension/. Accepting one directly
