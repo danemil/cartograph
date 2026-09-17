@@ -98,9 +98,11 @@ export function placeLaunchers(
   fs.writeFileSync(path.join(home, "runtime.path"), payload.root, "utf8");
 
   const source = path.join(extensionPath, "launcher");
-  // Both names: the hook lines `carto install` writes guard on `cartograph`
-  // being resolvable and then invoke `carto`. Shipping only one of the two
-  // makes every hook a silent no-op.
+  // Both names. `carto` is what everything invokes; `cartograph` is the
+  // spelled-out alias, kept so an install or hook written before the rename
+  // still resolves. Shipping only one of them was how the generated hooks
+  // became silent no-ops once (they guarded on one name and ran the other),
+  // and that is cheap enough to insure against permanently.
   const names = process.platform === "win32"
     ? ["carto.cmd", "cartograph.cmd"]
     : ["carto", "cartograph"];

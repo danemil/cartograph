@@ -111,11 +111,18 @@ PROVENANCE.md.
 
 Working today: the capability envelope on ~25 commands, all 16 query patterns,
 `carto capabilities`, `carto review-context` / `review-summary`, `--max-tokens`
-with semantic truncation, the five-skill pack, and `carto hook` with a
-cross-platform detached launcher.
+with semantic truncation, the five-skill pack, `carto hook` with a
+cross-platform detached launcher, and a `.vsix` that carries the engine and its
+grammars and installs with no network at all.
 
-Not yet: cursors (`next_cursor` is honestly `null`), `carto mem` anything, the
-`.vsix`, and the installer.
+Not yet: cursors (`next_cursor` is honestly `null`) and `carto mem` anything.
+
+The `.vsix` is built and verified **on darwin-arm64 only**. PyInstaller freezes
+the interpreter it runs on, so every other target has to be built on its own
+machine, and none has been. The extension's activation path has not been run
+inside a VS Code window — what was verified is the `.vsix` installing through
+`code --install-extension`, and the placement and query code driven directly.
+See `docs/packaging.md`.
 
 Verify any of this rather than trusting it:
 

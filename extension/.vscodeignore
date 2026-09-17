@@ -1,0 +1,9 @@
+# Everything the extension needs at runtime is `out/`, `payload/` and
+# `launcher/`. The rest is build input and would only make a 130MB artifact
+# larger.
+.vscode/**
+src/**
+node_modules/**
+tsconfig.json
+out/**/*.map
+**/.DS_Store

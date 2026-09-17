@@ -132,6 +132,37 @@ def freeze(python: Path, out: Path) -> None:
         env={**os.environ, "PYTHONPATH": str(ROOT / "engine")},
     )
     shutil.move(str(out.parent / "_pyinstaller" / "carto"), str(out))
+    shutil.rmtree(out.parent / "_pyinstaller", ignore_errors=True)
+    _dereference_symlinks(out)
+
+
+def _dereference_symlinks(root: Path) -> None:
+    """Replace every symlink under *root* with the thing it points at.
+
+    On macOS PyInstaller emits a Python.framework with the usual
+    ``Versions/Current`` indirection — symlinks that point at directories. Two
+    consumers cannot cope with them:
+
+    * ``vsce`` runs a secret scanner over every packaged file and raises EISDIR
+      on the first directory-symlink, failing the package step outright;
+    * a ``.vsix`` is a zip, and how a symlink survives a zip round-trip depends
+      on the extractor. A payload that is a plain file tree has no such
+      question to answer.
+
+    Costs one extra copy of the framework, about 12MB against a 127MB payload.
+    """
+    while True:
+        links = [p for p in root.rglob("*") if p.is_symlink()]
+        if not links:
+            return
+        for link in links:
+            target = link.resolve()
+            link.unlink()
+            if target.is_dir():
+                shutil.copytree(target, link, symlinks=False)
+            else:
+                shutil.copyfile(target, link)
+                shutil.copymode(target, link)
 
 
 def engine_languages(python: Path) -> list[str]:

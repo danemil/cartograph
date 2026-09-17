@@ -1,0 +1,55 @@
+# Cartograph for VS Code
+
+Installs Cartograph — a code knowledge graph for AI coding agents — and gets
+out of the way. **No MCP server**, because the environment this is built for
+prohibits them.
+
+## What installing it does
+
+On activation, in order:
+
+1. Restores the executable bit on the bundled `carto` binary, which a `.vsix`
+   is a zip and does not carry, and clears the macOS quarantine mark.
+2. Writes a `carto` launcher into `~/.cartograph/bin` and puts that directory
+   on the PATH of every VS Code terminal.
+3. Runs `carto install`, which writes the skills pack into `.claude/skills`,
+   `.github/skills` and `.agents/skills`, and the hooks into
+   `.claude/settings.json`.
+4. Reads `carto status` and shows the graph state in the status bar.
+
+Steps 2 and 3 are why installing this extension also serves **Claude Code** and
+**GitHub Copilot CLI**: they find `carto` on PATH and the skills pack in the
+workspace, whether or not VS Code is running.
+
+## What it does not do
+
+- **No network access, ever.** The engine and its tree-sitter grammars are
+  inside the `.vsix`. The extension downloads nothing at install time or after.
+- **No MCP registration.** `carto install` is called without `--with-mcp`.
+- **No edits to your instruction files.** `CLAUDE.md` and `AGENTS.md` are
+  tracked project files; the extension leaves them alone. Run
+  `carto install --platform claude -y` yourself if you want them.
+
+## Commands
+
+| Command | What |
+|---|---|
+| Cartograph: Build Graph | First build. Runs in a terminal — it takes minutes on a large repo. |
+| Cartograph: Update Graph | Incremental refresh after edits. |
+| Cartograph: Show Status | Nodes, edges, files, languages, staleness. |
+| Cartograph: Install Skills and Hooks into Workspace | Re-run the placement step. |
+
+## Settings
+
+| Setting | Default | What |
+|---|---|---|
+| `cartograph.home` | `~/.cartograph` | Where the `carto` launcher is written. |
+| `cartograph.installIntoWorkspace` | `true` | Place the skills pack on activation. |
+| `cartograph.statusBar` | `true` | Show graph state in the status bar. |
+
+## Platform-specific builds
+
+Each `.vsix` carries one platform's binary (~130MB). Install the one matching
+your machine: `carto-darwin-arm64-*.vsix`, `carto-linux-x64-*.vsix`, and so on.
+
+Apache-2.0. See the monorepo's `LICENSE` and `NOTICE`.

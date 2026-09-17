@@ -10,6 +10,12 @@ node_modules/
 venv/
 *.egg-info/
 
+# Staged into extension/ by scripts/build-vsix.sh so vsce can see them, and
+# removed again on exit. Both are copies of build artifacts; neither is source.
+extension/out/
+extension/payload/
+extension/launcher/
+
 # Local data
 *.db
 *.db-shm
