@@ -157,6 +157,43 @@ function_node_types = ["function_definition"]
         assert "not_a_real_grammar" in caplog.text
         assert "tree_sitter_language_pack" in caplog.text
 
+    def test_bad_grammar_skipped_on_a_pack_without_the_error_hierarchy(
+        self, tmp_path, caplog, monkeypatch
+    ):
+        """A 0.x-shaped pack has no `tslp.Error`, and must still warn and skip.
+
+        The exception hierarchy arrived with the download manifest in 1.x. On
+        0.x, naming `tslp.Error` in the except clause raises AttributeError
+        while the original exception is being handled — so a skippable grammar
+        becomes a chained traceback, and only on the version `pyproject` has
+        been permitting all along.
+        """
+        import sys
+        import types
+
+        class _Boom(Exception):
+            pass
+
+        def _explode(_grammar):
+            raise _Boom("grammar unavailable")
+
+        # No `Error` attribute at all, exactly as 0.x ships.
+        fake = types.ModuleType("tree_sitter_language_pack")
+        fake.get_language = _explode
+        assert not hasattr(fake, "Error")
+        monkeypatch.setitem(sys.modules, "tree_sitter_language_pack", fake)
+
+        write_config(tmp_path, """\
+[languages.mylang]
+extensions = [".myl"]
+grammar = "some_grammar"
+function_node_types = ["function_definition"]
+""")
+        # _Boom is not in the expected tuple, so it propagates — but as itself,
+        # not as an AttributeError raised while evaluating the tuple.
+        with pytest.raises(_Boom):
+            load(tmp_path)
+
     def test_builtin_extension_collision_skipped(self, tmp_path, caplog):
         write_config(tmp_path, """\
 [languages.notpython]

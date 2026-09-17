@@ -353,9 +353,20 @@ def _validate_entry(
     # manifest raise `DownloadError`, which inherits from `tslp.Error` and so
     # from nothing else listed here. Without it a single typo in a user's
     # languages.toml does not warn and skip — it takes the whole parser down.
+    #
+    # Resolved through getattr because that hierarchy arrived WITH the download
+    # manifest, in 1.x. On the 0.x line — which bundles its grammars, and which
+    # pyproject has permitted — there is no `tslp.Error`, and naming it directly
+    # raises AttributeError *while handling* the original exception, turning a
+    # skippable grammar into a chained traceback. The guard costs one lookup.
+    pack_error = getattr(tslp, "Error", None)
+    expected: tuple[type[BaseException], ...] = (LookupError, ValueError, OSError)
+    if isinstance(pack_error, type) and issubclass(pack_error, BaseException):
+        expected += (pack_error,)
+
     try:
         tslp.get_language(grammar)  # type: ignore[arg-type]
-    except (LookupError, ValueError, OSError, tslp.Error) as exc:
+    except expected as exc:
         logger.warning(
             "%s: custom language %r: grammar %r is not available in "
             "tree_sitter_language_pack (%s) — skipping",

@@ -31,7 +31,13 @@ dependencies = [
     # from breaking the server the way fastmcp 3.0 did. See: #488
     "fastmcp>=3.2.4,<4",
     "tree-sitter>=0.23.0,<1",
-    "tree-sitter-language-pack>=0.3.0,<1",
+    # Declared range widened to admit 1.x, which is what is actually installed,
+    # tested and frozen into the .vsix payload. The two lines are different
+    # products: 0.x bundles its grammars in the wheel (47-59MB), 1.x is a 5MB
+    # extension that fetches them at runtime into a per-user cache. Packaging
+    # seeds that cache at build time precisely so a default-deny machine never
+    # reaches the network — see docs/packaging.md.
+    "tree-sitter-language-pack>=0.3.0,<2",
     "pyyaml>=6.0,<7",
     "networkx>=3.2,<4",
     "watchdog>=4.0.0,<7",
