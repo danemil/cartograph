@@ -66,10 +66,16 @@ Two decisions worth knowing:
   leave Claude Code and Copilot CLI aimed at a directory the next extension
   update deleted — failing later, elsewhere, for a reason nobody would connect
   back to this.
-- **Both names are installed.** The hook lines `carto install` writes guard on
-  `command -v cartograph` and then invoke `carto`. Shipping one without the
-  other makes every hook a silent no-op, which is the failure mode this project
-  is least able to detect.
+- **Both names are installed.** `carto` is what every hook, skill and
+  remediation string invokes; `cartograph` is the spelled-out alias, kept so an
+  install or hook written before the rename still resolves.
+
+  The guard and the invocation must always name the SAME binary. They did not
+  once — hooks tested `command -v cartograph` and then ran `carto`, so an
+  install placing only `carto` made every hook exit 0 having done nothing. That
+  is the failure mode this project is least able to detect: nothing errors,
+  nothing is logged, the graph simply stops updating. Shipping both names costs
+  a symlink and removes the question.
 
 ## Building
 

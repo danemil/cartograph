@@ -46,11 +46,13 @@ done
 [ -e "$PAYLOAD" ] || { echo "install.sh: no such payload: $PAYLOAD" >&2; exit 1; }
 
 staging=""
-# `return 0` is load-bearing. This runs as the EXIT trap, and a shell takes the
-# trap's own exit status as the script's — so on the directory-payload path,
-# where nothing was staged, the `[ -n ... ]` test fails and a wholly successful
-# install reports failure to whatever automation ran it. Invisible when
-# installing from a `.vsix`, because then `staging` is set and the `rm` runs.
+# `return 0` is load-bearing, and `set -eu` above is why. Under errexit the EXIT
+# trap's own status becomes the script's, so on the directory-payload path —
+# where nothing was staged, `[ -n "$staging" ]` is false and `&&` short-circuits
+# — a wholly successful install reported failure to whatever automation ran it.
+# Reproduced in dash, bash and macOS sh; zsh is the odd one out and returns 0.
+# Invisible from a `.vsix`, because there `staging` is set and the `rm` runs,
+# and that is the only path anyone had tested by hand.
 cleanup() {
     [ -n "$staging" ] && rm -rf "$staging"
     return 0
