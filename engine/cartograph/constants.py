@@ -131,6 +131,19 @@ def crg_home() -> Path:
     return _DEFAULT_CRG_HOME
 
 
+#: How a frozen build asks itself to load one tree-sitter grammar.
+#:
+#: ``parser._run_parser_load_probe`` loads each grammar in a disposable process
+#: first, so a broken native library cannot take the build down with it.
+#: Unfrozen, that process is ``sys.executable -c <code>``. In a PyInstaller
+#: build ``sys.executable`` is the ``carto`` binary, which has no ``-c``:
+#: argparse reads the code as a subcommand name, every probe fails, every file
+#: parses to nothing, and the build reports success over an empty graph. The
+#: flag is handled at the top of ``cli.main`` and never reaches argparse, which
+#: is why it is a flag here rather than a subcommand there.
+GRAMMAR_PROBE_FLAG = "--load-grammar-probe"
+
+
 #: Every query pattern ``tools.query_graph`` dispatches, in the order its
 #: docstring lists them.
 #:

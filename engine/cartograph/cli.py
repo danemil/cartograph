@@ -50,7 +50,7 @@ from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Iterable, TypedDict
 
-from .constants import QUERY_PATTERNS
+from .constants import GRAMMAR_PROBE_FLAG, QUERY_PATTERNS
 
 logger = logging.getLogger(__name__)
 
@@ -985,6 +985,14 @@ def _normalise_output_format(args) -> None:
 
 def main() -> None:
     """Main CLI entry point."""
+    # Before argparse, because this is not a command and must not appear in any
+    # catalogue: it is how a frozen build reaches its own grammar loader, where
+    # `sys.executable -c` is not available. See GRAMMAR_PROBE_FLAG.
+    if len(sys.argv) == 3 and sys.argv[1] == GRAMMAR_PROBE_FLAG:
+        from .parser import run_grammar_probe
+
+        raise SystemExit(run_grammar_probe(sys.argv[2]))
+
     _configure_utf8_stdio()
     ap = _ContractParser(
         prog="carto",

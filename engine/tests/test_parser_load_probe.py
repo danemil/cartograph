@@ -203,3 +203,34 @@ def test_unexpected_parent_load_failure_still_surfaces(monkeypatch):
 
     with pytest.raises(RuntimeError, match="native loader bug"):
         CodeParser()._get_parser("tsx")
+
+
+def test_probe_argv_reenters_the_binary_when_frozen(monkeypatch):
+    """The frozen branch, which no unfrozen test run can reach on its own.
+
+    A PyInstaller `sys.executable` is the `carto` binary, not an interpreter.
+    Passing it `-c` made argparse read the probe source as a subcommand name,
+    so every grammar was reported unavailable and every build produced an empty
+    graph while exiting 0. Asserted at the argv level for the same reason the
+    Windows detach flags are: the branch cannot be exercised here.
+    """
+    monkeypatch.setattr(parser_module.sys, "executable", "/opt/carto/carto")
+
+    monkeypatch.setattr(parser_module.sys, "frozen", False, raising=False)
+    assert parser_module._probe_argv("python")[1] == "-c"
+
+    monkeypatch.setattr(parser_module.sys, "frozen", True, raising=False)
+    assert parser_module._probe_argv("python") == [
+        "/opt/carto/carto",
+        parser_module.GRAMMAR_PROBE_FLAG,
+        "python",
+    ]
+
+
+def test_grammar_probe_exit_code_is_the_whole_answer(monkeypatch):
+    monkeypatch.setattr(
+        parser_module.importlib, "import_module",
+        lambda _name: _FakeLanguagePack({"zig": LookupError("no grammar")}),
+    )
+    assert parser_module.run_grammar_probe("python") == 0
+    assert parser_module.run_grammar_probe("zig") == 1

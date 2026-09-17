@@ -30,6 +30,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10
     import tomli as tomllib  # type: ignore[import-not-found,no-redef]
 
 from .config_keys import is_spring_config_path, normalize_spring_config_key
+from .constants import GRAMMAR_PROBE_FLAG
 from .custom_languages import CustomLanguage, load_custom_languages
 
 try:
@@ -472,16 +473,46 @@ def _parser_load_timeout_seconds() -> float:
     return timeout
 
 
+_PROBE_CODE = (
+    "from tree_sitter_language_pack import get_parser\n"
+    "import sys\n"
+    "get_parser(sys.argv[1])\n"
+)
+
+
+def _probe_argv(grammar: str) -> list[str]:
+    """The disposable process that loads *grammar*, in a form this build can run.
+
+    Unfrozen, ``sys.executable`` is a Python interpreter and ``-c`` is the
+    cheapest way in. In a PyInstaller build it is the ``carto`` binary, which
+    has no ``-c`` — so the frozen branch re-enters the same binary through
+    :data:`~cartograph.constants.GRAMMAR_PROBE_FLAG` instead. The grammar stays
+    last either way.
+    """
+    if getattr(sys, "frozen", False):
+        return [sys.executable, GRAMMAR_PROBE_FLAG, grammar]
+    return [sys.executable, "-c", _PROBE_CODE, grammar]
+
+
+def run_grammar_probe(grammar: str) -> int:
+    """Load one grammar; the exit code is the whole answer.
+
+    The other half of :func:`_probe_argv`, kept beside it rather than in the
+    CLI so the two cannot drift.
+    """
+    try:
+        importlib.import_module("tree_sitter_language_pack").get_parser(grammar)
+    except BaseException as exc:  # noqa: BLE001 — any failure means unavailable
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _run_parser_load_probe(grammar: str, timeout_seconds: float) -> bool:
     """Probe one native grammar in a disposable interpreter process."""
-    code = (
-        "from tree_sitter_language_pack import get_parser\n"
-        "import sys\n"
-        "get_parser(sys.argv[1])\n"
-    )
     try:
         completed = subprocess.run(
-            [sys.executable, "-c", code, grammar],
+            _probe_argv(grammar),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
