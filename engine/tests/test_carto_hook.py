@@ -394,7 +394,10 @@ def test_generated_hooks_keep_the_path_guard_and_runtime_repo():
     for entries in config["hooks"].values():
         for entry in entries:
             for inner in entry["hooks"]:
-                assert "command -v cartograph >/dev/null 2>&1 || exit 0" in inner["command"]
+                # The guard must name the binary the hook INVOKES. Guarding on the
+                # long alias while running `carto` made every hook a silent
+                # no-op wherever only `carto` was installed.
+                assert "command -v carto >/dev/null 2>&1 || exit 0" in inner["command"]
                 assert "git rev-parse --show-toplevel" in inner["command"]
                 assert "/home/someone/checkout" not in inner["command"]
 

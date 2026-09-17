@@ -422,7 +422,7 @@ def test_instruction_inventory_and_git_hook_are_surgical(
         hook,
         "#!/bin/sh\necho user-hook\n"
         "# Installed by cartograph. Remove this file to disable pre-commit graph checks.\n"
-        "if command -v cartograph >/dev/null 2>&1; then\n"
+        "if command -v carto >/dev/null 2>&1; then\n"
         "    carto update || true\n"
         "    carto detect-changes --brief || true\n"
         "fi\n",

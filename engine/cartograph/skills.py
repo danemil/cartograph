@@ -1017,7 +1017,13 @@ def hook_command(event: str) -> str:
     """
     return (
         "cat >/dev/null || true; "
-        "command -v cartograph >/dev/null 2>&1 || exit 0; "
+        # Guard on the binary this actually INVOKES. It used to test for
+        # `cartograph`, the long alias, and then run `carto` — so an install
+        # that put only `carto` on PATH, which is the primary entry point and
+        # the name every remediation string uses, made every hook a silent
+        # no-op. Silent is the whole problem: nothing fails, the graph simply
+        # never updates.
+        "command -v carto >/dev/null 2>&1 || exit 0; "
         "git rev-parse --git-dir >/dev/null 2>&1"
         f" && carto hook {event}"
         ' --repo "$(git rev-parse --show-toplevel 2>/dev/null)"'
@@ -1132,7 +1138,7 @@ def install_git_hook(repo_root: Path) -> Path | None:
     script = """\
 #!/bin/sh
 # Installed by cartograph. Remove this file to disable pre-commit graph checks.
-if command -v cartograph >/dev/null 2>&1; then
+if command -v carto >/dev/null 2>&1; then
     carto update || true
     carto detect-changes --brief || true
 fi

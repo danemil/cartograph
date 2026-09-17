@@ -237,7 +237,7 @@ class TestGenerateHooksConfig:
         for hook_type, entries in config["hooks"].items():
             for entry in entries:
                 for hook in entry["hooks"]:
-                    assert "command -v cartograph" in hook["command"], (
+                    assert "command -v carto " in hook["command"], (
                         f"{hook_type} hook missing PATH guard — will fail noisily"
                         " when binary is not on PATH (e.g. project venv)"
                     )
@@ -1099,24 +1099,27 @@ class TestCodeBuddyPlatform:
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         assert data["model"] == "custom-model"
         assert user_hook in data["hooks"]["PostToolUse"]
+        # Identify our hooks by the command they run, not by the word
+        # "cartograph" appearing somewhere in it — the guard now names `carto`,
+        # the binary actually invoked, so the long alias no longer occurs.
         installed = [
             hook
             for entries in data["hooks"].values()
             for entry in entries
             for hook in entry["hooks"]
-            if "cartograph" in hook.get("command", "")
+            if "carto hook " in hook.get("command", "")
         ]
         assert installed
         for hook in installed:
             command = hook["command"]
-            assert "command -v cartograph" in command
+            assert "command -v carto " in command
             assert "git rev-parse --show-toplevel" in command
             assert str(repo_root) not in command
 
         crg_entry = next(
             entry
             for entry in data["hooks"]["PostToolUse"]
-            if any("cartograph" in hook.get("command", "") for hook in entry["hooks"])
+            if any("carto hook " in hook.get("command", "") for hook in entry["hooks"])
         )
         assert crg_entry["matcher"] == "Edit|Write|Bash"
 

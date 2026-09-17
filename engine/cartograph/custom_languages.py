@@ -330,7 +330,10 @@ def _validate_entry(
     # themselves are created lazily by CodeParser._get_parser.
     #
     # tree_sitter_language_pack is imported HERE, not at module scope: it is
-    # ~351MB of precompiled grammars and this is its only use in this module.
+    # the grammar set and this is its only use in this module. How much that
+    # costs depends on the version: the 0.x line pinned in pyproject bundles
+    # the grammars (47-59MB of wheel), while 1.x fetches them at runtime and
+    # costs ~22ms to import. Lazy either way, cheap insurance either way.
     # A module-level import put it on the import path of graph.py -> parser.py
     # -> custom_languages.py, which meant `carto status` — a SQLite read fired
     # by a SessionStart hook — could not start without loading the entire
