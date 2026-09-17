@@ -125,9 +125,14 @@ def check_invocation(
     if len(tokens) < 2:
         res.check(f"{label}: names a subcommand", False)
         return
-    sub = tokens[1]
 
     known = {c["name"] for c in catalogue["commands"]} | ALWAYS_VALID
+    # A command name can be two words (`carto mem search`), so the longer
+    # spelling is tried first: `mem` alone is a namespace that runs nothing,
+    # and matching it would validate the line against the wrong parser.
+    two_word = " ".join(tokens[1:3])
+    sub = two_word if two_word in known else tokens[1]
+    consumed = 1 + len(sub.split())
     if sub not in known:
         res.check(f"{label}: `{sub}` is a real command", False,
                   f"not in capabilities; known: {', '.join(sorted(known))}")
@@ -138,7 +143,7 @@ def check_invocation(
     # `carto query` mid-sentence is prose naming the command, not an
     # instruction to run it. Checking it for missing positionals would fail
     # every skill that explains itself in English.
-    if len(tokens) == 2:
+    if len(tokens) == consumed:
         return
 
     if sub not in cache:
@@ -157,7 +162,7 @@ def check_invocation(
     positionals = spec.get("arguments", [])
 
     seen_positional = 0
-    i = 2
+    i = consumed
     while i < len(tokens):
         tok = tokens[i]
         if tok.startswith("--"):

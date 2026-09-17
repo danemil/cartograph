@@ -631,6 +631,7 @@ _GRAPH_TOOL_COMMANDS = {
 
 _PATH_REPO_COMMANDS = frozenset({
     "install",
+    "mem",
     "init",
     "uninstall",
     "build",
@@ -687,21 +688,60 @@ def _find_explicit_repo_root(start: Path) -> "Path | None":
         current = current.parent
 
 
-def _run_graph_tool_command(
-    args, repo_root: Path, provenance: "dict | None" = None
-) -> None:
-    """Run one graph-tool CLI wrapper and emit exactly one JSON value."""
+def _agent_repo_root(args, command: "str | None" = None) -> Path:
+    """Resolve the repository an agent-facing command answers about.
+
+    Shared by the graph tools and `mem`, so a `--repo` one accepts the other
+    accepts too and both read the same directory for a given working directory.
+
+    A `--repo` that names no project is exit 1, USAGE: the agent got the call
+    wrong, and no remediation Cartograph could run would fix it. It answers in
+    the envelope because this is reached *after* parsing, where the promise
+    that json mode puts nothing but the envelope on stdout is already in force.
+    """
+    from . import envelope as _env
+    from .incremental import find_project_root
+
+    if not getattr(args, "repo", None):
+        return find_project_root()
+    # For an explicit --repo the walk must treat .cartograph as a project
+    # boundary too: the plain .git/.svn walk resolves a registered monorepo
+    # subdirectory to the monorepo root and the graph built at the --repo path
+    # is never found (#697). Nearest marker wins, so pointing inside a repo
+    # still works.
+    repo_root = _find_explicit_repo_root(Path(args.repo).expanduser())
+    if repo_root is None:
+        message = (
+            f"--repo does not look like a project root (no .git, .svn, "
+            f"or .cartograph found at or above): {args.repo}"
+        )
+        env = _env.error(command or args.command, _env.Exit.USAGE, message)
+        raise SystemExit(_env.emit(env, getattr(args, "output_format", None) or "text"))
+    return repo_root
+
+
+def _open_page(
+    args, repo_root: Path, provenance: "dict | None" = None,
+    command: "str | None" = None,
+) -> "tuple[int, int | None, str, str]":
+    """Settle where this page starts, and widen the fetch to reach it.
+
+    Returns ``(offset, page_limit, query_digest, provenance_digest)`` — what
+    ``_emit_tool_result`` needs in order to mint the next cursor. Shared by
+    every pageable command, because a second copy would be a second place to
+    get the digest-before-widening rule below wrong, and getting it wrong
+    produces a cursor that rejects itself on redemption.
+    """
     from . import cursor as _cursor
     from . import envelope as _env
-    from . import tools
 
-    root = str(repo_root)
+    tool = command or args.command
 
     # The digest binds what the CALLER passed. It is taken before the fetch is
     # widened below, or a cursor minted at --limit 25 would reject itself on
     # redemption against the widened value.
     query = _cursor.query_digest(
-        args.command, vars(args), extra={"repo_root": root}
+        tool, vars(args), extra={"repo_root": str(repo_root)}
     )
     snapshot = _cursor.provenance_digest(provenance)
 
@@ -712,7 +752,7 @@ def _run_graph_tool_command(
         except _cursor.CursorError as exc:
             raise SystemExit(
                 _env.emit(
-                    _cursor.rejection(args.command, exc),
+                    _cursor.rejection(tool, exc),
                     getattr(args, "output_format", None) or "json",
                 )
             )
@@ -722,6 +762,34 @@ def _run_graph_tool_command(
         # Widen the fetch so the requested window is inside it; the head is
         # discarded in _page_for. The tools take no offset of their own.
         setattr(args, limit_dest, page_limit + offset)
+    return offset, page_limit, query, snapshot
+
+
+def _precondition_exit(tool: str, message: str, remediation: str, *, fmt: str) -> None:
+    """Refuse a well-formed call whose environment is not ready. Never returns.
+
+    Exit 2, and in json mode an envelope carrying the command that fixes it, so
+    the agent self-heals rather than failing the user's task. One helper rather
+    than one guard's worth of it per call site: the remediation is the part
+    that has to be there, and a copy is where it goes missing.
+    """
+    from . import envelope as _env
+
+    if fmt == "json":
+        env = _env.error(tool, _env.Exit.PRECONDITION, message, remediation=remediation)
+        raise SystemExit(_env.emit(env, "json"))
+    print(f"{message} Run `{remediation}` first.", file=sys.stderr)
+    raise SystemExit(_env.Exit.PRECONDITION)
+
+
+def _run_graph_tool_command(
+    args, repo_root: Path, provenance: "dict | None" = None
+) -> None:
+    """Run one graph-tool CLI wrapper and emit exactly one JSON value."""
+    from . import tools
+
+    root = str(repo_root)
+    offset, page_limit, query, snapshot = _open_page(args, repo_root, provenance)
     if args.command in ("review-context", "review-summary"):
         from .review_shape import shape_review_context, shape_review_summary
         from .tools.review import get_review_context
@@ -845,6 +913,9 @@ _PAGEABLE_COLLECTION: dict[str, tuple[str, ...]] = {
     # response, so A8 still holds.
     "refactor": ("edits", "dead_code", "suggestions"),
     "dead-code": ("items",),
+    # Keyed by the logical operation, not by args.command: all three `mem`
+    # subcommands parse as command "mem", and only one of them pages.
+    "mem search": ("items",),
 }
 
 #: Where argparse puts a result cap. The flag is spelled `--limit` on some
@@ -913,23 +984,34 @@ def _page_for(
 
 def _emit_tool_result(
     args, result: dict, *,
+    command: "str | None" = None,
     offset: int = 0, page_limit: "int | None" = None,
     query: "str | None" = None, snapshot: "str | None" = None,
     provenance: "dict | None" = None,
     repo_root: "str | Path | None" = None,
+    search_mode: "str | None" = None,
 ) -> None:
-    """Wrap a graph-tool result in the capability envelope and print it.
+    """Wrap a tool result in the capability envelope and print it.
 
     This is the shared emit path for query, impact, search, flows, communities,
-    architecture, large-functions, refactor, detect-changes and dead-code, so
-    the envelope retrofit lands on all of them at once.
+    architecture, large-functions, refactor, detect-changes, dead-code and
+    `mem`, so the envelope retrofit lands on all of them at once.
+
+    ``command`` overrides the argparse command name, which a nested subcommand
+    needs: ``args.command`` is ``mem`` for all three of them, and the operation
+    an agent correlates its call with is ``mem search``.
+
+    ``search_mode`` is passed explicitly where the tool keeps it out of
+    ``data`` — the store's own vocabulary ("fts") is an implementation name
+    that the envelope normalises but that nothing should put in front of an
+    agent unnormalised.
     """
     from . import cursor as _cursor
     from . import envelope as _env
     from . import repo_paths as _paths
 
     fmt = getattr(args, "output_format", None) or "json"
-    command = args.command
+    command = command or args.command
 
     # The graph stores absolute paths, so every id, name and edge endpoint
     # arrives carrying this checkout's prefix — noise an agent pays for on
@@ -955,7 +1037,11 @@ def _emit_tool_result(
         page=page,
         truncated=truncated,
         truncated_reason="page_limit" if truncated else None,
-        search_mode=result.get("search_mode") if isinstance(result, dict) else None,
+        search_mode=(
+            search_mode
+            if search_mode is not None
+            else (result.get("search_mode") if isinstance(result, dict) else None)
+        ),
     )
     env = _env.fit(env, getattr(args, "max_tokens", None))
     if page is not None and query is not None:
@@ -1504,6 +1590,12 @@ def main() -> None:
         help="External directory containing the graph database",
     )
 
+    # mem — the memory capability. Its own module owns the parser, so the
+    # subcommands, their flags and the code that dispatches them cannot drift.
+    from .mem.cli import add_parser as _add_mem_parser
+
+    _add_mem_parser(sub)
+
     # capabilities — the machine-readable catalogue. Agents that skipped or
     # lack the skills pack discover the surface through this.
     caps_cmd = sub.add_parser(
@@ -1890,45 +1982,30 @@ def main() -> None:
         run_hook()
         return
 
-    if args.command in _GRAPH_TOOL_COMMANDS:
-        from .incremental import find_project_root, get_db_path
+    if args.command == "mem":
+        # Ahead of the graph-tool block and independent of it: observations
+        # outlive any particular build, so `carto mem` must answer on a
+        # repository whose graph has never been built.
+        from .mem.cli import run as _run_mem
 
-        if args.repo:
-            # For an explicit --repo the walk must treat .cartograph
-            # as a project boundary too: the plain .git/.svn walk resolves a
-            # registered monorepo subdirectory to the monorepo root and the
-            # graph built at the --repo path is never found (#697). Nearest
-            # marker wins, so pointing inside a repo still works.
-            repo_root = _find_explicit_repo_root(Path(args.repo).expanduser())
-            if repo_root is None:
-                print(
-                    f"--repo does not look like a project root (no .git, .svn, "
-                    f"or .cartograph found at or above): {args.repo}",
-                    file=sys.stderr,
-                )
-                raise SystemExit(1)
-        else:
-            repo_root = find_project_root()
+        command = f"mem {args.mem_command}"
+        _run_mem(args, _agent_repo_root(args, command))
+        return
+
+    if args.command in _GRAPH_TOOL_COMMANDS:
+        from .incremental import get_db_path
+
+        repo_root = _agent_repo_root(args)
         db_path = get_db_path(repo_root)
         if not db_path.exists():
-            # Same precondition contract as the other guard: exit 2, and in json
-            # mode an envelope carrying a machine-readable remediation. This is
-            # the graph-tool path (query, impact, search, flows, …), which is
+            # The graph-tool path (query, impact, search, flows, …), which is
             # the one agents actually hit most often.
-            from . import envelope as _env
-
-            message = f"No graph found at {db_path}."
-            remediation = "carto build"
-            if getattr(args, "output_format", "json") == "json":
-                env = _env.error(
-                    args.command,
-                    _env.Exit.PRECONDITION,
-                    message,
-                    remediation=remediation,
-                )
-                raise SystemExit(_env.emit(env, "json"))
-            print(f"{message} Run `{remediation}` first.", file=sys.stderr)
-            raise SystemExit(_env.Exit.PRECONDITION)
+            _precondition_exit(
+                args.command,
+                f"No graph found at {db_path}.",
+                "carto build",
+                fmt=getattr(args, "output_format", "json"),
+            )
         from .graph import GraphStore as _GraphStore
 
         # Graph-tool responses carry no provenance today. Cursors bind to it,
@@ -2268,22 +2345,16 @@ def main() -> None:
     ):
         # A missing graph is a PRECONDITION failure (exit 2), not a usage error
         # (exit 1): the agent called correctly, the environment is not ready.
-        # In json mode it gets the envelope with a machine-readable remediation
-        # so it can build the graph and retry instead of failing the user's task.
-        from . import envelope as _env
-
-        message = f"No graph found at {db_path}."
-        remediation = "carto build"
-        if getattr(args, "json_output", False) or getattr(args, "output_format", "text") == "json":
-            env = _env.error(
-                args.command,
-                _env.Exit.PRECONDITION,
-                message,
-                remediation=remediation,
-            )
-            raise SystemExit(_env.emit(env, "json"))
-        print(f"{message} Run `{remediation}` first.", file=sys.stderr)
-        raise SystemExit(_env.Exit.PRECONDITION)
+        want_json = (
+            getattr(args, "json_output", False)
+            or getattr(args, "output_format", "text") == "json"
+        )
+        _precondition_exit(
+            args.command,
+            f"No graph found at {db_path}.",
+            "carto build",
+            fmt="json" if want_json else "text",
+        )
     store = GraphStore(db_path)
 
     try:

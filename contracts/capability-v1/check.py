@@ -41,6 +41,14 @@ proves it does not advertise a page that is not there:
       "expect_page": {"limit": 7, "has_more": false, "result_count": 0}
     }
 
+An operation whose result is search-like asserts that it says so:
+
+    "search-declares-mode": {
+      "args": ["search", "cli", "--repo", "."],
+      "expect": "ok",
+      "expect_search_mode": true
+    }
+
 ``"expect_page": false`` asserts the opposite — that no page block is emitted,
 which is the honest answer for a command with no result cap.
 
@@ -236,6 +244,17 @@ def run_operation(
         res.check(f"{tag}: precondition carries a remediation", bool(rem),
                   "missing error.remediation")
 
+    # 5a. A search-like result must declare how it was answered. The schema
+    #     constrains the value but cannot require the field, and an absent
+    #     `search_mode` is indistinguishable, to an agent, from a result it can
+    #     trust as semantic — which is the one claim the contract exists to
+    #     stop being made silently. The value itself is deliberately not
+    #     pinned: it depends on what is installed, and a suite that failed
+    #     because embeddings were available would be asserting the environment.
+    if op.get("expect_search_mode"):
+        res.check(f"{tag}: declares search_mode", "search_mode" in doc,
+                  "a search result that does not say how it searched")
+
     # 5b. Paging must describe the page the CALLER asked for. A `limit` echoed
     #     back as the number of rows that happened to come back makes
     #     `has_more` the tautology len >= len, so an empty result advertises a
@@ -251,6 +270,19 @@ def run_operation(
                 res.check(f"{tag}: page.{field} == {value!r}",
                           isinstance(page, dict) and page.get(field) == value,
                           f"got {page.get(field)!r}" if isinstance(page, dict) else "no page")
+
+    # 5b-ii. A page can never hold more rows than the caller asked for. Without
+    #     this, a command that applies no row cap at all still satisfies every
+    #     other paging check: `has_more` is true, the cursor advances by what
+    #     was emitted, and page two is consistent with page one — the sequence
+    #     is coherent, it just ignores `--limit`. The agent is then charged for
+    #     rows it did not ask for, silently.
+    page = doc.get("page")
+    if isinstance(page, dict):
+        count, limit = page.get("result_count"), page.get("limit")
+        if isinstance(count, int) and isinstance(limit, int):
+            res.check(f"{tag}: page.result_count <= page.limit", count <= limit,
+                      f"emitted {count} rows for a limit of {limit}")
 
     # 5c. Ids are handed straight back to the next call, so an absolute path in
     #     `data` is both machine-specific and charged on every row. The

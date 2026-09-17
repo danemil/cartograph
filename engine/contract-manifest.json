@@ -124,7 +124,8 @@
         "--limit",
         "5"
       ],
-      "expect": "ok"
+      "expect": "ok",
+      "expect_search_mode": true
     },
     "search-zero-results": {
       "args": [
@@ -306,6 +307,178 @@
         "not-a-real-cursor"
       ],
       "expect": "precondition"
+    },
+    "mem-status-no-store": {
+      "args": [
+        "mem",
+        "status",
+        "--repo",
+        "{tmpdir}"
+      ],
+      "expect": "precondition"
+    },
+    "mem-search-no-store": {
+      "args": [
+        "mem",
+        "search",
+        "--query",
+        "cursor",
+        "--repo",
+        "{tmpdir}"
+      ],
+      "expect": "precondition"
+    },
+    "mem-add-1": {
+      "args": [
+        "mem",
+        "add",
+        "--repo",
+        "{tmpdir}",
+        "--title",
+        "Cursor binding note",
+        "--body",
+        "cursors bind to the provenance snapshot",
+        "--kind",
+        "decision"
+      ],
+      "expect": "ok",
+      "expect_page": false
+    },
+    "mem-add-2": {
+      "args": [
+        "mem",
+        "add",
+        "--repo",
+        "{tmpdir}",
+        "--title",
+        "Cursor widening note",
+        "--body",
+        "the fetch is widened by the offset",
+        "--kind",
+        "decision"
+      ],
+      "expect": "ok",
+      "expect_page": false
+    },
+    "mem-add-3": {
+      "args": [
+        "mem",
+        "add",
+        "--repo",
+        "{tmpdir}",
+        "--title",
+        "Cursor placeholder note",
+        "--body",
+        "the width is reserved before fitting",
+        "--kind",
+        "decision"
+      ],
+      "expect": "ok",
+      "expect_page": false
+    },
+    "mem-search": {
+      "args": [
+        "mem",
+        "search",
+        "--repo",
+        "{tmpdir}",
+        "--query",
+        "cursor",
+        "--limit",
+        "5"
+      ],
+      "expect": "ok",
+      "expect_page": {
+        "limit": 5,
+        "has_more": false,
+        "result_count": 3
+      },
+      "expect_search_mode": true
+    },
+    "mem-search-zero-results": {
+      "args": [
+        "mem",
+        "search",
+        "--repo",
+        "{tmpdir}",
+        "--query",
+        "zzz_no_such_observation_zzz",
+        "--limit",
+        "7"
+      ],
+      "expect": "ok",
+      "expect_page": {
+        "limit": 7,
+        "has_more": false,
+        "result_count": 0
+      },
+      "expect_search_mode": true
+    },
+    "mem-search-paged": {
+      "args": [
+        "mem",
+        "search",
+        "--repo",
+        "{tmpdir}",
+        "--query",
+        "cursor",
+        "--limit",
+        "1"
+      ],
+      "expect": "ok",
+      "page_twice": true
+    },
+    "mem-search-budget": {
+      "args": [
+        "mem",
+        "search",
+        "--repo",
+        "{tmpdir}",
+        "--query",
+        "cursor",
+        "--limit",
+        "5"
+      ],
+      "expect": "ok",
+      "budget": 200,
+      "expect_truncated": true,
+      "expect_floor": "summary"
+    },
+    "mem-status": {
+      "args": [
+        "mem",
+        "status",
+        "--repo",
+        "{tmpdir}"
+      ],
+      "expect": "ok",
+      "expect_page": false
+    },
+    "mem-cursor-garbage": {
+      "args": [
+        "mem",
+        "search",
+        "--repo",
+        "{tmpdir}",
+        "--query",
+        "cursor",
+        "--cursor",
+        "not-a-real-cursor"
+      ],
+      "expect": "precondition"
+    },
+    "mem-usage-bad-limit": {
+      "args": [
+        "mem",
+        "search",
+        "--repo",
+        "{tmpdir}",
+        "--query",
+        "cursor",
+        "--limit",
+        "0"
+      ],
+      "expect": "usage"
     }
   }
 }

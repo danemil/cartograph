@@ -634,7 +634,13 @@ class TestGraphToolExplicitRepoResolution:
                     raised = exc.code == 1
         assert raised
         mock_run.assert_not_called()
-        assert "does not look like a project root" in capsys.readouterr().err
+        # `search` is agent-facing and defaults to json, so the refusal arrives
+        # as an envelope on stdout: exit 1 with an empty stdout would leave an
+        # agent parsing json with nothing to parse.
+        emitted = json.loads(capsys.readouterr().out)
+        assert emitted["ok"] is False
+        assert emitted["error"]["code"] == "usage"
+        assert "does not look like a project root" in emitted["error"]["message"]
 
     def test_repo_inside_module_resolves_to_nearest_marker(self, tmp_path):
         _, module = self._make_monorepo(tmp_path)

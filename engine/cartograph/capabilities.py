@@ -58,6 +58,9 @@ _EXAMPLES = {
     "wiki": "carto wiki",
     "visualize": "carto visualize",
     "forget": "carto forget src/old.py",
+    "mem add": "carto mem add --title 'Chose offset paging' --kind decision",
+    "mem search": "carto mem search --query 'token budget' --limit 10",
+    "mem status": "carto mem status --format json",
 }
 
 #: One line on when an agent should reach for each command. This is the part a
@@ -79,6 +82,9 @@ _WHEN = {
     "detect-changes": "See what changed against a base ref, with graph context.",
     "dead-code": "Find nodes nothing references — candidates for deletion.",
     "repos": "List registered repositories for cross-repo work.",
+    "mem add": "Record something worth remembering across sessions — a decision, a dead end, a gotcha.",
+    "mem search": "Recall what earlier sessions recorded, before re-deriving it. Check search_mode: keyword means embeddings did not participate.",
+    "mem status": "Check whether this repository has a memory store and what is in it.",
 }
 
 
@@ -137,6 +143,47 @@ def _command_entry(
     return entry
 
 
+def _subparsers_of(parser: argparse.ArgumentParser) -> Optional[Any]:
+    """The subcommand action of a parser, or None if it has no subcommands."""
+    return next(
+        (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)),  # noqa: SLF001
+        None,
+    )
+
+
+def _walk(parser: argparse.ArgumentParser, path: list[str]) -> Optional[Any]:
+    """Follow a command name, one word per level of subcommand.
+
+    Command names in this catalogue can be two words deep (`mem search`), and
+    the drill-down has to accept the same spelling the listing emitted — an
+    agent reads a name there and passes it straight back to `--command`.
+    """
+    current: Any = parser
+    for word in path:
+        action = _subparsers_of(current)
+        if action is None or word not in action.choices:
+            return None
+        current = action.choices[word]
+    return current
+
+
+def _agent_facing_names(parser: argparse.ArgumentParser) -> list[str]:
+    """Every runnable command name, namespaces expanded into their leaves."""
+    action = _subparsers_of(parser)
+    if action is None:
+        return []
+    names: list[str] = []
+    for name, sub in action.choices.items():
+        if name in _NOT_AGENT_FACING:
+            continue
+        nested = _subparsers_of(sub)
+        if nested is None:
+            names.append(name)
+        else:
+            names.extend(f"{name} {leaf}" for leaf in nested.choices)
+    return sorted(set(names))
+
+
 def build_catalogue(
     parser: argparse.ArgumentParser,
     *,
@@ -152,10 +199,7 @@ def build_catalogue(
     With ``command`` it returns full argument and flag detail for that one
     command — the drill-down an agent does once it knows what it wants.
     """
-    subparsers = next(
-        (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)),  # noqa: SLF001
-        None,
-    )
+    subparsers = _subparsers_of(parser)
     catalogue: dict[str, Any] = {
         "contract": "capability-v1",
         "envelope_schema": 1,
@@ -191,11 +235,14 @@ def build_catalogue(
         return catalogue
 
     if command:
-        sub = subparsers.choices.get(command)
-        if sub is None:
-            known = sorted(c for c in subparsers.choices if c not in _NOT_AGENT_FACING)
+        sub = _walk(parser, command.split())
+        if sub is None or _subparsers_of(sub) is not None:
+            # A namespace resolves but is not a command: `carto mem` runs
+            # nothing, so describing its flags would answer a question the
+            # agent did not ask and hide the three commands it wanted.
             raise KeyError(
-                f"unknown command {command!r}; agent-facing commands are: {', '.join(known)}"
+                f"unknown command {command!r}; agent-facing commands are: "
+                f"{', '.join(_agent_facing_names(parser))}"
             )
         catalogue["commands"] = [_command_entry(command, sub, full=True)]
         return catalogue
@@ -217,9 +264,31 @@ def build_catalogue(
         if id(sub) in seen:
             continue
         seen.add(id(sub))
-        commands.append(
-            _command_entry(name, sub, full=False, fallback_help=help_for.get(name, ""))
-        )
+        nested = _subparsers_of(sub)
+        if nested is None:
+            commands.append(
+                _command_entry(name, sub, full=False, fallback_help=help_for.get(name, ""))
+            )
+            continue
+        # A namespace is listed as its leaves, never as itself: `carto mem` is
+        # not runnable, and an agent shown it would call it and get a usage
+        # error. The name it gets — "mem search" — is also the `tool` field the
+        # response carries back, so the two always agree.
+        nested_help = {
+            a.dest: (a.help or "")
+            for a in getattr(nested, "_choices_actions", [])
+        }
+        nested_seen: set[int] = set()
+        for leaf_name, leaf in nested.choices.items():
+            if id(leaf) in nested_seen:
+                continue
+            nested_seen.add(id(leaf))
+            commands.append(
+                _command_entry(
+                    f"{name} {leaf_name}", leaf, full=False,
+                    fallback_help=nested_help.get(leaf_name, ""),
+                )
+            )
     catalogue["commands"] = sorted(commands, key=lambda c: c["name"])
     catalogue["detail"] = "For full flags on one command: carto capabilities --command <name>"
     return catalogue

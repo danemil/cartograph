@@ -72,6 +72,13 @@ google-embeddings = [
 communities = [
     "igraph>=0.11.0",
 ]
+# Vector search over observations. Optional on purpose: the target machines
+# install under default-deny egress and are not guaranteed a loadable SQLite
+# extension, so `carto mem search` runs without it and reports `search_mode`
+# keyword rather than claiming a semantic answer it did not compute.
+memory = [
+    "sqlite-vec>=0.1.6,<0.2",
+]
 eval = [
     "matplotlib>=3.7.0",
     "pyyaml>=6.0",
@@ -81,6 +88,7 @@ wiki = [
 ]
 all = [
     "cartograph[embeddings]",
+    "cartograph[memory]",
     "cartograph[google-embeddings]",
     "cartograph[communities]",
     "cartograph[enrichment]",

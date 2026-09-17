@@ -37,6 +37,7 @@ _PATH_FIELDS = frozenset(
         "ambiguous_targets",
         "unresolved_targets",
         # Bare path or qualified-name lists.
+        "file_paths",  # the files an observation was recorded about
         "changed_files",
         "impacted_files",
         "members",
