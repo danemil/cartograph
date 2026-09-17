@@ -197,7 +197,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
         offset, page_limit, query, snapshot = _open_page(
             args, repo_root, provenance, command=command
         )
-        items, mode = memory.search(
+        items, mode, relaxed = memory.search(
             query=args.query,
             project=args.project,
             session=args.session,
@@ -214,6 +214,14 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
         "summary": f"Found {len(items)} observation(s) matching '{args.query}'",
         "items": items,
     }
+    if relaxed:
+        # Said plainly, because it changes how far the rows should be trusted:
+        # these share SOME of the query's words, not all of them.
+        result["match"] = "relaxed"
+        result["match_note"] = (
+            "No observation carried every word of the query, so it was retried "
+            "requiring any of them. Rows sharing the most words rank first."
+        )
     _emit_tool_result(
         args, result, command=command,
         offset=offset, page_limit=page_limit,

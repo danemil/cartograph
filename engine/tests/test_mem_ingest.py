@@ -152,7 +152,7 @@ def test_a_captured_observation_comes_back_out_of_search(tmp_path, monkeypatch):
     hook.run("UserPromptSubmit", repo=str(tmp_path))
 
     with mem_store.MemoryStore(mem_store.db_path(tmp_path)) as memory:
-        items, mode = memory.search(query="cursor pagination")
+        items, mode, _ = memory.search(query="cursor pagination")
 
     assert [item["title"] for item in items] == [
         "Investigate the flaky cursor pagination test"

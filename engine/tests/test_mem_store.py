@@ -39,7 +39,7 @@ class TestSchema:
         with mem_store.MemoryStore(path) as first:
             _add(first, "kept across reopen")
         with mem_store.MemoryStore(path) as second:
-            items, _ = second.search(query="reopen")
+            items, _, _ = second.search(query="reopen")
         assert [item["title"] for item in items] == ["kept across reopen"]
 
     def test_fts_index_follows_the_table(self, store):
@@ -56,7 +56,7 @@ class TestSchema:
         _add(store, "renamed later", "body text")
         store._conn.execute("UPDATE observations SET title = 'renamed now'")
         store._conn.commit()
-        items, _ = store.search(query="renamed now")
+        items, _, _ = store.search(query="renamed now")
         assert [item["title"] for item in items] == ["renamed now"]
 
 
@@ -91,7 +91,7 @@ class TestWrites:
 class TestSearch:
     def test_empty_result_is_a_success_not_an_error(self, store):
         _add(store, "something")
-        items, mode = store.search(query="nothing_matches_this")
+        items, mode, _ = store.search(query="nothing_matches_this")
         assert items == []
         assert mode == "fts"
 
@@ -106,7 +106,7 @@ class TestSearch:
         agent as an internal error for a perfectly well-formed question.
         """
         _add(store, "quoted phrase", "dashes and stars and columns")
-        items, _ = store.search(query=query)
+        items, _, _ = store.search(query=query)
         assert isinstance(items, list)
 
     def test_filters(self, store):
@@ -217,7 +217,7 @@ class TestSearchModeNeverLies:
 
     def test_the_envelope_normalises_fts_to_keyword(self, store):
         """The store's own vocabulary must not reach an agent unnormalised."""
-        _, mode = store.search(query="anything")
+        _, mode, _ = store.search(query="anything")
         assert envelope.ok("mem search", search_mode=mode)["search_mode"] == "keyword"
 
 
@@ -234,7 +234,7 @@ class TestVectorPath:
 
     def test_embeddings_are_written_and_searched(self, vec_store):
         assert _add(vec_store, "alpha beta", "gamma delta")["embedded"] is True
-        items, mode = vec_store.search(query="alpha beta")
+        items, mode, _ = vec_store.search(query="alpha beta")
         assert mode == "hybrid"
         assert [item["title"] for item in items] == ["alpha beta"]
         assert vec_store.semantic_status() == (True, None)
@@ -279,3 +279,39 @@ class TestVectorModule:
 
     def test_count_of_a_missing_index_is_zero(self):
         assert mem_vector.count(sqlite3.connect(":memory:")) == 0
+
+
+class TestRelaxedMatching:
+    """FTS5 requires every term; an agent's question always has spare ones."""
+
+    @pytest.fixture
+    def seeded(self, store):
+        _add(store, "Chose offset paging over keyset",
+             "No pageable command guarantees a stable total sort key.")
+        _add(store, "Dropped FalkorDB", "SSPLv1 and it needs a daemon.")
+        return store
+
+    def test_all_terms_present_is_not_relaxed(self, seeded):
+        items, _, relaxed = seeded.search(query="offset paging")
+        assert len(items) == 1
+        assert relaxed is False
+
+    def test_a_question_still_finds_the_note(self, seeded):
+        # The words that make it a question — why, did, we — are in no record.
+        # Requiring them is what used to turn this into no answer at all.
+        items, _, relaxed = seeded.search(query="why did we choose offset paging")
+        assert [i["title"] for i in items] == ["Chose offset paging over keyset"]
+        assert relaxed is True
+
+    def test_stopwords_alone_do_not_produce_a_hit(self, seeded):
+        # "and" appears in the FalkorDB body. Returning it for a query whose
+        # only shared word is "and" is luck, and an agent cannot tell luck from
+        # retrieval — so the honest answer is nothing.
+        items, _, relaxed = seeded.search(query="what database did we reject and why")
+        assert items == []
+        assert relaxed is False
+
+    def test_a_genuinely_absent_term_still_misses(self, seeded):
+        items, _, relaxed = seeded.search(query="completely unrelated zebra")
+        assert items == []
+        assert relaxed is False

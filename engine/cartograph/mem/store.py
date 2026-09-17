@@ -197,6 +197,19 @@ def run_migrations(conn: sqlite3.Connection) -> None:
 _WORD = re.compile(r"\w+", re.UNICODE)
 
 
+#: Dropped from the relaxed (OR) retry only — see :func:`fts_match_any`. Under
+#: AND they are harmless; under OR each one matches most of the corpus. Kept
+#: deliberately short: this is about words that carry no retrieval signal in any
+#: query, not a general English stoplist, and over-trimming would lose real
+#: terms like "not" from "why not X".
+_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "by", "did", "do", "does", "for",
+    "from", "had", "has", "have", "how", "i", "in", "is", "it", "of", "on", "or",
+    "that", "the", "then", "there", "they", "this", "to", "was", "we", "were",
+    "what", "when", "where", "which", "who", "why", "will", "with", "you",
+})
+
+
 def fts_match(query: str) -> str:
     """Turn an agent's question into an FTS5 MATCH expression, or "".
 
@@ -212,6 +225,30 @@ def fts_match(query: str) -> str:
     """
     tokens = _WORD.findall(query or "")
     return " AND ".join(f'"{token}"' for token in tokens)
+
+
+def fts_match_any(query: str) -> str:
+    """The same expression with OR, for the second attempt.
+
+    FTS5 requires every term, which is right when a caller names the words they
+    expect. It is wrong for the way this surface is actually driven: an agent
+    recalls by asking a question, and a question carries words the record never
+    had — "why did we choose offset paging" misses a note titled "Chose offset
+    paging" on the strength of "why" and "did". Requiring all terms turns one
+    absent filler word into no answer at all.
+
+    So a query that matches nothing is retried with OR rather than abandoned.
+    Ranking already puts the rows sharing the most terms first, which is what
+    made AND look necessary.
+
+    Stopwords are dropped from THIS expression only. Under OR they are what a
+    spurious hit is made of: "what database did we reject and why" matched a
+    note about FalkorDB on the strength of "and". A row returned because it
+    contains "and" is luck, and an agent cannot tell luck from retrieval — an
+    honest miss is worth more, and is what tells it to rephrase.
+    """
+    tokens = [t for t in _WORD.findall(query or "") if t.lower() not in _STOPWORDS]
+    return " OR ".join(f'"{token}"' for token in tokens)
 
 
 def _end_of_day(value: str) -> str:
@@ -574,8 +611,8 @@ class MemoryStore:
         date_end: Optional[str] = None,
         order_by: str = "relevance",
         limit: int = 25,
-    ) -> tuple[list[dict[str, Any]], str]:
-        """Matching observations, best first, with the mode that produced them.
+    ) -> tuple[list[dict[str, Any]], str, bool]:
+        """Matching observations, best first, the mode, and whether it relaxed.
 
         The mode names **which retrievers ran**, not which ones happened to
         return rows. A semantic search that finds nothing still consulted the
@@ -588,6 +625,16 @@ class MemoryStore:
         )
         match = fts_match(query)
         fts = self._fts_candidates(match, where, params, limit) if match else []
+        relaxed = False
+        if match and not fts:
+            # Every term was required and one was missing. Widen rather than
+            # report nothing: see fts_match_any. Recorded on the response,
+            # because an agent that cannot tell a relaxed match from an exact
+            # one cannot judge how much to trust the rows.
+            any_match = fts_match_any(query)
+            if any_match != match:
+                fts = self._fts_candidates(any_match, where, params, limit)
+                relaxed = bool(fts)
         vectors = self._vector_candidates(query, where, params, limit)
 
         snippets = {rowid: excerpt for rowid, _, excerpt in fts}
@@ -619,7 +666,7 @@ class MemoryStore:
             items.sort(key=lambda item: (item["created_at"], item["id"]), reverse=True)
         elif order_by == "date_asc":
             items.sort(key=lambda item: (item["created_at"], item["id"]))
-        return items[:limit], mode
+        return items[:limit], mode, relaxed
 
     def _rows_by_rowid(self, rowids: Iterable[int]) -> dict[int, sqlite3.Row]:
         ids = list(rowids)
