@@ -2,8 +2,14 @@ name: build
 
 # One .vsix per platform, each carrying that platform's frozen engine.
 # PyInstaller freezes the interpreter it runs on and cannot cross-compile, so
-# every target needs a runner of its own — which is the whole reason this
-# workflow exists rather than a build script someone runs on a laptop.
+# every target needs a runner of its own — which is the whole reason this is CI
+# rather than a script someone runs on a laptop, and why no Windows payload has
+# ever existed.
+#
+# Linux is a separate job rather than a matrix row because it builds inside a
+# container and the others do not. A matrix carrying `container: ''` for the
+# rest is not valid, and GitHub rejects the whole file rather than that row.
+
 on:
   workflow_dispatch:
   push:
@@ -13,76 +19,63 @@ permissions:
   contents: write
 
 jobs:
-  payload:
+  linux:
+    runs-on: ubuntu-latest
+    # Deliberately an OLD image. PyInstaller bundles libpython but NOT libc, so
+    # the binary demands the glibc of whatever built it. ubuntu-latest is glibc
+    # 2.39; the locked-down machines this ships to are far more often RHEL 9,
+    # Ubuntu 22.04 or Debian 12, where such a binary dies at `carto --version`
+    # with a message nobody can act on. bookworm is 2.36 and runs on all of
+    # them. docker/acceptance.sh caught exactly this defect once already — do
+    # not "modernise" this line.
+    container: python:3.12-slim-bookworm
+    steps:
+      - name: Install build prerequisites
+        run: apt-get update && apt-get install -y --no-install-recommends git zip curl ca-certificates
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build the payload
+        run: python scripts/build-payload.py --target linux-x64
+      - name: Package the .vsix
+        run: ./scripts/build-vsix.sh linux-x64
+      - name: The frozen engine must build a non-empty graph
+        run: python scripts/ci_smoke.py linux-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: carto-linux-x64
+          path: dist/*.vsix
+          if-no-files-found: error
+
+  desktop:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
-    # Linux builds inside an OLD image on purpose. PyInstaller bundles
-    # libpython but NOT libc, so the binary demands the glibc of whatever built
-    # it. ubuntu-latest is glibc 2.39; the locked-down machines this ships to
-    # are far more often RHEL 9 / Ubuntu 22.04 / Debian 12, where that binary
-    # dies at `carto --version` with a message nobody can act on. bookworm is
-    # 2.36 and runs on all of them. This exact defect was caught by
-    # docker/acceptance.sh — do not "modernise" this line.
-    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: linux-x64
-            runner: ubuntu-latest
-            container: python:3.12-slim-bookworm
-          - target: darwin-arm64
-            runner: macos-latest
-            container: ""
-          - target: win32-x64
-            runner: windows-latest
-            container: ""
+          - { target: darwin-arm64, runner: macos-latest }
+          - { target: win32-x64, runner: windows-latest }
     steps:
       - uses: actions/checkout@v4
-
-      # The container image already carries 3.12; setup-python cannot run in it.
       - uses: actions/setup-python@v5
-        if: matrix.container == ''
         with:
           python-version: "3.12"
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - name: Install build prerequisites (container only)
-        if: matrix.container != ''
-        run: apt-get update && apt-get install -y --no-install-recommends git zip
-
       # Needs the network, and that is the point: it is spent HERE so the
       # artifact needs none. The payload carries its own tree-sitter grammars.
       - name: Build the payload
         shell: bash
         run: python scripts/build-payload.py --target ${{ matrix.target }}
-
       - name: Package the .vsix
         shell: bash
         run: ./scripts/build-vsix.sh ${{ matrix.target }}
-
-      - name: Check the frozen engine actually runs
+      - name: The frozen engine must build a non-empty graph
         shell: bash
-        run: |
-          # A payload that parses nothing still exits 0, so assert on a graph
-          # rather than on the exit code. This is the failure this project has
-          # already shipped once.
-          bin=$(python -c "import json,sys;d=json.load(open('dist/payload/${{ matrix.target }}/PAYLOAD.json'));print(d['executable'])")
-          root="dist/payload/${{ matrix.target }}"
-          "$root/$bin" --version
-          git init -q /tmp/probe && printf 'def f():\n    return 1\n' > /tmp/probe/a.py
-          "$root/$bin" build --repo /tmp/probe --quiet
-          "$root/$bin" status --repo /tmp/probe --format json > /tmp/st.json
-          python -c "
-          import json, sys
-          d = json.load(open('/tmp/st.json'))['data']
-          assert d.get('nodes', 0) > 0, f'frozen engine built an EMPTY graph: {d}'
-          print('nodes', d['nodes'], 'files', d.get('files'))
-          "
-
+        run: python scripts/ci_smoke.py ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: carto-${{ matrix.target }}
@@ -90,12 +83,14 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: payload
+    needs: [linux, desktop]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with: { path: dist, merge-multiple: true }
+        with:
+          path: dist
+          merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*.vsix
