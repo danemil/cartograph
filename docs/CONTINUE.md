@@ -61,21 +61,62 @@ built into VS Code 1.135.0), installing from a private repo, default-deny egress
 The contract is honoured, the capability is reachable by an agent, and it now
 fires on its own.
 
-## NEXT TASK — pick one
+## NEXT TASK — host-agent summarisation
 
-Cursors landed, so the engine's contract is complete. Two things are left, and
-they are the remaining distance to the acceptance test (a fresh machine with
-only VS Code):
+Started and abandoned mid-flight when the session closed; **nothing was
+written**, so begin from scratch. The brief, in full:
 
-1. **The memory side** (`memory/`) — not started. Engine-first was the decided
-   order, and the reason has now been paid off: the engine's precompiled parser
-   exists, so the memory side no longer needs a C toolchain.
-2. **The `.vsix`** — the primary delivery vehicle. Installing it also serves
-   Claude Code and Copilot CLI.
+The vault ticket is `docs/decisions/T07-intelligence-resolution.md` §1 — design
+intent only, verify every command against `carto capabilities --format json`.
 
-Smaller, known, and written down: `search` still emits absolute paths in
-`data.results[].id` (`review_shape.py` was fixed, `tools/query.py` was not —
-same leak, different path).
+**Summarise a SESSION, not each prompt.** A captured prompt is already short and
+its verbatim text is fine; rewording one buys nothing and costs an inference
+call. The value is synthesis across a session: what was worked on, what was
+decided, what was a dead end. Dead ends most of all — nothing else in a
+repository records them. Output is ONE observation with `doc_type: "sessions"`
+and `summary_source: "host-agent"`, alongside the verbatim `prompts` rows, which
+stay as the evidence.
+
+Both `copilot` and `claude` are on PATH on the dev machine. Fall back to a
+deterministic structural summary when the call fails or a guard trips, recorded
+as `summary_source: "structural"` — T07 is explicit that a structural summary
+must not be dressed up as a host-agent one.
+
+Three things that will bite:
+
+- **Recursion.** Shelling out to `copilot -p` starts an agent session, which
+  fires that host's hooks, which capture and could summarise, which shells out
+  again. `CARTO_HOOK_ACTIVE` exists; verify it covers the spawned tree, and pass
+  whatever "no hooks" flag the CLI exposes — read `--help`, do not assume.
+- **Latency.** A spawn plus inference is seconds. Capture is 1.1ms and must stay
+  there, so this cannot sit in a hook's critical path. `spawn_detached` exists.
+- **Honest degradation.** Prove BOTH paths end to end and show `summary_source`
+  differing. Say plainly whether a real host-agent call was made and what it
+  returned; a code path that was never executed is not a working one.
+
+An explicit `carto mem summarise` is the minimum, because it is testable
+without a host. Whether a session-end hook also drives it depends on what the
+hosts actually emit — read payloads rather than recalling them, the way
+`mem/ingest.py` established the capture shapes.
+
+## Then, in rough order
+
+1. **Semantic search / the ONNX tier**, decided for the base install. Everything
+   reports `search_mode: keyword` today. The relaxed-OR fallback in
+   `mem/store.py` papers over the gap; embeddings are the real answer to "find
+   the thing I am describing differently".
+2. **`carto mem timeline` and `mem show`** — specified in T10, cheap, and
+   `timeline` answers "what happened in this session", which search cannot.
+3. `detect-changes` and `dead-code` exit via `SystemExit(0)` rather than
+   returning. Harmless in a shell, awkward for in-process callers.
+
+## Not code, and blocking the acceptance test
+
+A Windows machine has the repo but the test never ran. `install.ps1` has never
+executed anywhere, the extension has never activated in a real VS Code window,
+Copilot Chat's own discovery of the placed skills is unconfirmed, and the binary
+is unsigned. See `docs/packaging.md` and `docs/acceptance.md`, which carry
+explicit unverified lists rather than implying coverage.
 
 ## Test suite: 1 known failure, not 56
 
