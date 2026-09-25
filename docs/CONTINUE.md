@@ -20,6 +20,13 @@ cd /Users/emidan/work/cartograph
 If that passes, everything described here is true. If it does not, trust the
 suite over this document.
 
+## Session handoff
+
+`docs/handoff-2026-09-25.md` carries what this file deliberately does not: the
+state of the last conversation, the working conventions that were argued into
+place, and how this user wants to be worked with. It is a dated snapshot — this
+file wins on anything about what is built or what is next.
+
 ## What Cartograph is
 
 Two MCP-dependent agent tools re-engineered into one MCP-free toolset, because
