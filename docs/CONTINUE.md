@@ -99,12 +99,22 @@ once when hooks are off. `build-vsix.sh` now refuses a payload older than the
 engine source; a local build had silently shipped a 12-day-old engine.
 Evidence in `docs/copilot-hooks.md`; runbook in `docs/verify-memory.md`.
 
+## Done later still — v0.4.0, Cartograph Local
+
+The user's target is VM / Remote SSH / Dev Containers, not local windows.
+Measured: over Remote SSH VS Code keeps `chatSessions/` on the local (Windows)
+machine; the VM has none. `companion/` is a UI-side extension that copies each
+changed chat file to the remote via `cartograph.receiveChatSession`; the main
+extension writes it to `.cartograph/chatSessions/` and `mem sync` reads it.
+The main `.vsix` embeds the companion and offers to install it. Unit-tested
+and built; **never run in a real remote window** — Dev Containers could not run
+x64 on this Mac. The README now opens with the constraints table.
+
 ## NEXT TASK
 
-1. **Linux acceptance of 0.3.0** on the user's test machine, over Remote SSH,
-   following `docs/verify-memory.md`. The open question is whether
-   `chatSessions/` exists on the remote at all — if VS Code keeps it on the
-   client, the remote engine cannot see it and Remote SSH needs another route.
+1. **Remote SSH acceptance of 0.4.0** on the user's VM, following
+   `docs/verify-memory.md` Steps 8–9: the companion's first real run, and
+   whether the in-window install offer works or the manual install is needed.
 2. **Transcript-aware summaries.** Both hosts send `transcript_path`, which
    holds the agent's replies. Summaries built only from prompts can only say
    what a person typed; the replies say what was concluded.

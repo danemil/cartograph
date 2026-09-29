@@ -82,9 +82,48 @@ itself, in a VS Code profile with `chat.useHooks` off: a Chat prompt reached
 memory 75 seconds after it was sent, `capture_copilot_chat: logs`, with no
 hook involved.
 
-**Open: Remote SSH.** `chatSessions/` is VS Code core's store, and under Remote
-SSH it may live on the client machine rather than the remote where the
-extension and engine run. Unverified; see `docs/verify-memory.md`.
+## Remote windows: Cartograph Local
+
+**Measured on 2026-09-29**, Windows host → Hyper-V Ubuntu 22 VM → VS Code over
+Remote SSH: the VM had **no** `chatSessions/`; the Windows host had it, at
+`%APPDATA%\Code\User\workspaceStorage\<id>\chatSessions\`, with the same
+session id as the incomplete transcript on the VM and the same workspace id
+(`21bfca…`) on both sides.
+
+So in a remote window the parts split:
+
+| Local machine (the window) | Remote (VM / container) |
+|---|---|
+| VS Code's own chat store, `chatSessions/` | the repository, terminals, Copilot CLI, Copilot Chat's agent, Chat hooks, Copilot's transcript, Cartograph's engine and extension |
+
+With Chat hooks allowed this does not matter — hooks run on the remote. With
+them blocked, the only complete Chat record is on the local machine, out of
+the engine's reach. **Cartograph Local** (`companion/`) is a UI-side extension
+(`extensionKind: ["ui"]`), plain JavaScript, one universal `.vsix`, that:
+
+- does nothing in a local window;
+- in a remote window, polls its workspace's local `chatSessions/` every 15 s
+  and sends each changed file to the remote through the command
+  `cartograph.receiveChatSession` (commands cross the local/remote boundary);
+- is acknowledged by `cartograph.companionHello`, so the main extension knows
+  not to offer it.
+
+The main extension writes each received file to `.cartograph/chatSessions/`
+in the repository — beside the memory store, already gitignored — and
+`carto mem sync` reads it there with the same parser. The main `.vsix` carries
+the companion and, in a remote window with Chat hooks off and no companion
+heard from within 90 s, offers to install it; if VS Code will not install a
+local extension from a file on the remote, it says which file to install by
+hand.
+
+**Verified:** the engine reads the mirror (unit test); both extensions build;
+the companion is embedded. **Not yet run:** the companion in a real remote
+window, and the in-window install offer. Dev Containers could not be tried on
+the Apple Silicon build machine (x64 emulation off in Docker Desktop). The
+user's Remote SSH VM is the first real run — see `docs/verify-memory.md`.
+
+The Copilot CLI is unaffected by any of this: in a remote window it runs on
+the remote, and so do its hooks and its `~/.copilot/session-state/` log.
 
 ## The CLI's folder trust
 

@@ -162,6 +162,36 @@ capture copilot chat   logs (2 imported, 0 already recorded, at …)
 or not firing. `hooks` means every logged prompt had already been recorded by a
 hook. The status bar tooltip carries the same line.
 
+## Step 9 — Remote windows: Cartograph Local (0.4.0 and later)
+
+Only for Remote SSH, Dev Containers or WSL, and only matters when Chat hooks
+are off. VS Code keeps Chat history on your **local** machine there, and the
+engine is on the remote; Cartograph Local bridges the two.
+
+Check where the chat history is. On the **local** machine (Windows PowerShell):
+
+```powershell
+Get-ChildItem "$env:APPDATA\Code\User\workspaceStorage\*\workspace.json" |
+  Where-Object { Select-String -Path $_.FullName -Pattern "<your repo folder name>" -Quiet } |
+  ForEach-Object { $_.DirectoryName; Get-ChildItem (Join-Path $_.DirectoryName "chatSessions") -ErrorAction SilentlyContinue }
+```
+
+On the remote, `ls ~/.vscode-server/data/User/workspaceStorage/*/chatSessions`
+prints nothing — that is the split.
+
+1. Install `cartograph-local-<version>.vsix` **on the local machine**: in the
+   remote window, **Extensions: Install from VSIX…**, choose the file, and pick
+   the local install if asked. Or accept the offer the main extension shows
+   about 90 s after opening a remote window with Chat hooks off.
+2. Reload the window. In the Extensions view, *Cartograph Local* should be
+   listed under **Local – Installed**, and *Cartograph* under the remote.
+3. Send a Chat prompt, wait about a minute, then in the remote terminal:
+   ```
+   ls .cartograph/chatSessions/
+   carto mem status --format text
+   ```
+   **Expect** one `.jsonl` per chat, and `capture copilot chat   logs (…)`.
+
 ## Copilot CLI
 
 Independent of Chat — run it even when Chat hooks are blocked.
@@ -197,6 +227,7 @@ prompts rather than a synthesis.
 | 6 | `transcripts/<session>.jsonl` **is** written with hooks off |
 | 7 | Readable, and holds the replies — but the first `user.message` of the session was **missing**, and the log ended at `turn_start` before the second reply. Not yet known whether that is delayed writing or the chat's *Checkpoint Restored* state |
 | CLI | Not yet run |
+| Remote split | On the **Windows host**: `%APPDATA%\Code\User\workspaceStorage\21bfca…\chatSessions\079499f9….jsonl` (30 KB, today); on the VM: none. Same session id, same workspace id both sides |
 
 **Consequence:** where an organisation disables Chat hooks by policy, hooks
 cannot deliver Chat memory, and 0.3.0 adds the log fallback (Step 8).

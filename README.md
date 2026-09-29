@@ -26,6 +26,57 @@ It is a hard fork and unification of
 [claude-mem](https://github.com/thedotmack/claude-mem) (Apache-2.0).
 See [PROVENANCE.md](PROVENANCE.md).
 
+## The constraints it is built for
+
+Every design decision below traces to one of these. They are the target
+environment's rules, not preferences.
+
+| Constraint | What it breaks | How Cartograph meets it |
+|---|---|---|
+| **No MCP servers** | Both upstream tools delivered their value through MCP | A CLI (`carto`), a skills pack and hooks — what every host already runs |
+| **The only AI tool is GitHub Copilot** — Chat and CLI, in VS Code | Anything that assumes Claude Code or another agent | The extension installs for Copilot; session summaries are written by `copilot -p`, or a labelled structural fallback |
+| **Nothing preinstalled, default-deny egress** | Runtimes, package managers, grammar downloads | One `.vsix` per platform carries the frozen engine and all grammars; nothing is fetched |
+| **Chat hooks can be disabled by organisation policy** (`chat.useHooks`) | Automatic capture from Chat — the hook never runs, silently | Memory is also imported from the conversation logs that exist regardless ([below](#where-memory-comes-from)); the extension says once when hooks are off |
+| **Copilot CLI runs repository hooks only in a trusted folder** | CLI capture in an untrusted folder, silently | Trust the folder once; otherwise the CLI's own session log is imported |
+| **Development happens in a VM or container** — Remote SSH, Dev Containers, WSL | VS Code keeps Chat history on the *local* machine, the engine runs on the *remote* | **Cartograph Local**, a small companion extension on the local side, passes Chat history to the remote |
+| Extension allow-lists (possible) | Installing either `.vsix` | Needs the organisation's approval — plan for two extensions |
+
+### Where memory comes from
+
+Hooks first; logs whenever hooks did not record something. Session ids match
+across both, so nothing is recorded twice, and `carto mem status` reports per
+host whether memory is arriving via **hooks** or **logs**.
+
+| | Copilot Chat | Copilot CLI (terminal inside VS Code) |
+|---|---|---|
+| **Hooks allowed** | Chat hooks, on whichever side Copilot Chat runs | CLI hooks, in a trusted folder |
+| **Hooks blocked, local window** | VS Code's `chatSessions/`, read directly | `~/.copilot/session-state/`, read directly |
+| **Hooks blocked, remote window** | VS Code's `chatSessions/` on the local machine, copied to the remote by **Cartograph Local** | `~/.copilot/session-state/` on the remote, read directly |
+
+The graph, the skills and session summaries work the same in every row.
+Details and evidence: [docs/copilot-hooks.md](docs/copilot-hooks.md). Step-by-step
+check on a real machine: [docs/verify-memory.md](docs/verify-memory.md).
+
+## Installing
+
+From the release page, install:
+
+- **`carto-<platform>-<version>.vsix`** — the engine, the skills, the hooks.
+  Pick the platform the *engine* runs on: in a remote window that is the
+  remote (a Linux VM or container → `linux-x64`), not your laptop.
+- **`cartograph-local-<version>.vsix`** — only for remote windows. It installs
+  on your local machine. The main extension offers to install it when it sees
+  a remote window with Chat hooks off.
+
+In a remote window, run the install from a VS Code terminal *of that window* —
+the `code` command there installs on the remote. Cartograph Local is installed
+from your local machine (**Extensions: Install from VSIX…**), or accepted when
+the extension offers it.
+
+```
+code --install-extension carto-linux-x64-<version>.vsix
+```
+
 ## Layout
 
 | Path | What |
@@ -36,6 +87,7 @@ See [PROVENANCE.md](PROVENANCE.md).
 | `skills/` | The skills pack — one set, read by all three hosts |
 | `hooks/` | Host hook manifests (the logic lives in `engine/cartograph/hook.py`) |
 | `extension/` | VS Code extension — the primary delivery vehicle |
+| `companion/` | Cartograph Local — the local-side companion for remote windows |
 | `installer/` | Bootstrap for the CLI hosts |
 | `scripts/` | Build and release tooling |
 
@@ -114,8 +166,9 @@ PROVENANCE.md.
 
 Working today: the capability envelope on ~25 commands, all 16 query patterns,
 `carto capabilities`, `carto review-context` / `review-summary`, `--max-tokens`
-with semantic truncation, the six-skill pack, `carto mem add|search|status|summarise`,
-and hooks for Copilot CLI, Copilot Chat and Claude Code.
+with semantic truncation, the six-skill pack, `carto mem add|search|status|summarise|sync`,
+hooks for Copilot CLI, Copilot Chat and Claude Code, memory from Copilot's own
+logs when hooks are blocked, and Cartograph Local for remote windows.
 
 Not yet: cursors (`next_cursor` is honestly `null`), semantic search
 (everything reports `search_mode: keyword`), and summaries that read the

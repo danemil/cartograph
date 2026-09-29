@@ -33,6 +33,13 @@ shows, per host, whether memory is arriving via **hooks** or **logs**. Setting:
 `cartograph.readCopilotLogs` (on by default). Command: **Cartograph: Sync
 Memory from Copilot Logs**.
 
+**Remote windows (Remote SSH, Dev Containers, WSL).** VS Code keeps Chat
+history on your local machine, while this extension and the engine run on the
+remote. If Chat hooks are off, install **Cartograph Local**
+(`cartograph-local-<version>.vsix`, carried inside this extension and on the
+release page) on the local side; it passes Chat history across. This
+extension offers to install it when it sees the need.
+
 **Copilot CLI only runs repository hooks in a folder you have trusted.** Start
 `copilot` interactively in the repository once and accept the trust prompt.
 
