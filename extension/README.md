@@ -13,9 +13,8 @@ On activation, in order:
 2. Writes a `carto` launcher into `~/.cartograph/bin` and puts that directory
    on the PATH of every VS Code terminal.
 3. Runs `carto install --platform copilot`, which writes the skills pack into
-   `.github/skills`, `.claude/skills` and `.agents/skills`, and one hook file,
-   `.github/hooks/cartograph.json`, which both Copilot Chat and Copilot CLI
-   read.
+   `.github/skills` and one hook file, `.github/hooks/cartograph.json`, both
+   read by Copilot Chat and Copilot CLI.
 4. Reads `carto status` and shows the graph state in the status bar.
 
 The hooks are what make memory automatic: every prompt is recorded, each
@@ -47,10 +46,11 @@ extension offers to install it when it sees the need.
 
 - **No network access, ever.** The engine and its tree-sitter grammars are
   inside the `.vsix`. The extension downloads nothing at install time or after.
-- **No MCP registration.** `carto install` is called without `--with-mcp`.
-- **No edits to your instruction files.** `CLAUDE.md` and `AGENTS.md` are
-  tracked project files; the extension leaves them alone. Run
-  `carto install --platform claude -y` yourself if you want them.
+- **No MCP registration.** There is no MCP server to register.
+- **No edits to your instruction files.** The extension passes
+  `--no-instructions`, so `.github/instructions/cartograph.instructions.md`,
+  a tracked project file, is left alone. Run `carto install -y` yourself if
+  you want it.
 
 ## Commands
 

@@ -81,8 +81,8 @@ rephrased one.
 | Search never over-claims | `search_mode` present on the search envelope |
 | The catalogue is reachable | `capabilities.data.commands` non-empty |
 | Memory round-trips | `mem add` → id; `mem search` returns **that id**, not merely a similar title |
-| Hosts find the skills | `.claude/skills`, `.github/skills`, `.agents/skills` each `diff -r` clean against `skills/` |
-| The hook fires | the `SessionStart` command from the generated `settings.json`, run verbatim from the repo, prints its `[carto]` line and exits 0 |
+| Copilot finds the skills | `.github/skills` is `diff -r` clean against `skills/` |
+| The hook fires | the `UserPromptSubmit` command from the generated `.github/hooks/cartograph.json`, run verbatim from the repo with a Copilot payload, exits 0, prints nothing, and the prompt is then in `carto mem search` |
 | No MCP is registered | zero files matching `*mcp*` under `$HOME` or the repo |
 
 Two of those are sharper than they look.
@@ -214,8 +214,8 @@ nothing.
   payload directory. `install.sh` accepts a `.vsix` and that path is tested on
   darwin-arm64, but `build-vsix.sh` needs npm and a compile step that this
   Dockerfile deliberately does not carry.
-- **Copilot Chat's and Claude Code's own discovery** of the placed skills. The
-  harness proves the files are in all three directories and byte-identical to
+- **Copilot Chat's and Copilot CLI's own discovery** of the placed skills. The
+  harness proves the files are in `.github/skills` and byte-identical to
   `skills/`. Whether each host then reads them is a property of the host.
 - **Windows.** `installer/install.ps1` has still never been run, and no
   win32-x64 payload exists. A Linux container says nothing about either.

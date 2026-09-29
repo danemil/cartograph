@@ -47,7 +47,8 @@ Consequences, each of which is now code:
    run in one. Every hook line appends `${CARTO_HOME:-$HOME/.cartograph}/bin`
    to PATH before its guard. Before this, every Chat hook exited silently.
 6. **No `session-status` line for Copilot.** VS Code parses a hook's stdout as
-   JSON; the orienting line Claude Code receives would be a parse error there.
+   JSON; the orienting line `session-status` prints would be a parse error
+   there.
 
 ## Organisation policy can switch Chat hooks off
 
@@ -167,8 +168,11 @@ In a scratch repository with only `.github/hooks/cartograph.json` installed and
   per call, so the live Chat run proved capture and catch-up but not a Chat
   session reaching `MIN_PROMPTS` on its own. The logic is the CLI's, tested.
 - **`chat.useClaudeHooks`.** If someone enables it, VS Code also reads
-  `.claude/settings.json`; the duplicate check covers capture, but the Claude
-  file's `session-status` line would reach Chat's JSON parser.
+  `.claude/settings.json`. Cartograph no longer writes that file, but a
+  repository installed by an earlier release — including `install.sh` and
+  `install.ps1`, which passed `--platform claude` — still carries it, and
+  `carto uninstall` no longer removes it. The duplicate check covers capture;
+  that file's `session-status` line would reach Chat's JSON parser.
 
 ## Follow-up worth doing
 

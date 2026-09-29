@@ -4,9 +4,8 @@ A code knowledge graph and persistent session memory for AI coding agents —
 **with no MCP server**.
 
 Cartograph exposes its capability the way the hosts already work: a **CLI**, a
-**skills pack**, and **hooks**. It runs on **Claude Code**, **GitHub Copilot
-CLI** and **GitHub Copilot Chat** in VS Code, and installs on a machine with
-nothing on it.
+**skills pack**, and **hooks**. It runs on **GitHub Copilot CLI** and **GitHub
+Copilot Chat** in VS Code, and installs on a machine with nothing on it.
 
 ```
 carto status                      # is there a graph here?
@@ -34,7 +33,7 @@ environment's rules, not preferences.
 | Constraint | What it breaks | How Cartograph meets it |
 |---|---|---|
 | **No MCP servers** | Both upstream tools delivered their value through MCP | A CLI (`carto`), a skills pack and hooks — what every host already runs |
-| **The only AI tool is GitHub Copilot** — Chat and CLI, in VS Code | Anything that assumes Claude Code or another agent | The extension installs for Copilot; session summaries are written by `copilot -p`, or a labelled structural fallback |
+| **The only AI tool is GitHub Copilot** — Chat and CLI, in VS Code | Anything that assumes Claude Code or another agent | Copilot is the only host: `carto install` writes only what Copilot reads, and session summaries are written by `copilot -p` or a labelled structural fallback — never another agent |
 | **Nothing preinstalled, default-deny egress** | Runtimes, package managers, grammar downloads | One `.vsix` per platform carries the frozen engine and all grammars; nothing is fetched |
 | **Chat hooks can be disabled by organisation policy** (`chat.useHooks`) | Automatic capture from Chat — the hook never runs, silently | Memory is also imported from the conversation logs that exist regardless ([below](#where-memory-comes-from)); the extension says once when hooks are off |
 | **Copilot CLI runs repository hooks only in a trusted folder** | CLI capture in an untrusted folder, silently | Trust the folder once; otherwise the CLI's own session log is imported |
@@ -89,11 +88,11 @@ code --install-extension carto-linux-x64-<version>.vsix
 | `engine/` | Python — the graph and the tree-sitter parser |
 | `engine/cartograph/mem/` | Observations and recall — same binary, same envelope |
 | `contracts/capability-v1/` | The capability contract: schemas, fixtures, conformance suite |
-| `skills/` | The skills pack — one set, read by all three hosts |
+| `skills/` | The skills pack — one set, installed to `.github/skills/`, which Copilot CLI and Copilot Chat both read |
 | `hooks/` | Host hook manifests (the logic lives in `engine/cartograph/hook.py`) |
 | `extension/` | VS Code extension — the primary delivery vehicle |
 | `companion/` | Cartograph Local — the local-side companion for remote windows |
-| `installer/` | Bootstrap for the CLI hosts |
+| `installer/` | Bootstrap for Copilot CLI on a machine without VS Code |
 | `scripts/` | Build and release tooling |
 
 ## The contract
@@ -172,7 +171,7 @@ PROVENANCE.md.
 Working today: the capability envelope on ~25 commands, all 16 query patterns,
 `carto capabilities`, `carto review-context` / `review-summary`, `--max-tokens`
 with semantic truncation, the six-skill pack, `carto mem add|search|show|status|summarise|sync`,
-hooks for Copilot CLI, Copilot Chat and Claude Code, memory from Copilot's own
+hooks for Copilot CLI and Copilot Chat, memory from Copilot's own
 logs when hooks are blocked, and Cartograph Local for remote windows.
 
 Not yet: cursors (`next_cursor` is honestly `null`), semantic search

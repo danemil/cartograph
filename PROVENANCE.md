@@ -52,8 +52,8 @@ Specific to `engine/` (ex code-review-graph):
 - Became the single tree-sitter parser for the whole project.
 - Replaced the seven bundled MCP-oriented skills with a five-skill pack that
   drives the CLI, shipped as package data and written verbatim by `install`.
-- `install` no longer registers an MCP server by default (`--with-mcp` opts
-  in), and no longer writes instruction files describing MCP tools.
+- `install` registers no MCP server — the server itself is removed — and no
+  longer writes instruction files describing MCP tools.
 - Added `carto hook`, moving host hook logic out of per-host shell strings.
 
 Planned for the memory capability (in `engine/cartograph/mem/`, not a fork):

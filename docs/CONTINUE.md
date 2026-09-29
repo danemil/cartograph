@@ -14,7 +14,7 @@ below, then pick up **Next task**.
 ```bash
 cd /Users/emidan/work/cartograph
 ./scripts/verify.sh
-# expect: 340 envelope checks, 251 skills checks, 24/24 copies, "all green"
+# expect: 340 envelope checks, 265 skills checks, 12/12 copies, "all green"
 ```
 
 If that passes, everything described here is true. If it does not, trust the
@@ -31,8 +31,8 @@ file wins on anything about what is built or what is next.
 
 Two MCP-dependent agent tools re-engineered into one MCP-free toolset, because
 MCP servers are banned in the target organisation. Capability is exposed as a
-**CLI + skills + hooks** instead. Targets Claude Code, GitHub Copilot CLI and
-Copilot Chat. Acceptance test: a fresh machine with only VS Code (Copilot ships
+**CLI + skills + hooks** instead. Targets GitHub Copilot CLI and Copilot Chat,
+and nothing else. Acceptance test: a fresh machine with only VS Code (Copilot ships
 built into VS Code 1.135.0), installing from a private repo, default-deny egress.
 
 - Code: `/Users/emidan/work/cartograph` (private monorepo, Apache-2.0)
@@ -64,10 +64,9 @@ fires on its own.
 ## Scope, restated by the user on 2026-09-29
 
 **The only AI tool allowed in the target environment is GitHub Copilot — Chat
-and CLI, inside VS Code.** No MCP, no Claude Code. Claude Code support stays in
-the code because it costs nothing, but nothing may depend on it: the extension
-now installs with `--platform copilot`, and the summariser tries `copilot`
-first.
+and CLI, inside VS Code.** No MCP, no Claude Code. Decisions 4 and 4b below
+took the rest out of the code as well: `copilot` is the only install platform
+and the only summariser host.
 
 ## Done on 2026-09-29
 
@@ -128,6 +127,27 @@ tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
 | 4 | Claude Code and other non-Copilot tools | **Remove all non-Copilot support** | Summariser host, `.claude/settings.json` hooks, and the inherited install paths for other tools (Cursor, Codex, Gemini, CodeBuddy, Qoder, OpenCode, …) and their tests. |
 | 4b | The dormant MCP server (`carto serve`, `carto mcp`, `--with-mcp`) | **Remove it** | MCP is banned in the target environment. Drops `fastmcp` and the 7 test modules that import it |
 
+## Done — decisions 4 and 4b
+
+- **4b (`9a1ad15`).** `carto serve`, `carto mcp`, `--with-mcp`, `main.py`,
+  `prompts.py`, `http_origin_guard.py`, the `mcp`/`fastmcp` dependencies, and
+  what only the server used: the tool wrappers no CLI command calls,
+  `analysis.py`, the packaged LLM reference, `apply_refactor` and the
+  in-process preview store it needed. Of the 7 fastmcp test modules, 3 were
+  MCP-only and deleted; 4 also covered CLI code and were kept with the MCP
+  parts cut (`test_token_budget` now budgets the tool functions the CLI calls).
+- **4 (`353e57b`).** Copilot is the only host. `carto install` writes
+  `.github/skills/`, `.github/hooks/cartograph.json` and
+  `.github/instructions/cartograph.instructions.md`, nothing else;
+  `--platform` accepts `copilot` only. The summariser calls only `copilot`.
+  `.claude/skills` and `.agents/skills` are gone because both Copilot hosts
+  read `.github/skills` (`copilot skill --help`, CLI 1.0.82; VS Code's agent
+  skills docs). `carto enrich` (a Claude Code `PreToolUse` helper) is gone.
+  `carto uninstall` removes the Copilot files and no longer edits other hosts'
+  configs — so `.claude/settings.json` hooks and the pre-commit hook written by
+  earlier `install.sh`/`install.ps1` runs (`--platform claude`) are left for
+  the person to delete.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
@@ -165,19 +185,16 @@ this fork touches that path. Deliberately NOT skipped — the manifest is
 reachable, so a network guard would mislabel a real signal.
 
 ```bash
-cd engine && .venv/bin/python -m pytest tests/ -q --timeout=300 \
-  --ignore=tests/test_agent_transparency.py --ignore=tests/test_embedding_initialization.py \
-  --ignore=tests/test_http_origin_guard.py --ignore=tests/test_integration_v2.py \
-  --ignore=tests/test_main.py --ignore=tests/test_prompts.py --ignore=tests/test_token_budget.py
+cd engine && .venv/bin/python -m pytest tests/ -q --timeout=300
 ```
 
-The 7 ignored modules import `fastmcp`, which is deliberately absent.
+Nothing is ignored any more: the MCP server and its tests are gone (4b).
 
 ## Hooks
 
 `carto hook <event>` (`engine/cartograph/hook.py`) is what hosts call; agents
 never do (it is in `_NOT_AGENT_FACING`). Events are named for the job —
-`session-status`, `file-update`, `prompt-capture` — with fourteen host
+`session-status`, `file-update`, `prompt-capture` — with Copilot's host
 spellings aliased onto them.
 
 `prompt-capture` is the only event that reads the host's stdin payload, and the
@@ -185,8 +202,9 @@ only one that writes: it records the submitted prompt into the `mem` store in
 process (`engine/cartograph/mem/ingest.py`), verbatim, ~1 ms of work inside a
 ~160 ms interpreter start. What it refuses is the design — acknowledgements,
 payloads with no prompt in them, and anything past a per-session cap. Wired for
-Claude Code only; the other hosts' prompt events and payloads have not been
-checked against the host.
+Copilot CLI and Copilot Chat through `UserPromptSubmit` in
+`.github/hooks/cartograph.json`; both payloads are recorded in
+`docs/copilot-hooks.md`.
 
 **The hook protocol is not the query protocol.** In a hook, exit `2` means
 *blocking feedback to the model*, not "precondition failed". `hook.py` never
@@ -198,8 +216,8 @@ nobody has run it on Windows.
 
 ## The skills pack, and how it stays true
 
-Five skills in `skills/<name>/SKILL.md`, copied into `.claude/skills/`,
-`.github/skills/` and `.agents/skills/` by `scripts/install-skills.py`.
+Six skills in `skills/<name>/SKILL.md`, copied into `.github/skills/` by
+`scripts/install-skills.py`.
 Copies, not symlinks: git on Windows checks a symlink out as a text file
 containing its target path, which a host reads as a skill body and ignores.
 
@@ -210,9 +228,8 @@ cloned this repo.
 **Never hand-edit a copy** — edit `skills/`, then re-run the installer.
 `--check` catches stale, missing and orphaned copies and runs in `verify.sh`.
 
-`carto install` writes the pack to `.claude/skills/`, `.github/skills/` and
-`.agents/skills/` (plus Gemini and CodeBuddy), byte-identical to canonical,
-and **registers no MCP server** unless `--with-mcp` is passed.
+`carto install` writes the pack to `.github/skills/`, byte-identical to
+canonical, and **registers no MCP server** — there is none.
 
 `contracts/capability-v1/check_skills.py` extracts every `carto` line from
 every skill body and validates it against `carto capabilities`. This is not
@@ -249,12 +266,9 @@ a skill, the checker holds it to the same standard automatically.
 
 ## After that, in rough priority
 
-1. **Codex / Cursor / OpenCode hooks** still carry raw command lines rather
-   than `carto hook`; six upstream assertions pin those exact strings. None is
-   a target host, so it was traded away deliberately.
-2. **The memory side** (`memory/`) has not been started. Engine-first was the
+1. **The memory side** (`memory/`) has not been started. Engine-first was the
    decided build order.
-3. **The `.vsix`** — the primary delivery vehicle, and the acceptance test:
+2. **The `.vsix`** — the primary delivery vehicle, and the acceptance test:
    a fresh machine with only VS Code.
 
 ## Decided, do not relitigate
@@ -268,5 +282,5 @@ a skill, the checker holds it to the same standard automatically.
 - Build order is engine-first. claude-mem compiled tree-sitter grammars from C
   at runtime, needing a toolchain no locked-down machine has — so it will call
   the engine's precompiled parser instead.
-- The `.vsix` is the primary delivery vehicle; installing it also serves Claude
-  Code and Copilot CLI.
+- The `.vsix` is the primary delivery vehicle; installing it also serves
+  Copilot CLI.

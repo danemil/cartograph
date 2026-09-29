@@ -10,8 +10,8 @@ How the engine reaches a machine that has nothing on it.
 The acceptance test is one sentence: **a fresh machine with nothing but VS Code,
 behind default-deny egress, installs Cartograph and it works.** Copilot ships
 inside VS Code 1.135.0, so the `.vsix` is the only artifact that reaches such a
-machine — and installing it therefore has to serve Claude Code and Copilot CLI
-too, neither of which VS Code knows anything about.
+machine — and installing it therefore has to serve Copilot CLI too, which VS
+Code knows nothing about.
 
 ## The payload
 
@@ -63,7 +63,7 @@ Two decisions worth knowing:
 
 - **The launcher follows a pointer file** rather than having a path baked in. A
   VS Code extension lives in a version-stamped directory, so a baked path would
-  leave Claude Code and Copilot CLI aimed at a directory the next extension
+  leave Copilot CLI and the Chat hooks aimed at a directory the next extension
   update deleted — failing later, elsewhere, for a reason nobody would connect
   back to this.
 - **Both names are installed.** `carto` is what every hook, skill and
@@ -111,8 +111,7 @@ to reach for a grammar fails loudly:
 | The payload survives the zip | `install.sh --payload <the .vsix>`, then a build from the unzipped engine |
 | The extension's placement code works | `readPayload` / `placeLaunchers` run under plain node against the VS Code-installed directory, then the launcher they wrote used for a real build |
 | Hosts find the skills | the 15 installed `SKILL.md` copies compared byte-for-byte against `skills/` |
-| Claude Code's hook fires | the `SessionStart` command line from the generated `.claude/settings.json`, run verbatim |
-| No MCP is registered | `carto install` called without `--with-mcp`; no `.mcp.json` written |
+| No MCP is registered | no `.mcp.json` written by `carto install` |
 
 ## What is NOT verified
 
@@ -140,11 +139,10 @@ Stated plainly, because a confident claim here would be worth less than nothing.
 
 - **`carto version --json` does not exist** (T16 §6). The binary identifies
   itself through `carto --version`, which prints `cartograph <x.y.z>` as text.
-- **`carto install` is interactive** unless `-y` is passed, and `--platform all`
-  writes into half a dozen user-level directories for hosts nobody here uses —
-  `~/.hermes`, `~/.codex`, `~/.cursor`, `~/.config/opencode`. Both consumers
-  call `carto install --platform claude --no-instructions -y`, which places the
-  three discovery directories and the hooks and touches no home directory.
+- **`carto install` is interactive** unless `-y` is passed. Both consumers call
+  `carto install --platform copilot --no-instructions -y`, which places
+  `.github/skills` and `.github/hooks/cartograph.json` and touches no home
+  directory.
 - **The engine binary reaching a machine by Release-asset fetch** (T12 §3) is
   not implemented, and the reconciliation already overruled it: the `.vsix`
   carries its own payload. `install.sh` therefore takes `--payload` and

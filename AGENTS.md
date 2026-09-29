@@ -3,10 +3,10 @@
 This repo uses `carto` — a knowledge-graph view of the codebase, as a plain
 CLI. There is no MCP server, by design.
 
-**If your tool reads Agent Skills** (`.claude/skills/`, `.github/skills/`,
-`.agents/skills/`), use those instead of this file. They are more specific and
-they are verified against the CLI on every change; this section is only the
-fallback for a host that discovers neither.
+**If your tool reads Agent Skills** (`.github/skills/`), use those instead of
+this file. They are more specific and they are verified against the CLI on
+every change; this section is only the fallback for a host that does not
+discover them.
 
 No graph yet? `carto build`. Otherwise pick by task:
 
