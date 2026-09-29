@@ -140,7 +140,7 @@ async function installIntoWorkspace(
   await context.workspaceState.update(PLACEMENT_KEY, stamp);
   if (opts.force) {
     vscode.window.showInformationMessage(
-      "Cartograph: skills and hooks installed for Claude Code and Copilot.",
+      "Cartograph: skills and hooks installed for Copilot Chat and Copilot CLI.",
     );
   }
 }

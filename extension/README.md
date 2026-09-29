@@ -12,14 +12,20 @@ On activation, in order:
    is a zip and does not carry, and clears the macOS quarantine mark.
 2. Writes a `carto` launcher into `~/.cartograph/bin` and puts that directory
    on the PATH of every VS Code terminal.
-3. Runs `carto install`, which writes the skills pack into `.claude/skills`,
-   `.github/skills` and `.agents/skills`, and the hooks into
-   `.claude/settings.json`.
+3. Runs `carto install --platform copilot`, which writes the skills pack into
+   `.github/skills`, `.claude/skills` and `.agents/skills`, and one hook file,
+   `.github/hooks/cartograph.json`, which both Copilot Chat and Copilot CLI
+   read.
 4. Reads `carto status` and shows the graph state in the status bar.
 
-Steps 2 and 3 are why installing this extension also serves **Claude Code** and
-**GitHub Copilot CLI**: they find `carto` on PATH and the skills pack in the
-workspace, whether or not VS Code is running.
+The hooks are what make memory automatic: every prompt is recorded, each
+session is summarised when it ends (or, in Chat, when the next one starts), and
+the graph refreshes at the end of every agent turn. See
+`docs/copilot-hooks.md` in the monorepo for what each host does and what was
+verified.
+
+**Copilot CLI only runs repository hooks in a folder you have trusted.** Start
+`copilot` interactively in the repository once and accept the trust prompt.
 
 ## What it does not do
 

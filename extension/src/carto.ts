@@ -91,7 +91,10 @@ export class Carto {
    */
   async installIntoWorkspace(cwd: string): Promise<{ ok: boolean; output: string }> {
     const { stdout, stderr, code } = await this.run(
-      ["install", "--platform", "claude", "--no-instructions", "-y", "--repo", cwd],
+      // `copilot` covers both Copilot CLI and Copilot Chat: one hook file in
+      // `.github/hooks`, which both read. Skills still land in all three
+      // directories — that part does not depend on the platform named here.
+      ["install", "--platform", "copilot", "--no-instructions", "-y", "--repo", cwd],
       cwd,
     );
     return { ok: code === 0, output: code === 0 ? stdout : `${stdout}\n${stderr}` };
