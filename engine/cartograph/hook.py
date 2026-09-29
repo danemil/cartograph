@@ -13,10 +13,17 @@ non-zero. A hook that cannot do its job says nothing and gets out of the way.
 
 Hosts disagree about what to call the same moment — ``SessionStart``,
 ``sessionStart``, ``startup|resume``, ``PostToolUse``, ``AfterTool``,
-``afterFileEdit``, ``UserPromptSubmit``, ``beforeSubmitPrompt``. The events
-below are therefore named after the *job*, with the host spellings as aliases,
-so the mapping lives in Python where it can be tested rather than in a command
-string copied into one JSON file per host.
+``afterFileEdit``, ``UserPromptSubmit``, ``beforeSubmitPrompt``,
+``SessionEnd``, ``sessionEnd``. The events below are therefore named after the
+*job*, with the host spellings as aliases, so the mapping lives in Python where
+it can be tested rather than in a command string copied into one JSON file per
+host.
+
+Two events read the host's stdin payload: ``prompt-capture``, for the text, and
+``session-summarise``, for the session id. Neither waits for what it starts —
+``session-summarise`` in particular hands its work to :func:`spawn_detached`,
+because a summarisation is an inference call and Copilot has no async hook type
+at all.
 """
 
 from __future__ import annotations
@@ -174,6 +181,27 @@ def update_argv(repo_root: Path) -> list[str]:
     ]
 
 
+def summarise_argv(repo_root: Path, session: str) -> list[str]:
+    """The session summary to run detached.
+
+    Addressed the same way as :func:`update_argv`, and for the same reason. The
+    session is passed explicitly rather than left to be re-derived: by the time
+    a detached child starts, the latest prompt in the store may belong to
+    whatever the person opened next.
+    """
+    return [
+        sys.executable,
+        "-m",
+        "cartograph",
+        "mem",
+        "summarise",
+        "--session",
+        session,
+        "--repo",
+        str(repo_root),
+    ]
+
+
 def _session_status(repo_root: Path, _host: Optional[str] = None) -> int:
     """Emit the one orienting line for this session, once, on stdout."""
     print(_SESSION_LINES[graph_state(repo_root)])
@@ -219,6 +247,33 @@ def _prompt_capture(repo_root: Path, host: Optional[str] = None) -> int:
     return 0
 
 
+def _session_summarise(repo_root: Path, _host: Optional[str] = None) -> int:
+    """Launch the session summary and return without waiting for it.
+
+    A summarisation is a process spawn plus an inference call — seconds at best,
+    and the host that fires this event is closing a session and will not wait.
+    So this does the same as ``file-update``: work out the argv, hand it to
+    ``spawn_detached``, and return. Nothing here reads the answer, because there
+    is no one left to tell.
+
+    Two cheap refusals before the spawn. Without a session id there is nothing
+    to summarise, and with no store there was never a captured prompt in this
+    repository — spawning an interpreter to discover either would be work done
+    for nothing on every session end.
+    """
+    payload = hook_payload()
+    if payload is None:
+        return 0
+    from .mem import ingest
+    from .mem.store import db_path
+
+    session = ingest.session_from(payload)
+    if not session or not db_path(repo_root, create=False).exists():
+        return 0
+    spawn_detached(summarise_argv(repo_root, session), cwd=repo_root)
+    return 0
+
+
 def _file_update(repo_root: Path, _host: Optional[str] = None) -> int:
     """Launch the graph refresh and return without waiting for it.
 
@@ -235,6 +290,7 @@ _EVENTS: dict[str, Callable[[Path, Optional[str]], int]] = {
     "session-status": _session_status,
     "file-update": _file_update,
     "prompt-capture": _prompt_capture,
+    "session-summarise": _session_summarise,
 }
 
 #: Host spellings for the three moments, keyed by their normalised form so
@@ -255,6 +311,14 @@ _ALIASES = {
     "promptsubmit": "prompt-capture",
     "beforesubmitprompt": "prompt-capture",
     "userprompt": "prompt-capture",
+    # Read off real payloads from this machine, not recalled. Claude Code's
+    # SessionEnd carries session_id/transcript_path/cwd/reason and fires once;
+    # Copilot CLI's hook schema spells the same moment `sessionEnd`. `Stop` is
+    # deliberately NOT here: its payload carries `stop_hook_active` and
+    # `last_assistant_message`, so it is a turn boundary, and aliasing it would
+    # summarise the same session after every reply.
+    "sessionend": "session-summarise",
+    "sessionsummarise": "session-summarise",
 }
 
 

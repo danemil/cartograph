@@ -50,7 +50,9 @@ MIN_PROMPT_CHARS = 16
 #: A prompt can carry a pasted stack trace or a whole file. The text is kept
 #: verbatim up to here and then cut, marked, because the first few thousand
 #: characters are what makes an observation findable and the rest is weight
-#: every search pays to skip.
+#: every search pays to skip. The same bound holds any body this package
+#: writes, summaries included — the reason is about what a search result can
+#: afford to carry, not about where the text came from.
 MAX_BODY_CHARS = 4_000
 
 #: One line, so a search result lists rather than scrolls.
@@ -62,8 +64,6 @@ MAX_TITLE_CHARS = 120
 #: cover from filling the store before a human notices.
 SESSION_CAP = 100
 
-_TRUNCATION_MARK = "\n…[truncated by carto capture]"
-
 
 def _first_string(payload: dict[str, Any], keys: "tuple[str, ...]") -> Optional[str]:
     for key in keys:
@@ -73,17 +73,46 @@ def _first_string(payload: dict[str, Any], keys: "tuple[str, ...]") -> Optional[
     return None
 
 
-def _title_for(text: str) -> str:
+def session_from(payload: dict[str, Any]) -> Optional[str]:
+    """The session id a host payload carries, under whichever name it used.
+
+    Public because the session-end hook needs the same answer from a payload
+    that carries no prompt at all, and the spellings in :data:`_SESSION_KEYS`
+    are the kind of list that goes stale in one copy and not the other.
+    """
+    if not isinstance(payload, dict):
+        return None
+    return _first_string(payload, _SESSION_KEYS)
+
+
+def title_for(text: str) -> str:
     """The first line, bounded.
 
     The first line of a prompt is where a person puts the request; the rest is
     usually context for it. Taking it whole and cutting is closer to the
     intent than any cleverer summary would be, and it cannot mislead.
+
+    Public because :mod:`cartograph.mem.summarise` needs the same one-line
+    bound for a title it did not write — a second implementation of "first
+    line, cut at 120" is how the two surfaces would come to disagree about
+    what a title is.
     """
     first = next((line.strip() for line in text.splitlines() if line.strip()), text)
     if len(first) <= MAX_TITLE_CHARS:
         return first
     return first[: MAX_TITLE_CHARS - 1].rstrip() + "…"
+
+
+def clip_body(text: str, *, by: str) -> str:
+    """*text* bounded by :data:`MAX_BODY_CHARS`, saying who cut it.
+
+    ``by`` names the step that did the cutting, because a truncated body is
+    read later by an agent with no way to tell a capture that clipped a pasted
+    file from a summariser whose host ran long.
+    """
+    if len(text) <= MAX_BODY_CHARS:
+        return text
+    return text[:MAX_BODY_CHARS] + f"\n…[truncated by carto {by}]"
 
 
 def observation_from(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -98,18 +127,15 @@ def observation_from(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     text = _first_string(payload, _PROMPT_KEYS)
     if not text or len(text) < MIN_PROMPT_CHARS:
         return None
-    body = text
-    if len(body) > MAX_BODY_CHARS:
-        body = body[:MAX_BODY_CHARS] + _TRUNCATION_MARK
     return {
-        "title": _title_for(text),
-        "body": body,
+        "title": title_for(text),
+        "body": clip_body(text, by="capture"),
         # `prompts` is its own doc_type in the schema because a prompt is a
         # different kind of record from an observation about the code, and an
         # agent searching for one rarely wants the other.
         "doc_type": "prompts",
         "kind": "prompt",
-        "session": _first_string(payload, _SESSION_KEYS),
+        "session": session_from(payload),
         "summary_source": "verbatim",
     }
 

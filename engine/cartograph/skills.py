@@ -1057,9 +1057,17 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
     ``file-update`` returns as soon as it has launched the refresh, so its
     timeout is a ceiling on starting a subprocess, not on building a graph.
 
-    ``prompt-capture`` is the only entry that needs what the host pipes in,
-    and the only one that must stay silent on stdout: whatever a
-    ``UserPromptSubmit`` hook prints is prepended to the user's prompt.
+    ``prompt-capture`` and ``session-summarise`` are the entries that need what
+    the host pipes in. ``prompt-capture`` is also the only one that must stay
+    silent on stdout: whatever a ``UserPromptSubmit`` hook prints is prepended
+    to the user's prompt.
+
+    ``SessionEnd`` fires once per session and its payload carries the
+    ``session_id`` — both read off real payloads on this machine rather than
+    recalled. ``Stop`` would have been the wrong event: it fires at every turn
+    boundary, so the summary would be rewritten after every reply. The timeout
+    is a ceiling on starting a subprocess, not on an inference call: the event
+    spawns detached and returns.
     """
     return {
         "hooks": {
@@ -1098,6 +1106,22 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
                         {
                             "type": "command",
                             "command": hook_command("session-status"),
+                            "timeout": 10,
+                        },
+                    ],
+                },
+            ],
+            "SessionEnd": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": hook_command(
+                                "session-summarise",
+                                host="claude-code",
+                                reads_payload=True,
+                            ),
                             "timeout": 10,
                         },
                     ],

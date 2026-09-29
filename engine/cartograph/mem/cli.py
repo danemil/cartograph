@@ -22,7 +22,7 @@ from . import store as _store
 #: Named here so the dispatch, the catalogue and the pageable-collection table
 #: all spell the operation the same way. It is also the `tool` field an agent
 #: sees, which the envelope schema permits to carry a space.
-COMMANDS = ("mem add", "mem search", "mem status")
+COMMANDS = ("mem add", "mem search", "mem status", "mem summarise")
 
 
 def add_parser(sub: Any) -> argparse.ArgumentParser:
@@ -33,7 +33,9 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     — which is an ordering no agent infers from a catalogue entry.
     """
     mem_cmd = sub.add_parser("mem", help="Recorded observations: add, search, inspect")
-    mem_sub = mem_cmd.add_subparsers(dest="mem_command", metavar="{add,search,status}")
+    mem_sub = mem_cmd.add_subparsers(
+        dest="mem_command", metavar="{add,search,status,summarise}"
+    )
     # Without this, `carto mem` alone parses cleanly and dispatches to nothing.
     # Required makes argparse route it through _ContractParser.error, which is
     # the usage envelope an agent can read.
@@ -104,7 +106,26 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
         "status", help="Whether a memory store exists, and what is in it"
     )
 
-    for command in (add_cmd, search_cmd, status_cmd):
+    summarise_cmd = mem_sub.add_parser(
+        "summarise",
+        help="Synthesise one session's captured prompts into a single observation",
+    )
+    summarise_cmd.add_argument(
+        "--session", default=None,
+        help="Session to summarise (defaults to the one that recorded the latest prompt)",
+    )
+    # store_true rather than a store_false spelled `use_host`: the catalogue
+    # reports an action's default verbatim, and "--no-host-agent, default: true"
+    # reads to an agent as though the flag were already on.
+    summarise_cmd.add_argument(
+        "--no-host-agent", dest="no_host_agent", action="store_true",
+        help=(
+            "Write the deterministic structural summary without calling a host "
+            "agent, so no Copilot or Claude quota is spent"
+        ),
+    )
+
+    for command in (add_cmd, search_cmd, status_cmd, summarise_cmd):
         command.add_argument(
             "--project", default=None,
             help="Project name (defaults to the repository directory)",
@@ -184,6 +205,24 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
             "carto mem add --title <title> --body <text>",
             fmt=fmt,
         )
+
+    if args.mem_command == "summarise":
+        # Its own branch because it both reads and writes, and because the host
+        # call inside it must not happen with the store open — see
+        # `summarise.summarise`. Provenance is taken afterwards, so the response
+        # describes the store including the row just written.
+        from . import summarise as _summarise
+
+        result = _summarise.summarise(
+            repo_root, session=args.session, project=args.project,
+            use_host=not args.no_host_agent,
+        )
+        with _store.MemoryStore(path) as memory:
+            provenance = memory.provenance()
+        _emit_tool_result(
+            args, result, command=command, provenance=provenance, repo_root=repo_root
+        )
+        return
 
     with _store.MemoryStore(path) as memory:
         provenance = memory.provenance()

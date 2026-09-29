@@ -480,17 +480,61 @@ class MemoryStore:
             "observations": int(row[1]),
         }
 
-    def session_count(self, session: str) -> int:
+    def session_count(self, session: str, *, doc_type: Optional[str] = None) -> int:
         """How many observations one session has recorded.
 
         Here rather than in the caller so the ingestion budget is counted
         against the same rows `mem search --session` returns, through the
         index that already exists for that filter.
+
+        ``doc_type`` narrows it, which is what answers "has this session
+        already been summarised?" — one counter serving both budgets rather
+        than a second query that could come to disagree about which rows count.
+        """
+        sql = "SELECT count(*) FROM observations WHERE session = ?"
+        params: list[Any] = [session]
+        if doc_type:
+            sql += " AND doc_type = ?"
+            params.append(doc_type)
+        return int(self._conn.execute(sql, params).fetchone()[0])
+
+    def session_documents(
+        self, session: str, *, doc_type: str, limit: Optional[int] = None
+    ) -> list[dict[str, Any]]:
+        """One session's rows of one type, oldest first, bodies included.
+
+        Not `search`: that surface takes a query, ranks, and returns snippets,
+        and a summariser needs the whole session in the order it happened with
+        nothing elided. ``limit`` keeps the MOST RECENT rows — a session that
+        ran past the cap has drifted, and its later half is what a future
+        search is asking about — while still returning them chronologically,
+        because the arc is the thing being summarised.
+        """
+        sql = (
+            "SELECT id, title, body, created_at, platform_source "
+            "FROM observations WHERE session = ? AND doc_type = ? "
+            "ORDER BY created_at DESC, id ASC"
+        )
+        params: list[Any] = [session, doc_type]
+        if limit:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
+    def latest_session(self, *, doc_type: str) -> Optional[str]:
+        """The session that most recently recorded a row of this type.
+
+        What `mem summarise` with no `--session` means: the caller is a person
+        or a host that has just finished working, and naming the session they
+        were in is something neither can reliably do.
         """
         row = self._conn.execute(
-            "SELECT count(*) FROM observations WHERE session = ?", (session,)
+            "SELECT session FROM observations WHERE session IS NOT NULL "
+            "AND doc_type = ? ORDER BY created_at DESC LIMIT 1",
+            (doc_type,),
         ).fetchone()
-        return int(row[0])
+        return row[0] if row else None
 
     def stats(self) -> dict[str, Any]:
         row = self._conn.execute(

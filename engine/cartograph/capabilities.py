@@ -61,6 +61,7 @@ _EXAMPLES = {
     "mem add": "carto mem add --title 'Chose offset paging' --kind decision",
     "mem search": "carto mem search --query 'token budget' --limit 10",
     "mem status": "carto mem status --format json",
+    "mem summarise": "carto mem summarise --format json",
 }
 
 #: One line on when an agent should reach for each command. This is the part a
@@ -85,6 +86,7 @@ _WHEN = {
     "mem add": "Record something worth remembering across sessions — a decision, a dead end, a gotcha.",
     "mem search": "Recall what earlier sessions recorded, before re-deriving it. Check search_mode: keyword means embeddings did not participate.",
     "mem status": "Check whether this repository has a memory store and what is in it.",
+    "mem summarise": "Condense a finished session's captured prompts into one observation. Read summary_source: structural means no host agent wrote it.",
 }
 
 
