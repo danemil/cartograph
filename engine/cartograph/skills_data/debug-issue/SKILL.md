@@ -49,6 +49,9 @@ without reading the whole call path by hand.
    ```
    carto impact --files <file> --depth 2 --format json
    ```
+   The 20 most affected items, direct first; every affected file is in
+   `data.affected_files` regardless. `truncated: true` means more items exist
+   — `data.see_all` is the command that shows them.
 
 6. **Now read the code** — the specific functions steps 1–5 identified.
 

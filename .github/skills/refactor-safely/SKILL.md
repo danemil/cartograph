@@ -38,6 +38,15 @@ plan says "then carto applies the rename", the plan is wrong.
    carto query references_to <symbol> --format json
    carto impact --files <file> --depth 2 --format json
    ```
+   `impact` lists the 20 most affected items, direct dependents first. It
+   never shortens the scope: `data.totals` counts everything, and
+   `data.affected_files` names **every** affected file with how many of its
+   items are direct. If `truncated` is true you have not seen every item —
+   before changing a signature, list every direct dependent (they rank first,
+   so the limit is `data.totals.direct`), or run `data.see_all` for all of it:
+   ```
+   carto impact --files <file> --limit <totals.direct> --format json
+   ```
 
 3. **Check the tests** that will need updating in the same commit:
    ```

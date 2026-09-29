@@ -46,6 +46,9 @@ diffing against its base. Pick one scope and use it for every step below:
    ```
    carto impact --files <file> --depth 2 --format json
    ```
+   Ranked, direct dependents first, 20 by default. `data.affected_files` is
+   every affected file even when the item list is short; `data.totals` is
+   exact. Read `truncated` before concluding anything is unaffected.
 
 4. **Test coverage** for each high-risk symbol:
    ```
@@ -66,7 +69,8 @@ diffing against its base. Pick one scope and use it for every step below:
 ### Reading the output
 
 - `truncated_reason: "max_tokens"` → narrow the query.
-  `"page_limit"` → there are more results than you asked for.
+  `"page_limit"` → there are more results than you asked for; `impact` names
+  the command that lists them all in `data.see_all`.
 - `data.context_omitted` names supporting context dropped for budget.
 - A facet with `items: []` but a non-zero `total` was withheld, not empty.
 
