@@ -9,6 +9,9 @@ status: implemented
 `--max-tokens` is accepted on every agent-facing command. This is what it
 promises and how it keeps the promise.
 
+What a response costs *before* any budget applies — compact rows, one-line
+summaries — is in `compact-output.md`.
+
 ## The promise
 
 > **Either the response fits the budget, or it says on its face that it does not.**

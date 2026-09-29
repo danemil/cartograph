@@ -14,7 +14,7 @@ below, then pick up **Next task**.
 ```bash
 cd /Users/emidan/work/cartograph
 ./scripts/verify.sh
-# expect: 340 envelope checks, 265 skills checks, 12/12 copies, "all green"
+# expect: 364 envelope checks, 273 skills checks, 12/12 copies, "all green"
 ```
 
 If that passes, everything described here is true. If it does not, trust the
@@ -127,6 +127,16 @@ tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
 | 4 | Claude Code and other non-Copilot tools | **Remove all non-Copilot support** | Summariser host, `.claude/settings.json` hooks, and the inherited install paths for other tools (Cursor, Codex, Gemini, CodeBuddy, Qoder, OpenCode, …) and their tests. |
 | 4b | The dormant MCP server (`carto serve`, `carto mcp`, `--with-mcp`) | **Remove it** | MCP is banned in the target environment. Drops `fastmcp` and the 7 test modules that import it |
 
+### The plan, as it now stands
+
+| Step | What | State |
+|---|---|---|
+| 1 | Removals — decisions 4 and 4b | **done** (`9a1ad15`, `353e57b`) |
+| 1b | Narrow-lookup fix — `large-functions` answers with functions, compact rows, one-line summaries, skills say when `wc`/`find`/`grep` are cheaper | **done** (below) |
+| 2 | Exclude repo files locally — decision 3 | next |
+| 3 | VS Code language models as the summary fallback — decision 1 | |
+| 4 | Bundle the embedding model — decision 2 | |
+
 ## Done — decisions 4 and 4b
 
 - **4b (`9a1ad15`).** `carto serve`, `carto mcp`, `--with-mcp`, `main.py`,
@@ -147,6 +157,30 @@ tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
   configs — so `.claude/settings.json` hooks and the pre-commit hook written by
   earlier `install.sh`/`install.ps1` runs (`--platform claude`) are left for
   the person to delete.
+
+## Done — step 1b, the narrow-lookup fix
+
+A measured Copilot session found `carto large-functions` costing ~6x
+`find | xargs wc -l | sort` and returning no functions: 15 File, 4 Class,
+1 Test, topped by a generated 14,726-line `.d.ts`. Design and every number:
+**`docs/design/compact-output.md`**.
+
+- `7382381` — compact rows by default for list commands (`compact.py`, the
+  one place a row is shortened); `--detail full` for the whole row. The
+  repo-relative conformance check now anchors each field of a row: under the
+  old check, rows written before relativising still passed.
+- `6f251b4` — `large-functions` defaults to `Function` (methods included; the
+  graph has no Method kind), `--kind` repeats to widen, generated and `.d.ts`
+  files excluded and counted, `--include-generated` to rank them.
+- `1cdd2ca` — one-line summaries for `impact` and `review-context`.
+- `27081cc` — skills say when a shell command is cheaper than carto.
+
+Headline, claude-mem (991 files), default invocation: `large-functions
+--min-lines 80 --limit 20` 10,897 → 2,577 chars (2,725 → 645 tokens), now
+functions; `flows --limit 20` 19,465 → 2,223; `communities` 13,202 → 1,157;
+`review-context` 45,476 → 19,048. **Still open:** `impact` defaults to 500
+results plus every connecting edge — 1.36 MB → 506 KB, still unusable by an
+agent. It needs a lower default and an edge bound, which is a tool change.
 
 ## NEXT TASK
 
