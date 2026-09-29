@@ -62,6 +62,7 @@ _EXAMPLES = {
     "mem search": "carto mem search --query 'token budget' --limit 10",
     "mem status": "carto mem status --format json",
     "mem summarise": "carto mem summarise --format json",
+    "mem sync": "carto mem sync --summarise --format json",
 }
 
 #: One line on when an agent should reach for each command. This is the part a
@@ -87,6 +88,7 @@ _WHEN = {
     "mem search": "Recall what earlier sessions recorded, before re-deriving it. Check search_mode: keyword means embeddings did not participate.",
     "mem status": "Check whether this repository has a memory store and what is in it.",
     "mem summarise": "Condense a finished session's captured prompts into one observation. Read summary_source: structural means no host agent wrote it.",
+    "mem sync": "Bring memory up to date from Copilot's own logs when hooks may not have fired; the result says per host whether capture came from hooks or logs.",
 }
 
 

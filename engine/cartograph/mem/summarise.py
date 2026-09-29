@@ -37,7 +37,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from . import ingest as _ingest
 from . import store as _store
@@ -452,24 +452,25 @@ def summarise(
 def summarise_pending(
     repo_root: Path,
     *,
-    exclude: Optional[str] = None,
+    exclude: "str | Iterable[str] | None" = None,
     project: Optional[str] = None,
     use_host: bool = True,
 ) -> list[dict[str, Any]]:
     """Summarise the sessions that ended without anything saying so.
 
     One :func:`summarise` result per session attempted, most recent first, at
-    most :data:`MAX_PENDING`. *exclude* is the session that is starting now:
-    it has barely begun, and summarising it would spend the one summary it is
-    allowed before it has said anything.
+    most :data:`MAX_PENDING`. *exclude* is the session starting now, or the
+    sessions whose logs are still changing: they have not finished, and
+    summarising one would spend the one summary it is allowed on part of it.
     """
+    excluded = [exclude] if isinstance(exclude, str) else list(exclude or ())
     path = _store.db_path(repo_root, create=False)
     with _store.MemoryStore(path) as memory:
         sessions = memory.unsummarised_sessions(
             source_type=PROMPT_DOC_TYPE,
             summary_type=SESSION_DOC_TYPE,
             min_rows=MIN_PROMPTS,
-            exclude=exclude,
+            exclude=excluded,
             limit=MAX_PENDING,
         )
     return [

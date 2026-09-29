@@ -522,6 +522,16 @@ class MemoryStore:
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(row) for row in reversed(rows)]
 
+    def get_meta(self, key: str) -> Optional[str]:
+        row = self._conn.execute("SELECT value FROM mem_meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO mem_meta(key, value) VALUES (?, ?)", (key, value)
+        )
+        self._conn.commit()
+
     def has_document(self, session: str, body: str, *, doc_type: str) -> bool:
         """Whether this session already recorded exactly this body.
 
@@ -543,7 +553,7 @@ class MemoryStore:
         source_type: str,
         summary_type: str,
         min_rows: int,
-        exclude: Optional[str] = None,
+        exclude: Iterable[str] = (),
         limit: int,
     ) -> list[str]:
         """Sessions with at least *min_rows* of *source_type* and no *summary_type* row.
@@ -552,18 +562,17 @@ class MemoryStore:
         search for what they did last, and the per-run bound should spend
         itself there rather than on the oldest backlog.
         """
+        excluded = list(exclude)
         sql = (
             "SELECT session FROM observations WHERE session IS NOT NULL "
             "AND doc_type = ? "
-            + ("AND session != ? " if exclude else "")
+            + (f"AND session NOT IN ({', '.join('?' * len(excluded))}) " if excluded else "")
             + "AND session NOT IN (SELECT session FROM observations "
             "WHERE doc_type = ? AND session IS NOT NULL) "
             "GROUP BY session HAVING count(*) >= ? "
             "ORDER BY max(created_at) DESC LIMIT ?"
         )
-        params: list[Any] = [source_type]
-        if exclude:
-            params.append(exclude)
+        params: list[Any] = [source_type, *excluded]
         params += [summary_type, int(min_rows), int(limit)]
         return [row[0] for row in self._conn.execute(sql, params).fetchall()]
 

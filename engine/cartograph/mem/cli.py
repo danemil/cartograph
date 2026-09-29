@@ -22,7 +22,7 @@ from . import store as _store
 #: Named here so the dispatch, the catalogue and the pageable-collection table
 #: all spell the operation the same way. It is also the `tool` field an agent
 #: sees, which the envelope schema permits to carry a space.
-COMMANDS = ("mem add", "mem search", "mem status", "mem summarise")
+COMMANDS = ("mem add", "mem search", "mem status", "mem summarise", "mem sync")
 
 
 def add_parser(sub: Any) -> argparse.ArgumentParser:
@@ -34,7 +34,7 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     """
     mem_cmd = sub.add_parser("mem", help="Recorded observations: add, search, inspect")
     mem_sub = mem_cmd.add_subparsers(
-        dest="mem_command", metavar="{add,search,status,summarise}"
+        dest="mem_command", metavar="{add,search,status,summarise,sync}"
     )
     # Without this, `carto mem` alone parses cleanly and dispatches to nothing.
     # Required makes argparse route it through _ContractParser.error, which is
@@ -107,6 +107,7 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     )
 
     from . import summarise as _summarise
+    from . import sync as _sync
 
     summarise_cmd = mem_sub.add_parser(
         "summarise",
@@ -138,7 +139,30 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
         ),
     )
 
-    for command in (add_cmd, search_cmd, status_cmd, summarise_cmd):
+    sync_cmd = mem_sub.add_parser(
+        "sync",
+        help=(
+            "Import prompts from Copilot's own conversation logs that no hook "
+            "recorded, and report whether hooks are firing"
+        ),
+    )
+    sync_cmd.add_argument(
+        "--summarise", action="store_true",
+        help=(
+            "Afterwards, summarise sessions whose logs have been quiet for "
+            f"{_sync.SETTLE_SECONDS // 60} minutes"
+        ),
+    )
+    sync_cmd.add_argument(
+        "--vscode-user-dir", dest="vscode_user_dirs", action="append", default=None,
+        help="A VS Code User directory to read Chat logs from (repeatable; auto-detected)",
+    )
+    sync_cmd.add_argument(
+        "--no-host-agent", dest="no_host_agent", action="store_true",
+        help="With --summarise: write structural summaries without calling a host agent",
+    )
+
+    for command in (add_cmd, search_cmd, status_cmd, summarise_cmd, sync_cmd):
         command.add_argument(
             "--project", default=None,
             help="Project name (defaults to the repository directory)",
@@ -200,6 +224,29 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
             "summary": f"Recorded observation {observation['id']}",
             "observation": observation,
         }
+        _emit_tool_result(
+            args, result, command=command, provenance=provenance, repo_root=repo_root
+        )
+        return
+
+    if args.mem_command == "sync":
+        # Before the store check: sync is what creates the store on a machine
+        # where hooks never ran, so "no store yet" is its normal starting point.
+        from . import sync as _sync
+
+        result = _sync.sync(
+            repo_root,
+            user_dirs=[Path(d).expanduser() for d in args.vscode_user_dirs]
+            if args.vscode_user_dirs else None,
+            project=args.project,
+            summarise_sessions=args.summarise,
+            use_host=not args.no_host_agent,
+        )
+        synced = _store.db_path(repo_root, create=False)
+        provenance = None
+        if synced.exists():
+            with _store.MemoryStore(synced) as memory:
+                provenance = memory.provenance()
         _emit_tool_result(
             args, result, command=command, provenance=provenance, repo_root=repo_root
         )
@@ -320,4 +367,15 @@ def _status_result(
     }
     if reason:
         result["semantic_search_unavailable"] = reason
+    # How prompts reached the store, per host, from the last `mem sync` that saw
+    # any: "hooks" when every logged prompt was already recorded, "logs" when
+    # some were not — hooks blocked or not firing, and the logs carried it.
+    from . import sync as _sync
+
+    for host, stats in _sync.last_status(memory).items():
+        result[f"capture_{host.replace('-', '_')}"] = (
+            f"{stats.get('capture', 'unknown')} "
+            f"({stats.get('imported', 0)} imported, "
+            f"{stats.get('already_recorded', 0)} already recorded, at {stats.get('at', '?')})"
+        )
     return result
