@@ -10,9 +10,15 @@ from typing import Any
 from ..config_keys import normalize_spring_config_key
 from ..context_savings import attach_context_savings, estimate_file_tokens
 from ..embeddings import EmbeddingStore
+from ..compact import display_name
 from ..graph import GraphNode, GraphStore, _sanitize_name, edge_to_dict, node_to_dict
 from ..hints import generate_hints, get_session
-from ..incremental import get_changed_files, get_db_path, get_staged_and_unstaged
+from ..incremental import (
+    get_changed_files,
+    get_db_path,
+    get_staged_and_unstaged,
+    is_generated_file,
+)
 from ..parser import normalize_file_path
 from ..repo_paths import relativise
 from ..search import hybrid_search
@@ -28,6 +34,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Tool 2: get_impact_radius
 # ---------------------------------------------------------------------------
+
+#: What `large-functions` ranks unless told otherwise. Methods are Function
+#: nodes with a parent, so they are included; File and Class nodes are not,
+#: because a file or class always outranks the functions inside it and the
+#: question asked was about functions.
+LARGE_DEFAULT_KINDS = ("Function",)
 
 _QUERY_PATTERNS = {
     "callers_of": "Find all functions that call a given function",
@@ -898,37 +910,52 @@ def list_graph_stats(repo_root: str | None = None) -> dict[str, Any]:
 
 def find_large_functions(
     min_lines: int = 50,
-    kind: str | None = None,
+    kind: str | list[str] | tuple[str, ...] | None = None,
     file_path_pattern: str | None = None,
     limit: int = 50,
     repo_root: str | None = None,
+    include_generated: bool = False,
 ) -> dict[str, Any]:
-    """Find functions, classes, or files exceeding a line-count threshold.
+    """Find functions (methods included) exceeding a line-count threshold.
 
     Useful for identifying decomposition targets, code-quality audits,
     and enforcing size limits during code review.
 
     Args:
         min_lines: Minimum line count to flag (default: 50).
-        kind: Filter by node kind: Function, Class, File, or Test.
+        kind: Node kind or kinds to rank: Function, Class, File, Test, Type.
+            Defaults to Function, which covers methods — the graph has no
+            separate Method kind; a method is a Function with a parent.
         file_path_pattern: Filter by file path substring (e.g. "components/").
         limit: Maximum results (default: 50).
         repo_root: Repository root path. Auto-detected if omitted.
+        include_generated: Rank generated, vendored and declaration files too.
 
     Returns:
         Oversized nodes with line counts, ordered largest first.
     """
+    kinds = [kind] if isinstance(kind, str) else list(kind or LARGE_DEFAULT_KINDS)
     store, root = _get_store(repo_root)
     try:
+        # Uncapped, because the cap applies after exclusion: capping first
+        # would return a short page whenever a generated file ranked high,
+        # and could not say how many were set aside.
         nodes = store.get_nodes_by_size(
             min_lines=min_lines,
-            kind=kind,
+            kind=kinds,
             file_path_pattern=file_path_pattern,
-            limit=limit,
+            limit=None,
         )
 
         results = []
+        excluded = 0
         for n in nodes:
+            rel = relativise(n.file_path, root)
+            if not include_generated and is_generated_file(rel):
+                excluded += 1
+                continue
+            if len(results) >= limit:
+                continue
             d = node_to_dict(n)
             d["line_count"] = (
                 (n.line_end - n.line_start + 1)
@@ -937,37 +964,38 @@ def find_large_functions(
             )
             # Make file_path relative for readability. POSIX-shaped, like the
             # rest of graph identity — see parser.normalize_file_path.
-            d["relative_path"] = relativise(n.file_path, root)
+            d["relative_path"] = rel
             results.append(d)
 
-        summary_parts = [
-            f"Found {len(results)} node(s) with >= {min_lines} lines"
-            + (f" (kind={kind})" if kind else "")
-            + (f" matching '{file_path_pattern}'" if file_path_pattern else "")
-            + ":",
-        ]
-        for r in results[:10]:
-            # A File node's name is its own path, which the parenthetical
-            # already carries; printing it whole repeats the checkout prefix
-            # for nothing. The leaf is what distinguishes the row.
-            label = (
-                r["relative_path"].rsplit("/", 1)[-1]
-                if r["kind"] == "File"
-                else r["name"]
+        noun = "functions" if kinds == ["Function"] else "/".join(kinds) + " nodes"
+        scope = f" matching '{file_path_pattern}'" if file_path_pattern else ""
+        # One line. The rows are the list; a summary that restates them costs
+        # as much again and says nothing the rows do not.
+        if results:
+            top = results[0]
+            summary = (
+                f"{len(results)} {noun} >= {min_lines} lines{scope}; largest: "
+                f"{display_name(top) or top['relative_path']} ({top['line_count']} lines)"
             )
-            summary_parts.append(
-                f"  {r['line_count']:>4} lines | {r['kind']:>8} | "
-                f"{label} ({r['relative_path']}:{r['line_start']})"
-            )
-        if len(results) > 10:
-            summary_parts.append(f"  ... and {len(results) - 10} more")
-
-        return {
+        else:
+            summary = f"No {noun} >= {min_lines} lines{scope}"
+        response: dict[str, Any] = {
             "status": "ok",
-            "summary": "\n".join(summary_parts),
+            "summary": summary,
             "total_found": len(results),
             "min_lines": min_lines,
             "results": results,
         }
+        if excluded:
+            summary += (
+                f"; {excluded} in generated or declaration files not shown "
+                "(--include-generated to include them)"
+            )
+            response["summary"] = summary
+            response["excluded"] = {
+                "generated_files": excluded,
+                "include_with": "--include-generated",
+            }
+        return response
     finally:
         store.close()

@@ -77,7 +77,7 @@ _WHEN = {
     "communities": "See how the codebase clusters into related groups.",
     "community": "Read one cluster in detail.",
     "architecture": "Get a high-level map before exploring an unfamiliar codebase.",
-    "large-functions": "Find oversized functions worth refactoring or reviewing closely.",
+    "large-functions": "Find oversized functions and methods worth refactoring. For the largest files, wc -l is cheaper.",
     "refactor": "Preview a rename or signature change across the graph. Previews only.",
     "build": "Create the graph. Required once before anything else works.",
     "update": "Refresh the graph after edits. Cheaper than a rebuild.",

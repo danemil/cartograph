@@ -735,6 +735,7 @@ def _run_graph_tool_command(
             file_path_pattern=args.path,
             limit=args.limit,
             repo_root=root,
+            include_generated=args.include_generated,
         )
     else:
         result = tools.refactor_func(
@@ -1598,12 +1599,25 @@ def main() -> None:
     )
     architecture_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 
-    large_cmd = sub.add_parser("large-functions", help="Find oversized graph nodes")
+    large_cmd = sub.add_parser(
+        "large-functions", help="Find oversized functions and methods",
+    )
     large_cmd.add_argument("--min-lines", type=_positive_int, default=50)
     large_cmd.add_argument(
         "--kind",
-        choices=["Function", "Class", "File", "Test"],
+        choices=["Function", "Class", "File", "Test", "Type"],
+        # Repeated rather than comma-joined, so each value is checked against
+        # the choices by argparse and by the skills checker alike. No list
+        # default: argparse appends to a mutable default instead of replacing it.
+        action="append",
         default=None,
+        help="Kind to rank; repeat to widen (default: Function, methods included)",
+    )
+    large_cmd.add_argument(
+        "--include-generated",
+        action="store_true",
+        dest="include_generated",
+        help="Also rank generated, vendored and declaration (.d.ts) files",
     )
     large_cmd.add_argument("--path", default=None, help="File-path substring filter")
     large_cmd.add_argument("--limit", type=_positive_int, default=50)

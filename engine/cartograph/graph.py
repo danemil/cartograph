@@ -13,7 +13,7 @@ import os
 import sqlite3
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -1729,18 +1729,19 @@ class GraphStore:
         self,
         min_lines: int = 50,
         max_lines: int | None = None,
-        kind: str | None = None,
+        kind: str | Sequence[str] | None = None,
         file_path_pattern: str | None = None,
-        limit: int = 50,
+        limit: int | None = 50,
     ) -> list[GraphNode]:
         """Find nodes within a line-count range, ordered largest first.
 
         Args:
             min_lines: Minimum line count threshold (inclusive).
             max_lines: Maximum line count threshold (inclusive). None = no upper bound.
-            kind: Filter by node kind (Function, Class, File, etc.).
+            kind: Filter by node kind (Function, Class, File, etc.), or several.
             file_path_pattern: SQL LIKE pattern to filter by file path.
-            limit: Maximum results to return.
+            limit: Maximum results to return. None = no limit, for a caller
+                that filters further and must apply the cap itself.
 
         Returns:
             List of GraphNode objects, ordered by line count descending.
@@ -1756,14 +1757,16 @@ class GraphStore:
         if max_lines is not None:
             conditions.append("(line_end - line_start + 1) <= ?")
             params.append(max_lines)
-        if kind:
-            conditions.append("kind = ?")
-            params.append(kind)
+        kinds = [kind] if isinstance(kind, str) else list(kind or ())
+        if kinds:
+            conditions.append(f"kind IN ({', '.join('?' * len(kinds))})")
+            params.extend(kinds)
         if file_path_pattern:
             conditions.append("file_path LIKE ?")
             params.append(f"%{file_path_pattern}%")
 
-        params.append(limit)
+        # SQLite reads a negative LIMIT as "no limit".
+        params.append(-1 if limit is None else limit)
         where = " AND ".join(conditions)
         rows = self._conn.execute(
             f"SELECT * FROM nodes WHERE {where} "  # nosec B608

@@ -6,6 +6,7 @@ Every one is a preview: nothing here writes to a source file.
 
 from __future__ import annotations
 
+import fnmatch
 import functools
 import logging
 import re
@@ -14,6 +15,7 @@ from typing import Any, Optional, Union
 
 from .flows import _has_framework_decorator, _matches_entry_name
 from .graph import GraphStore, _sanitize_name
+from .incremental import DECLARATION_FILE_PATTERNS
 
 logger = logging.getLogger(__name__)
 
@@ -323,8 +325,8 @@ def find_dead_code(
         if node.is_test or _is_test_file(node.file_path):
             continue
 
-        # Skip ambient type declarations (.d.ts) — they describe external APIs.
-        if node.file_path.endswith(".d.ts"):
+        # Skip ambient type declarations — they describe external APIs.
+        if any(fnmatch.fnmatch(node.file_path, p) for p in DECLARATION_FILE_PATTERNS):
             continue
 
         # Skip dunder methods -- invoked by runtime, never have explicit callers.

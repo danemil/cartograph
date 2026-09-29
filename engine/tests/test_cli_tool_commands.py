@@ -83,9 +83,11 @@ from cartograph import cli
             "find_large_functions",
             {
                 "min_lines": 80,
-                "kind": "Class",
+                # --kind repeats to widen, so a single value arrives as a list.
+                "kind": ["Class"],
                 "file_path_pattern": None,
                 "limit": 4,
+                "include_generated": False,
             },
         ),
         (

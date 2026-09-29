@@ -200,6 +200,23 @@
       },
       "expect_repo_relative": true
     },
+    "large-functions": {
+      "args": [
+        "large-functions",
+        "--repo",
+        ".",
+        "--min-lines",
+        "80",
+        "--limit",
+        "5"
+      ],
+      "expect": "ok",
+      "expect_page": {
+        "limit": 5,
+        "result_count": 5
+      },
+      "expect_repo_relative": true
+    },
     "dead-code-no-graph": {
       "args": [
         "dead-code",

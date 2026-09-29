@@ -199,6 +199,27 @@ DEFAULT_IGNORE_PATTERNS = [
     "*.db-wal",
 ]
 
+#: Type declaration files. They are parsed on purpose — an interface is what
+#: callers depend on (see ``parser._CLASS_TYPES``) — but they are usually
+#: emitted by a compiler or a tool, and they have no bodies, so they are never
+#: the answer to "which code is too large". One measured example is a
+#: 14,726-line ``worker-configuration.d.ts`` topping a size ranking.
+DECLARATION_FILE_PATTERNS = ("*.d.ts", "*.d.mts", "*.d.cts")
+
+
+def is_generated_file(rel_path: str) -> bool:
+    """Whether a repo-relative path is generated, vendored or a declaration file.
+
+    Reuses the build's own ignore list rather than keeping a second one. A
+    graph built before a pattern was added, or with a ``.cartographignore``
+    that re-includes one, can still hold such files, and a ranking should not
+    be topped by them either way.
+    """
+    return _should_ignore(
+        rel_path, [*DEFAULT_IGNORE_PATTERNS, *DECLARATION_FILE_PATTERNS]
+    )
+
+
 # Build-output directories that ``DEFAULT_IGNORE_PATTERNS`` only anchors at the
 # repository root.  A nested copy is ignored as well, but only when a sibling
 # manifest proves the directory is that module's build output — ``moduleA/pom.xml``
