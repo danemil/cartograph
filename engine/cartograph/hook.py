@@ -162,44 +162,36 @@ def _built_on_another_branch(repo_root: Path, db_path: Path) -> bool:
     return bool(current) and current != built_on
 
 
-def update_argv(repo_root: Path) -> list[str]:
-    """The refresh to run detached.
+def self_argv(*args: str) -> list[str]:
+    """*args* as a command line that re-enters this same Cartograph.
 
-    Addressed through ``sys.executable -m`` rather than the ``carto`` script,
-    so it works identically whether the hook was reached through the console
-    entry point or through ``python -m cartograph``, and without depending on
-    what is on the host's PATH by the time the child starts.
+    Addressed through ``sys.executable`` rather than the ``carto`` script, so
+    the child does not depend on what is on the host's PATH by the time it
+    starts. Unfrozen that is an interpreter, reached with ``-m cartograph``. In
+    a PyInstaller build it is the ``carto`` binary itself, which has no ``-m``:
+    argparse reads ``cartograph`` as a subcommand, exits 1 behind DEVNULL, and
+    the detached work silently never happens. That shipped once — every
+    file-edit refresh in the v0.1.0 ``.vsix`` was a no-op — and it is the same
+    defect class :data:`~cartograph.constants.GRAMMAR_PROBE_FLAG` exists for.
     """
-    return [
-        sys.executable,
-        "-m",
-        "cartograph",
-        "update",
-        "--skip-flows",
-        "--repo",
-        str(repo_root),
-    ]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *args]
+    return [sys.executable, "-m", "cartograph", *args]
+
+
+def update_argv(repo_root: Path) -> list[str]:
+    """The refresh to run detached."""
+    return self_argv("update", "--skip-flows", "--repo", str(repo_root))
 
 
 def summarise_argv(repo_root: Path, session: str) -> list[str]:
     """The session summary to run detached.
 
-    Addressed the same way as :func:`update_argv`, and for the same reason. The
-    session is passed explicitly rather than left to be re-derived: by the time
-    a detached child starts, the latest prompt in the store may belong to
+    The session is passed explicitly rather than left to be re-derived: by the
+    time a detached child starts, the latest prompt in the store may belong to
     whatever the person opened next.
     """
-    return [
-        sys.executable,
-        "-m",
-        "cartograph",
-        "mem",
-        "summarise",
-        "--session",
-        session,
-        "--repo",
-        str(repo_root),
-    ]
+    return self_argv("mem", "summarise", "--session", session, "--repo", str(repo_root))
 
 
 def _session_status(repo_root: Path, _host: Optional[str] = None) -> int:

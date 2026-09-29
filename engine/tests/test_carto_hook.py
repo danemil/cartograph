@@ -275,6 +275,21 @@ def test_update_argv_does_not_depend_on_path(tmp_path):
     assert argv[:3] == [sys.executable, "-m", "cartograph"]
 
 
+@pytest.mark.parametrize(
+    "build", [hook.update_argv, lambda repo: hook.summarise_argv(repo, "s1")]
+)
+def test_a_frozen_build_reenters_its_own_binary(tmp_path, monkeypatch, build):
+    """A PyInstaller ``carto`` has no ``-m``: it reads ``cartograph`` as a
+    subcommand name and exits 1, behind DEVNULL, so the detached work never
+    happens and nothing says so."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    argv = build(tmp_path)
+
+    assert argv[0] == sys.executable
+    assert "-m" not in argv
+    assert argv[1] in {"update", "mem"}
+
+
 # --- Re-entrancy -----------------------------------------------------------
 
 
