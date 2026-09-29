@@ -689,6 +689,9 @@ def _run_graph_tool_command(
             repo_root=root,
             base=args.base,
         )
+        see_all = _impact_see_all(args, result, repo_root)
+        if see_all:
+            result["see_all"] = see_all
     elif args.command == "search":
         result = tools.semantic_search_nodes(
             query=args.query,
@@ -755,6 +758,31 @@ def _run_graph_tool_command(
     )
 
 
+def _impact_see_all(args, result: dict, repo_root: Path) -> "str | None":
+    """The command that lists every impacted item, when this response does not.
+
+    Written out whole rather than described, so an agent that needs the full
+    scope runs it instead of reconstructing it. ``--detail full`` because the
+    reason to want everything is usually the edges as well.
+    """
+    import shlex
+
+    from . import repo_paths as _paths
+
+    totals = result.get("totals") or {}
+    total = totals.get("items") or 0
+    if not result.get("truncated") or not total:
+        return None
+    files = [
+        _paths.relativise(f, repo_root) for f in result.get("changed_files") or []
+    ]
+    parts = ["carto", "impact", "--files", *files, "--depth", str(args.depth),
+             "--limit", str(total), "--detail", "full"]
+    if getattr(args, "repo", None):
+        parts += ["--repo", args.repo]
+    return " ".join(shlex.quote(p) for p in parts)
+
+
 #: Result keys that are list-shaped and therefore the natural pageable
 #: collection for their command. Contract amendment A8 allows at most ONE
 #: pageable collection per envelope — a cursor could not be interpreted
@@ -780,6 +808,13 @@ _PAGEABLE_COLLECTION: dict[str, tuple[str, ...]] = {
     # Keyed by the logical operation, not by args.command: all three `mem`
     # subcommands parse as command "mem", and only one of them pages.
     "mem search": ("items",),
+}
+
+#: Where a command reports the exact size of its pageable collection. Without
+#: one, a page that comes back full is the only hint of more, and a response
+#: holding every row at exactly the limit says `has_more` when there is none.
+_PAGE_TOTAL: dict[str, tuple[str, ...]] = {
+    "impact": ("totals", "items"),
 }
 
 #: Where argparse puts a result cap. The flag is spelled `--limit` on some
@@ -832,14 +867,20 @@ def _page_for(
         # would describe rows the caller already has.
         result[key] = result[key][offset:]
     items = result[key]
+    total: object = result
+    for part in _PAGE_TOTAL.get(command, ()):
+        total = total.get(part) if isinstance(total, dict) else None
+    if isinstance(total, int) and not isinstance(total, bool):
+        has_more = offset + len(items) < total
+    else:
+        # The tool truncates at the cap, so a full page means there may be
+        # more — and anything short of it is the whole answer.
+        has_more, total = len(items) >= limit, None
     return _env.Page(
         limit=limit,
-        # The tool truncates at the cap, so a full page means there may be
-        # more — and anything short of it is the whole answer. Cursor support
-        # lands with the paging implementation; this is honest about what can
-        # currently be told.
-        has_more=len(items) >= limit,
+        has_more=has_more,
         result_count=len(items),
+        total_estimated=total,
         # `collection` names the pageable list only when it is NOT the
         # conventional `data.items`. Emitting "items" would be noise.
         collection=None if key in ("items", "results") else key,
@@ -1544,7 +1585,16 @@ def main() -> None:
         help="Changed files (auto-detected when omitted)",
     )
     impact_cmd.add_argument("--depth", type=_non_negative_int, default=2)
-    impact_cmd.add_argument("--max-results", type=_positive_int, default=500)
+    # 20, not the 500 it was: every connecting edge of 500 nodes came to ~126k
+    # tokens on a 991-file repository. What the cap leaves out is still counted
+    # — see docs/design/compact-output.md, "impact". Spelled --limit, as on
+    # every other list command; it was --max-results.
+    impact_cmd.add_argument(
+        "--limit", type=_positive_int, default=20,
+        dest="max_results",
+        help="Most affected items listed, direct dependents first (the pageable "
+             "collection). Totals and the file list always cover every item",
+    )
     impact_cmd.add_argument("--base", default="HEAD~1")
     impact_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 

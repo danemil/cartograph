@@ -914,9 +914,13 @@ class TestWeightedImpactScoring:
         assert sql["impact_scores"][caller] == pytest.approx(0.6)
         assert sql["impact_scores"][indirect_caller] == pytest.approx(0.36)
         assert sql["impact_scores"][importer] == pytest.approx(0.3)
+        # Direct dependents rank first, whatever their score: the importer is
+        # one hop away and outranks a caller two calls away that scores more.
+        # See docs/design/compact-output.md, "impact".
         assert self._ordered_qns(sql) == [
-            caller, indirect_caller, importer,
+            caller, importer, indirect_caller,
         ]
+        assert sql["direct_qns"] == {caller, importer}
         assert sql["impact_scores"] == nx_result["impact_scores"]
         assert self._ordered_qns(sql) == self._ordered_qns(nx_result)
 

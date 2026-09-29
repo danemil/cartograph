@@ -217,6 +217,25 @@
       },
       "expect_repo_relative": true
     },
+    "impact": {
+      "args": [
+        "impact",
+        "--files",
+        "engine/cartograph/graph.py",
+        "--repo",
+        ".",
+        "--limit",
+        "3"
+      ],
+      "expect": "ok",
+      "expect_page": {
+        "collection": "impacted_nodes",
+        "limit": 3,
+        "result_count": 3,
+        "has_more": true
+      },
+      "expect_repo_relative": true
+    },
     "dead-code-no-graph": {
       "args": [
         "dead-code",

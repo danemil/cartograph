@@ -46,6 +46,18 @@ _JAVASCRIPT_LANGUAGE_FAMILY = ("javascript", "typescript", "tsx")
 _JAVASCRIPT_LANGUAGE_FAMILY_SET = frozenset(_JAVASCRIPT_LANGUAGE_FAMILY)
 
 
+def _impact_rank(scores: dict[str, float], direct: set[str]):
+    """Sort key for impacted nodes: direct first, then best-path score, then name.
+
+    One key for both traversal engines, so the order an agent is told about is
+    the order either of them produces. The name makes ties deterministic.
+    """
+    def key(node: "GraphNode") -> tuple[bool, float, str]:
+        qn = node.qualified_name
+        return (qn not in direct, -scores.get(qn, 0.0), qn)
+    return key
+
+
 def _compatible_edge_languages(language: str) -> tuple[str, ...]:
     """Return languages that can safely share unresolved bare edge targets."""
     normalized = language.casefold()
@@ -1353,10 +1365,13 @@ class GraphStore:
 
         Returns dict with:
           - changed_nodes: nodes in changed files
-          - impacted_nodes: reachable nodes ordered by best-path impact score
-          - impacted_files: unique set of affected files
-          - edges: connecting edges
+          - impacted_nodes: reachable nodes, direct (one hop) first, then by
+            best-path impact score, then by name; capped at ``max_nodes``
+          - impacted_files: unique set of files of the nodes kept
+          - edges: connecting edges among the seeds and the nodes kept
           - impact_scores: qualified name to best-path score
+          - total_impacted, direct_qns, file_counts (path, items, direct) and
+            edge_counts (by kind): over everything reachable, whatever the cap
         """
         if BFS_ENGINE == "networkx":
             return self._get_impact_radius_networkx(
@@ -1390,6 +1405,9 @@ class GraphStore:
                 "truncated": False,
                 "total_impacted": 0,
                 "impact_scores": {},
+                "direct_qns": set(),
+                "file_counts": [],
+                "edge_counts": {},
             }
 
         # Seed qualified names
@@ -1404,6 +1422,9 @@ class GraphStore:
                 "truncated": False,
                 "total_impacted": 0,
                 "impact_scores": {},
+                "direct_qns": set(),
+                "file_counts": [],
+                "edge_counts": {},
             }
 
         # Use a temp table for the seed set to keep the query plan efficient
@@ -1453,6 +1474,15 @@ class GraphStore:
                 "(node_qn TEXT PRIMARY KEY, score REAL NOT NULL)"
             )
             self._conn.execute(f"DELETE FROM {table}")  # nosec B608
+        # Nodes one hop from a seed. Kept apart from the score because a score
+        # mixes edge weight with distance: a direct importer (0.3) scores below
+        # a caller two calls away (0.36), and it is the direct one whose code
+        # breaks first when a signature changes.
+        self._conn.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS _impact_direct "
+            "(node_qn TEXT PRIMARY KEY)"
+        )
+        self._conn.execute("DELETE FROM _impact_direct")
 
         self._conn.execute(
             "INSERT INTO _impact_best (node_qn, score) "
@@ -1495,7 +1525,7 @@ class GraphStore:
             IMPACT_DIRECTION_INCOMING,
             IMPACT_SCORE_FLOOR,
         )
-        for _ in range(max_depth):
+        for hop in range(max_depth):
             self._conn.execute("DELETE FROM _impact_next")
             self._conn.execute(candidate_sql, candidate_params)
             self._conn.execute(
@@ -1505,6 +1535,13 @@ class GraphStore:
                 "WHERE b.node_qn = _impact_next.node_qn"
                 "), 0.0)"
             )
+            if hop == 0:
+                # Nothing but the seeds has a best score yet, so every node
+                # left here was reached in one hop.
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO _impact_direct (node_qn) "
+                    "SELECT node_qn FROM _impact_next"
+                )
             if self._conn.execute(
                 "SELECT 1 FROM _impact_next LIMIT 1"
             ).fetchone() is None:
@@ -1519,43 +1556,64 @@ class GraphStore:
                 "SELECT node_qn, score FROM _impact_next"
             )
 
-        # Fetch one sentinel beyond the public cap. Ghost endpoints remain in
-        # the frontier as bridges but cannot consume a result slot because the
-        # final selection joins the canonical nodes table.
-        rows = self._conn.execute(
-            "SELECT b.node_qn, b.score "
+        # Ghost endpoints remain in the frontier as bridges but cannot consume
+        # a result slot, or be counted, because everything below joins the
+        # canonical nodes table.
+        impacted_sql = (
             "FROM _impact_best b "
             "JOIN nodes n ON n.qualified_name = b.node_qn "
             "LEFT JOIN _impact_seeds s ON s.qn = b.node_qn "
+            "LEFT JOIN _impact_direct d ON d.node_qn = b.node_qn "
             "WHERE s.qn IS NULL "
             "AND n.extra NOT LIKE '%\"verilog_kind\"%' "
-            "ORDER BY b.score DESC, b.node_qn "
+        )
+        rows = self._conn.execute(  # nosec B608
+            "SELECT b.node_qn, b.score " + impacted_sql
+            + "ORDER BY (d.node_qn IS NOT NULL) DESC, b.score DESC, b.node_qn "
             "LIMIT ?",
-            (max_nodes + 1,),
+            (max_nodes,),
         ).fetchall()
-        truncated = len(rows) > max_nodes
-        if truncated:
-            total_impacted = self._conn.execute(
-                "SELECT COUNT(*) "
-                "FROM _impact_best b "
-                "JOIN nodes n ON n.qualified_name = b.node_qn "
-                "LEFT JOIN _impact_seeds s ON s.qn = b.node_qn "
-                "WHERE s.qn IS NULL "
-                "AND n.extra NOT LIKE '%\"verilog_kind\"%'"
-            ).fetchone()[0]
-        else:
-            total_impacted = len(rows)
-        kept_rows = rows[:max_nodes]
-        score_by_qn = {row[0]: float(row[1]) for row in kept_rows}
+        score_by_qn = {row[0]: float(row[1]) for row in rows}
+        direct_qns = {
+            row[0] for row in self._conn.execute(  # nosec B608
+                "SELECT b.node_qn " + impacted_sql + "AND d.node_qn IS NOT NULL"
+            )
+        }
+        # Per file over the whole reachable set, not the rows kept: a capped
+        # list is only safe to read if the files it leaves out are still named.
+        file_counts = [
+            (row[0], int(row[1]), int(row[2]))
+            for row in self._conn.execute(  # nosec B608
+                "SELECT n.file_path, COUNT(*), "
+                "SUM(d.node_qn IS NOT NULL) " + impacted_sql
+                + "GROUP BY n.file_path"
+            )
+        ]
+        total_impacted = sum(count for _, count, _ in file_counts)
+        truncated = total_impacted > len(rows)
+
+        # The edges the uncapped response would list, counted by kind.
+        self._conn.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS _impact_members "
+            "(qn TEXT PRIMARY KEY)"
+        )
+        self._conn.execute("DELETE FROM _impact_members")
+        self._conn.execute("INSERT INTO _impact_members SELECT qn FROM _impact_seeds")
+        self._conn.execute(  # nosec B608
+            "INSERT OR IGNORE INTO _impact_members SELECT b.node_qn " + impacted_sql
+        )
+        edge_counts = {
+            row[0]: int(row[1]) for row in self._conn.execute(
+                "SELECT e.kind, COUNT(*) FROM edges e "
+                "JOIN _impact_members ms ON ms.qn = e.source_qualified "
+                "JOIN _impact_members mt ON mt.qn = e.target_qualified "
+                "GROUP BY e.kind ORDER BY e.kind"
+            )
+        }
 
         changed_nodes = self._batch_get_nodes(seeds)
         impacted_nodes = self._batch_get_nodes(set(score_by_qn))
-        impacted_nodes.sort(
-            key=lambda node: (
-                -score_by_qn.get(node.qualified_name, 0.0),
-                node.qualified_name,
-            )
-        )
+        impacted_nodes.sort(key=_impact_rank(score_by_qn, direct_qns))
 
         impacted_files = list({n.file_path for n in impacted_nodes})
 
@@ -1577,6 +1635,9 @@ class GraphStore:
                 )
                 for node in impacted_nodes
             },
+            "direct_qns": direct_qns,
+            "file_counts": file_counts,
+            "edge_counts": edge_counts,
         }
 
     # -- NetworkX BFS version (legacy) ------------------------------------
@@ -1597,7 +1658,8 @@ class GraphStore:
         best: dict[str, float] = dict.fromkeys(seeds, 1.0)
         frontier = dict(best)
 
-        for _ in range(max_depth):
+        direct: set[str] = set()
+        for hop in range(max_depth):
             if not frontier:
                 break
             next_frontier: dict[str, float] = {}
@@ -1620,6 +1682,8 @@ class GraphStore:
                     if new_score > best.get(other_qn, 0.0):
                         best[other_qn] = new_score
                         next_frontier[other_qn] = new_score
+            if hop == 0:
+                direct = set(next_frontier) - seeds
             frontier = next_frontier
 
         changed_nodes = self._batch_get_nodes(seeds)
@@ -1629,14 +1693,22 @@ class GraphStore:
             node for node in impacted_nodes
             if not node.extra.get("verilog_kind")
         ]
-        impacted_nodes.sort(
-            key=lambda node: (
-                -best.get(node.qualified_name, 0.0),
-                node.qualified_name,
-            )
-        )
+        impacted_nodes.sort(key=_impact_rank(best, direct))
 
         total_impacted = len(impacted_nodes)
+        direct_qns = {n.qualified_name for n in impacted_nodes} & direct
+        per_file: dict[str, list[int]] = {}
+        for node in impacted_nodes:
+            counts = per_file.setdefault(node.file_path, [0, 0])
+            counts[0] += 1
+            counts[1] += node.qualified_name in direct_qns
+        file_counts = [(path, c[0], c[1]) for path, c in per_file.items()]
+        edge_counts: dict[str, int] = {}
+        members = seeds | {n.qualified_name for n in impacted_nodes}
+        for edge in self.get_edges_among(members):
+            edge_counts[edge.kind] = edge_counts.get(edge.kind, 0) + 1
+        edge_counts = dict(sorted(edge_counts.items()))
+
         truncated = total_impacted > max_nodes
         if truncated:
             impacted_nodes = impacted_nodes[:max_nodes]
@@ -1661,6 +1733,9 @@ class GraphStore:
                 )
                 for node in impacted_nodes
             },
+            "direct_qns": direct_qns,
+            "file_counts": file_counts,
+            "edge_counts": edge_counts,
         }
 
     def get_subgraph(self, qualified_names: list[str]) -> dict[str, Any]:

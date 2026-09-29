@@ -103,6 +103,27 @@ def node_row(
     return " | ".join(parts)
 
 
+def impact_row(node: dict[str, Any]) -> Any:
+    """``<direct|transitive> | <node row>``.
+
+    Direct means one hop from the change. It leads because it is the ranking's
+    first key and the thing an agent weighs first: a direct dependent breaks
+    when a signature changes; a transitive one may not.
+    """
+    row = node_row(node)
+    if not isinstance(row, str) or "direct" not in node:
+        return row
+    return f"{'direct' if node['direct'] else 'transitive'} | {row}"
+
+
+def file_count_row(entry: dict[str, Any]) -> Any:
+    """``<path> | <n> items[ (<d> direct)]``."""
+    if "file" not in entry or "items" not in entry:
+        return entry
+    row = f"{entry['file']} | {entry['items']} item{'s' if entry['items'] != 1 else ''}"
+    return f"{row} ({entry['direct']} direct)" if entry.get("direct") else row
+
+
 def handle_row(node: dict[str, Any]) -> Any:
     """``<kind> | <qualified name> | line <n>`` — for rows that exist to be passed back.
 
@@ -209,12 +230,18 @@ _SPECS: dict[str, _Spec] = {
     # is the store's implementation name ("fts"), which is the one spelling
     # the envelope exists to keep away from an agent.
     "search": _Spec(rows={("results",): node_row}, drop=("query", "search_mode")),
+    # Edges are the bulk of an impact response (2,507 of them, 84% of it, on
+    # one file of a 991-file repository) and `totals.edges` counts them;
+    # changed_nodes are the contents of the files the caller named, counted in
+    # `totals.changed_nodes`. `impacted_files` is `affected_files` without the
+    # counts, and the rest restate `totals`. `--detail full` keeps all of it.
     "impact": _Spec(
         rows={
-            ("changed_nodes",): node_row,
-            ("impacted_nodes",): node_row,
-            ("edges",): edge_row,
+            ("impacted_nodes",): impact_row,
+            ("affected_files",): file_count_row,
         },
+        drop=("changed_nodes", "edges", "impacted_files", "total_impacted",
+              "nodes_omitted"),
     ),
     "dead-code": _Spec(rows={("items",): node_row}),
     "flows": _Spec(rows={("flows",): flow_row}),

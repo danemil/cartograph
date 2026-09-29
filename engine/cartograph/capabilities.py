@@ -70,7 +70,7 @@ _EXAMPLES = {
 _WHEN = {
     "status": "Check whether a graph exists and is current, before relying on any other command.",
     "query": "Answer a structural question about one symbol or file — who calls it, what it imports, what tests cover it.",
-    "impact": "Find the blast radius of a change before making or reviewing it.",
+    "impact": "Find the blast radius of a change before making or reviewing it. Items are ranked, direct dependents first; totals and the file list always cover the whole radius, and data.see_all names the command that lists every item.",
     "search": "Find nodes by name or meaning when you do not know the exact symbol.",
     "flows": "See the execution flows the graph has detected.",
     "flow": "Read one execution flow end to end.",

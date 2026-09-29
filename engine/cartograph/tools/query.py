@@ -127,6 +127,42 @@ def _rank_disambiguation_candidates(
     return [node_to_dict(node) for node in sorted(candidates, key=score)]
 
 
+def _impact_summary(
+    changed_files: list[str], max_depth: int, totals: dict[str, Any],
+    *, shown: int, shown_direct: int,
+) -> str:
+    """One line that states the whole scope, and how much of it is listed.
+
+    Read first and sometimes read alone, so it must not let a short list pass
+    for the answer: the totals are exact, and when direct dependents outnumber
+    the rows it says so, with the limit that lists every one of them — direct
+    dependents rank first, so ``--limit <direct>`` is exactly that set.
+    """
+    label = (
+        Path(changed_files[0]).name if len(changed_files) == 1
+        else f"{len(changed_files)} changed files"
+    )
+    items, direct, files = totals["items"], totals["direct"], totals["files"]
+    if not items:
+        return (
+            f"{label}: nothing affected within {max_depth} hops "
+            f"({totals['changed_nodes']} nodes in the changed files)"
+        )
+    scope = (
+        f"{label}: {items} items affected within {max_depth} hops across "
+        f"{files} files ({direct} direct)"
+    )
+    if shown >= items:
+        return f"{scope}; all shown"
+    line = f"{scope}; showing top {shown}"
+    if shown_direct < direct:
+        line += (
+            f"; {direct} direct dependents; {shown_direct} shown; "
+            f"--limit {direct} lists them all"
+        )
+    return line
+
+
 def get_impact_radius(
     changed_files: list[str] | None = None,
     max_depth: int = 2,
@@ -141,14 +177,17 @@ def get_impact_radius(
         changed_files: Explicit list of changed file paths (relative to repo root).
                        If omitted, auto-detects from git diff.
         max_depth: How many hops to traverse in the graph (default: 2).
-        max_results: Maximum impacted nodes to return (default: 500).
+        max_results: Maximum impacted nodes to return (default: 500). Totals,
+            ``affected_files`` and ``impacted_files`` cover every impacted
+            node regardless.
         repo_root: Repository root path. Auto-detected if omitted.
         base: Git ref for auto-detecting changes (default: HEAD~1).
         detail_level: "standard" (full output) or "minimal" (summary only).
 
     Returns:
-        Changed nodes, impacted nodes, impacted files, connecting edges,
-        plus ``truncated`` flag and ``total_impacted`` count.
+        Changed nodes, impacted nodes (direct first, then by impact score),
+        every impacted file with its counts, connecting edges, exact
+        ``totals``, plus ``truncated`` flag and ``total_impacted`` count.
     """
     if isinstance(max_results, bool) or max_results < 1:
         raise ValueError("max_results must be an integer greater than or equal to 1")
@@ -164,6 +203,10 @@ def get_impact_radius(
             return {
                 "status": "ok",
                 "summary": "No changed files detected.",
+                "totals": {
+                    "items": 0, "direct": 0, "files": 0,
+                    "changed_nodes": 0, "edges": {},
+                },
                 "changed_nodes": [],
                 "impacted_nodes": [],
                 "impacted_files": [],
@@ -179,6 +222,7 @@ def get_impact_radius(
         )
 
         impact_scores = result.get("impact_scores", {})
+        direct_qns = result.get("direct_qns", set())
         changed_dicts = [node_to_dict(n) for n in result["changed_nodes"]]
         impacted_dicts = []
         for node in result["impacted_nodes"]:
@@ -186,19 +230,26 @@ def get_impact_radius(
             score = impact_scores.get(node.qualified_name)
             if score is not None:
                 node_dict["impact_score"] = score
+            node_dict["direct"] = node.qualified_name in direct_qns
             impacted_dicts.append(node_dict)
         edge_dicts = [edge_to_dict(e) for e in result["edges"]]
         truncated = result["truncated"]
         total_impacted = result["total_impacted"]
-
-        # One line: the lists below are the detail, and a bulleted summary
-        # above them read as a second copy of it.
-        summary = (
-            f"Blast radius for {len(changed_files)} changed file(s): "
-            f"{len(changed_dicts)} nodes directly changed; "
-            f"{total_impacted if truncated else len(impacted_dicts)} nodes impacted "
-            f"within {max_depth} hops in {len(result['impacted_files'])} other files"
-            + (_shown_of(len(impacted_dicts), total_impacted) if truncated else "")
+        # Files with a direct dependent first, then by how much of each file is
+        # affected: the order in which they are worth opening.
+        file_counts = sorted(
+            result.get("file_counts", []), key=lambda f: (-f[2], -f[1], f[0]),
+        )
+        totals = {
+            "items": total_impacted,
+            "direct": len(direct_qns),
+            "files": len(file_counts),
+            "changed_nodes": len(changed_dicts),
+            "edges": result.get("edge_counts", {}),
+        }
+        summary = _impact_summary(
+            changed_files, max_depth, totals, shown=len(impacted_dicts),
+            shown_direct=sum(1 for n in impacted_dicts if n["direct"]),
         )
 
         # "Nothing is impacted" and "nothing about these files is indexed"
@@ -227,7 +278,7 @@ def get_impact_radius(
                 "status": "ok",
                 "summary": summary,
                 "risk": risk,
-                "impacted_file_count": len(result["impacted_files"]),
+                "impacted_file_count": totals["files"],
                 "key_entities": key_entities,
                 "truncated": truncated,
                 "nodes_omitted": max(0, total_impacted - len(impacted_dicts)),
@@ -240,10 +291,17 @@ def get_impact_radius(
         response: dict[str, Any] = {
             "status": "ok",
             "summary": summary,
+            "totals": totals,
             "changed_files": changed_files,
             "changed_nodes": changed_dicts,
             "impacted_nodes": impacted_dicts,
-            "impacted_files": result["impacted_files"],
+            # Every affected file, whatever the cap on impacted_nodes, so the
+            # scope of a change is never shortened along with its list.
+            "impacted_files": [path for path, _, _ in file_counts],
+            "affected_files": [
+                {"file": path, "items": items, "direct": direct}
+                for path, items, direct in file_counts
+            ],
             "edges": edge_dicts,
             "truncated": truncated,
             "total_impacted": total_impacted,

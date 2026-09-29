@@ -35,7 +35,7 @@ from cartograph import cli
             },
         ),
         (
-            ["impact", "--files", "a.py", "b.py", "--depth", "3", "--max-results", "20"],
+            ["impact", "--files", "a.py", "b.py", "--depth", "3", "--limit", "20"],
             "get_impact_radius",
             {
                 "changed_files": ["a.py", "b.py"],

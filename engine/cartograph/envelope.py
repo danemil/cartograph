@@ -208,6 +208,7 @@ def _with_size(env: dict[str, Any]) -> dict[str, Any]:
 _CONTEXT_VALUE = {
     "changed_files": 3,   # the diff itself: smallest and most valuable
     "impacted_files": 2,
+    "affected_files": 2,  # impact's file list with counts: its scope guarantee
     "changed_nodes": 1,
     "edges": 0,
 }

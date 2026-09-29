@@ -203,7 +203,7 @@ def test_impact_summary_is_one_line(sized_repo):
 
     result = get_impact_radius(changed_files=["src/store.ts"], repo_root=str(sized_repo))
     assert "\n" not in result["summary"]
-    assert result["summary"].startswith("Blast radius for 1 changed file(s): ")
+    assert result["summary"].startswith("store.ts: ")
 
 
 def test_review_context_summary_does_not_repeat_its_guidance(sized_repo):
