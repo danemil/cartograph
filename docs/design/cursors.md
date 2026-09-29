@@ -159,11 +159,13 @@ pinned.
 **Known limitation, not fixed here.** The tools have no offset of their own, so
 page 2 is served by fetching `offset + limit` rows and discarding the head.
 Where a tool's row limit only truncates a ranked list, that is exact. Where it
-caps work *before* ranking — `impact`'s `--max-results` bounds the traversal —
-a wider fetch can explore more of the graph, so the first `offset` rows of the
-wider fetch need not match the rows page 1 showed. Paging `impact` deeply can
-therefore repeat or miss a row. Closing this needs an offset parameter on the
-tools themselves.
+caps work *before* ranking, a wider fetch can explore more of the graph, so the
+first `offset` rows of the wider fetch need not match the rows page 1 showed,
+and deep paging can repeat or miss a row. Closing that needs an offset
+parameter on the tools themselves. `impact` was recorded here as such a case;
+it is not: both traversal engines explore the whole radius and apply `--limit`
+to the finished ranking, which is a total order (direct first, score, then
+qualified name), so its pages are exact.
 
 ---
 

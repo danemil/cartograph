@@ -14,7 +14,7 @@ below, then pick up **Next task**.
 ```bash
 cd /Users/emidan/work/cartograph
 ./scripts/verify.sh
-# expect: 364 envelope checks, 273 skills checks, 12/12 copies, "all green"
+# expect: 378 envelope checks, 280 skills checks, 12/12 copies, "all green"
 ```
 
 If that passes, everything described here is true. If it does not, trust the
@@ -133,6 +133,7 @@ tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
 |---|---|---|
 | 1 | Removals — decisions 4 and 4b | **done** (`9a1ad15`, `353e57b`) |
 | 1b | Narrow-lookup fix — `large-functions` answers with functions, compact rows, one-line summaries, skills say when `wc`/`find`/`grep` are cheaper | **done** (below) |
+| 1c | `impact` default: top 20, ranked direct-first, every file and exact totals always present | **done** (below) |
 | 2 | Exclude repo files locally — decision 3 | next |
 | 3 | VS Code language models as the summary fallback — decision 1 | |
 | 4 | Bundle the embedding model — decision 2 | |
@@ -178,9 +179,31 @@ A measured Copilot session found `carto large-functions` costing ~6x
 Headline, claude-mem (991 files), default invocation: `large-functions
 --min-lines 80 --limit 20` 10,897 → 2,577 chars (2,725 → 645 tokens), now
 functions; `flows --limit 20` 19,465 → 2,223; `communities` 13,202 → 1,157;
-`review-context` 45,476 → 19,048. **Still open:** `impact` defaults to 500
-results plus every connecting edge — 1.36 MB → 506 KB, still unusable by an
-agent. It needs a lower default and an edge bound, which is a tool change.
+`review-context` 45,476 → 19,048. `impact` was left open here (500 results
+plus every edge, 506 KB); step 1c below closed it.
+
+## Done — step 1c, `impact` short without hiding scope
+
+The user's constraint: a short list must never let an agent believe it has
+seen everything. Design, ranking rule, the direct-dependents decision, and
+every number: **`docs/design/compact-output.md`, "`impact`"**.
+
+- `6544aaa` — default `--limit 20` (was `--max-results 500`); items ranked
+  direct first, then score, then name, on both engines; every affected file
+  listed with counts whatever the limit; exact `totals` (items, direct,
+  files, edges by kind); `truncated`/`page.total_estimated` exact;
+  `data.see_all` names the command for everything; the summary announces
+  direct dependents beyond the limit. `engine/tests/test_impact_scope.py`
+  (14 tests, each seen failing with its guarantee removed) and a conformance
+  op. The old default's file list was built from the kept nodes, so it
+  understated scope (79 of 99 files for SessionStore.ts).
+- `644ccf0` — skills: impact is ranked; read `truncated`; the file list is
+  complete; `see_all` or `--limit <totals.direct>` for the rest.
+
+claude-mem, default invocation: SessionStore.ts 506,392 → 10,967 chars
+(126,598 → 2,742 tokens); TelegramWrapupNotifier.ts 78,826 → 7,038;
+CorpusBuilder.ts 8,619 → 3,052. Hub files pay for the file list: logger.ts
+(463 files) is 34,386.
 
 ## NEXT TASK
 
