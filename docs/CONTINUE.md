@@ -125,7 +125,8 @@ tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
 | 1 | Summaries where `copilot` is not on PATH | **VS Code language-model API as fallback** | Order: `copilot -p --model auto`, then the extension via `vscode.lm`, then structural. One consent prompt; only while VS Code is open; subject to model policy |
 | 2 | Meaning-based memory search | **Bundle a small embedding model now** | Quantized MiniLM-class ONNX model + runtime, ~+40–60 MB per `.vsix`, CPU only, no network, no Copilot quota. Embed during `mem sync`, never in the capture hook. Expect ~0.5–1 s model load per search — measure on the Linux VM |
 | 3 | Files Cartograph writes into a repository | **Exclude locally** | Add `.github/hooks/cartograph.json` and the skills directories to `.git/info/exclude`; never touch the tracked `.gitignore` for them |
-| 4 | Claude Code and other non-Copilot tools | **Remove all non-Copilot support** | Summariser host, `.claude/settings.json` hooks, and the inherited install paths for other tools (Cursor, Codex, Gemini, CodeBuddy, Qoder, OpenCode, …) and their tests. Whether the MCP server code goes too is still to be asked |
+| 4 | Claude Code and other non-Copilot tools | **Remove all non-Copilot support** | Summariser host, `.claude/settings.json` hooks, and the inherited install paths for other tools (Cursor, Codex, Gemini, CodeBuddy, Qoder, OpenCode, …) and their tests. |
+| 4b | The dormant MCP server (`carto serve`, `carto mcp`, `--with-mcp`) | **Remove it** | MCP is banned in the target environment. Drops `fastmcp` and the 7 test modules that import it |
 
 ## NEXT TASK
 
