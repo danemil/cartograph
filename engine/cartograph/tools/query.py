@@ -27,7 +27,12 @@ from ..uncertainty import (
     empty_query_confidence,
     empty_search_confidence,
 )
-from ._common import _BUILTIN_CALL_NAMES, _get_store, _resolve_graph_file_paths
+from ._common import (
+    _BUILTIN_CALL_NAMES,
+    _get_store,
+    _resolve_graph_file_paths,
+    _shown_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -186,17 +191,15 @@ def get_impact_radius(
         truncated = result["truncated"]
         total_impacted = result["total_impacted"]
 
-        summary_parts = [
-            f"Blast radius for {len(changed_files)} changed file(s):",
-            f"  - {len(changed_dicts)} nodes directly changed",
-            f"  - {len(impacted_dicts)} nodes impacted (within {max_depth} hops)",
-            f"  - {len(result['impacted_files'])} additional files affected",
-        ]
-        if truncated:
-            summary_parts.append(
-                f"  - Results truncated: showing {len(impacted_dicts)}"
-                f" of {total_impacted} impacted nodes"
-            )
+        # One line: the lists below are the detail, and a bulleted summary
+        # above them read as a second copy of it.
+        summary = (
+            f"Blast radius for {len(changed_files)} changed file(s): "
+            f"{len(changed_dicts)} nodes directly changed; "
+            f"{total_impacted if truncated else len(impacted_dicts)} nodes impacted "
+            f"within {max_depth} hops in {len(result['impacted_files'])} other files"
+            + (_shown_of(len(impacted_dicts), total_impacted) if truncated else "")
+        )
 
         # "Nothing is impacted" and "nothing about these files is indexed"
         # look identical to a reader without this marker.
@@ -222,7 +225,7 @@ def get_impact_radius(
             ]
             minimal_response = {
                 "status": "ok",
-                "summary": "\n".join(summary_parts),
+                "summary": summary,
                 "risk": risk,
                 "impacted_file_count": len(result["impacted_files"]),
                 "key_entities": key_entities,
@@ -236,7 +239,7 @@ def get_impact_radius(
 
         response: dict[str, Any] = {
             "status": "ok",
-            "summary": "\n".join(summary_parts),
+            "summary": summary,
             "changed_files": changed_files,
             "changed_nodes": changed_dicts,
             "impacted_nodes": impacted_dicts,

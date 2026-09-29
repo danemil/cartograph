@@ -145,16 +145,15 @@ def get_review_context(
                 if f.qualified_name not in tested_qualified
             )
 
-            summary_parts = [
-                f"Review context for {len(changed_files)} changed file(s):",
-                f"  - Risk: {risk}",
-                f"  - {len(impact['impacted_nodes'])} impacted nodes"
-                f" in {len(impact['impacted_files'])} files",
-            ]
+            summary = (
+                f"Review context for {len(changed_files)} changed file(s): "
+                f"risk {risk}; {len(impact['impacted_nodes'])} impacted nodes"
+                f" in {len(impact['impacted_files'])} files"
+            )
 
             result = {
                 "status": "ok",
-                "summary": "\n".join(summary_parts),
+                "summary": summary,
                 "risk": risk,
                 "changed_file_count": len(changed_files),
                 "impacted_file_count": len(impact["impacted_files"]),
@@ -250,22 +249,20 @@ def get_review_context(
         guidance = _generate_review_guidance(impact, changed_files)
         context["review_guidance"] = guidance
 
-        summary_parts = [
+        # One line of counts. The guidance travels on its own key, and a
+        # summary that repeated it paid for the same paragraph twice.
+        summary = (
             f"Review context for {files_total} changed file(s)"
-            + _shown_of(len(shown_files), files_total) + ":",
-            f"  - {changed_nodes_total} directly changed nodes"
-            + _shown_of(len(changed_nodes), changed_nodes_total),
-            f"  - {impacted_nodes_total} impacted nodes"
-            f" in {impacted_total} files"
-            + _shown_of(len(impacted_nodes), impacted_nodes_total),
-            "",
-            "Review guidance:",
-            guidance,
-        ]
+            + _shown_of(len(shown_files), files_total)
+            + f": {changed_nodes_total} directly changed nodes"
+            + _shown_of(len(changed_nodes), changed_nodes_total)
+            + f"; {impacted_nodes_total} impacted nodes in {impacted_total} files"
+            + _shown_of(len(impacted_nodes), impacted_nodes_total)
+        )
 
         result = {
             "status": "ok",
-            "summary": "\n".join(summary_parts),
+            "summary": summary,
             "context": context,
         }
         attach_context_savings(result, original_tokens=original_tokens)

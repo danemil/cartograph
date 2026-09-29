@@ -191,3 +191,28 @@ def test_large_functions_cli_include_generated(sized_repo, capsys):
     assert env["data"]["results"][0] == (
         "1996 lines | Function | fetch | types/worker-configuration.d.ts:5"
     )
+
+
+# --------------------------------------------------------------------------
+# Summaries are one line
+# --------------------------------------------------------------------------
+
+
+def test_impact_summary_is_one_line(sized_repo):
+    from cartograph.tools.query import get_impact_radius
+
+    result = get_impact_radius(changed_files=["src/store.ts"], repo_root=str(sized_repo))
+    assert "\n" not in result["summary"]
+    assert result["summary"].startswith("Blast radius for 1 changed file(s): ")
+
+
+def test_review_context_summary_does_not_repeat_its_guidance(sized_repo):
+    from cartograph.tools.review import get_review_context
+
+    for detail in ("standard", "minimal"):
+        result = get_review_context(
+            changed_files=["src/store.ts"], repo_root=str(sized_repo),
+            detail_level=detail,
+        )
+        assert "\n" not in result["summary"], detail
+        assert "Review guidance" not in result["summary"], detail
