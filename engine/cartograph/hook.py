@@ -194,6 +194,29 @@ def summarise_argv(repo_root: Path, session: str) -> list[str]:
     return self_argv("mem", "summarise", "--session", session, "--repo", str(repo_root))
 
 
+def catchup_argv(repo_root: Path, current_session: str) -> list[str]:
+    """Summarise every earlier session that never got one, leaving *current_session*."""
+    return self_argv(
+        "mem", "summarise", "--pending",
+        "--exclude-session", current_session, "--repo", str(repo_root),
+    )
+
+
+def resolve_host(host: Optional[str]) -> Optional[str]:
+    """The host to record, with ``copilot`` narrowed to the one that ran the hook.
+
+    Copilot CLI and Copilot Chat read the same ``.github/hooks`` file and send
+    payloads of the same shape, so neither the file nor the payload can say
+    which of them fired. The CLI sets ``COPILOT_CLI=1`` in every hook's
+    environment and VS Code does not — read off both hosts on 2026-09-29, see
+    ``docs/copilot-hooks.md``. That is the host stating it, not a guess from
+    field names.
+    """
+    if host != "copilot":
+        return host
+    return "copilot-cli" if os.environ.get("COPILOT_CLI") else "copilot-chat"
+
+
 def _session_status(repo_root: Path, _host: Optional[str] = None) -> int:
     """Emit the one orienting line for this session, once, on stdout."""
     print(_SESSION_LINES[graph_state(repo_root)])
@@ -266,6 +289,30 @@ def _session_summarise(repo_root: Path, _host: Optional[str] = None) -> int:
     return 0
 
 
+def _session_catchup(repo_root: Path, _host: Optional[str] = None) -> int:
+    """Summarise, in the background, the sessions that ended without saying so.
+
+    VS Code has no ``SessionEnd``: its ``Stop`` is a turn boundary, and a Chat
+    session simply stops being used. The next session to *start* is therefore
+    the first moment anything knows the earlier ones are over. It also catches
+    a CLI session that crashed before its ``SessionEnd`` fired.
+
+    The session starting now is named so it is left alone — it has only just
+    begun. Prints nothing: VS Code reads a hook's stdout as JSON.
+    """
+    payload = hook_payload()
+    if payload is None:
+        return 0
+    from .mem import ingest
+    from .mem.store import db_path
+
+    session = ingest.session_from(payload)
+    if not session or not db_path(repo_root, create=False).exists():
+        return 0
+    spawn_detached(catchup_argv(repo_root, session), cwd=repo_root)
+    return 0
+
+
 def _file_update(repo_root: Path, _host: Optional[str] = None) -> int:
     """Launch the graph refresh and return without waiting for it.
 
@@ -283,6 +330,7 @@ _EVENTS: dict[str, Callable[[Path, Optional[str]], int]] = {
     "file-update": _file_update,
     "prompt-capture": _prompt_capture,
     "session-summarise": _session_summarise,
+    "session-catchup": _session_catchup,
 }
 
 #: Host spellings for the three moments, keyed by their normalised form so
@@ -311,6 +359,7 @@ _ALIASES = {
     # summarise the same session after every reply.
     "sessionend": "session-summarise",
     "sessionsummarise": "session-summarise",
+    "sessioncatchup": "session-catchup",
 }
 
 
@@ -345,7 +394,7 @@ def run(event: str, repo: Optional[str] = None, host: Optional[str] = None) -> i
         print(f"carto hook: unknown event {event!r}", file=sys.stderr)
         return 0
     try:
-        return _EVENTS[resolved](_repo_root(repo), host)
+        return _EVENTS[resolved](_repo_root(repo), resolve_host(host))
     except Exception as exc:  # noqa: BLE001 — a hook must never be the thing that fails
         print(f"carto hook: {resolved} failed: {exc}", file=sys.stderr)
         return 0

@@ -522,6 +522,51 @@ class MemoryStore:
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(row) for row in reversed(rows)]
 
+    def has_document(self, session: str, body: str, *, doc_type: str) -> bool:
+        """Whether this session already recorded exactly this body.
+
+        What keeps one prompt one row when the same event reaches capture
+        twice — two hook files, or VS Code told to read a Claude-format file as
+        well as its own. Exact match on purpose: a person repeating a question
+        in a new session asked it twice, and that is worth keeping.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM observations WHERE session = ? AND doc_type = ? "
+            "AND body = ? LIMIT 1",
+            (session, doc_type, body),
+        ).fetchone()
+        return row is not None
+
+    def unsummarised_sessions(
+        self,
+        *,
+        source_type: str,
+        summary_type: str,
+        min_rows: int,
+        exclude: Optional[str] = None,
+        limit: int,
+    ) -> list[str]:
+        """Sessions with at least *min_rows* of *source_type* and no *summary_type* row.
+
+        Most recent first: a person returning to a repository is likeliest to
+        search for what they did last, and the per-run bound should spend
+        itself there rather than on the oldest backlog.
+        """
+        sql = (
+            "SELECT session FROM observations WHERE session IS NOT NULL "
+            "AND doc_type = ? "
+            + ("AND session != ? " if exclude else "")
+            + "AND session NOT IN (SELECT session FROM observations "
+            "WHERE doc_type = ? AND session IS NOT NULL) "
+            "GROUP BY session HAVING count(*) >= ? "
+            "ORDER BY max(created_at) DESC LIMIT ?"
+        )
+        params: list[Any] = [source_type]
+        if exclude:
+            params.append(exclude)
+        params += [summary_type, int(min_rows), int(limit)]
+        return [row[0] for row in self._conn.execute(sql, params).fetchall()]
+
     def latest_session(self, *, doc_type: str) -> Optional[str]:
         """The session that most recently recorded a row of this type.
 

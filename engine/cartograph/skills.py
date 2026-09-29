@@ -1035,6 +1035,14 @@ def hook_command(
         # the name every remediation string uses, made every hook a silent
         # no-op. Silent is the whole problem: nothing fails, the graph simply
         # never updates.
+        #
+        # PATH gets the launcher directory appended first. The VS Code
+        # extension puts it on the PATH of *terminals*, and a hook is not run
+        # in one: VS Code runs Chat hooks in the extension host's environment,
+        # and a CLI started outside VS Code has the login shell's. Measured in
+        # both — without this every hook stopped at the guard below. Appended,
+        # so a `carto` the person installed themselves still wins.
+        + 'PATH="$PATH:${CARTO_HOME:-$HOME/.cartograph}/bin"; '
         + "command -v carto >/dev/null 2>&1 || exit 0; "
         + "git rev-parse --git-dir >/dev/null 2>&1"
         + f" && carto hook {event}"
@@ -1334,6 +1342,89 @@ def install_codebuddy_hooks(repo_root: Path) -> Path:
         repo_root / ".codebuddy",
         hooks_config,
     )
+
+
+def powershell_hook_command(event: str, *, host: str | None = None) -> str:
+    """The Windows form of :func:`hook_command`, for the same three guards.
+
+    Present because a hook file committed to a repository is read on every
+    collaborator's machine, and the POSIX line means nothing to PowerShell.
+    ``$input`` forwards the host's payload; the events that do not read one
+    ignore it. Never run on Windows yet — see ``docs/copilot-hooks.md``.
+    """
+    return (
+        '$env:PATH += ";$(if ($env:CARTO_HOME) { $env:CARTO_HOME } else { "$HOME\\.cartograph" })\\bin"; '
+        "if (-not (Get-Command carto -ErrorAction SilentlyContinue)) { exit 0 }; "
+        "$r = git rev-parse --show-toplevel 2>$null; if (-not $r) { exit 0 }; "
+        f"$input | carto hook {event}"
+        + (f" --host {host}" if host else "")
+        + ' --repo "$r"; exit 0'
+    )
+
+
+#: The moments Copilot hooks fire, and the job each is given. One table so the
+#: POSIX and PowerShell forms cannot come to disagree about what runs when.
+#:
+#: - ``SessionStart`` summarises earlier sessions that ended without a
+#:   ``SessionEnd`` — every VS Code Chat session, since VS Code has none. Not
+#:   ``session-status``: that prints a line, and VS Code parses stdout as JSON.
+#: - ``Stop`` refreshes the graph once per agent turn. ``PostToolUse`` would
+#:   fire on every read as well as every edit, and VS Code ignores matchers,
+#:   so a busy turn would start a dozen concurrent updates.
+#: - ``SessionEnd`` fires only in the CLI; VS Code ignores the unknown key.
+_COPILOT_HOOKS: tuple[tuple[str, str, str | None], ...] = (
+    ("SessionStart", "session-catchup", None),
+    ("UserPromptSubmit", "prompt-capture", "copilot"),
+    ("Stop", "file-update", None),
+    ("SessionEnd", "session-summarise", None),
+)
+
+#: The payload-reading jobs, which :func:`hook_command` must not drain first.
+_READS_PAYLOAD = frozenset({"session-catchup", "prompt-capture", "session-summarise"})
+
+
+def generate_copilot_hooks_config() -> dict[str, Any]:
+    """``.github/hooks/cartograph.json``, read by Copilot CLI and Copilot Chat.
+
+    One file in the VS Code schema, because both hosts load ``.github/hooks``
+    and the CLI runs a file in either schema: a second, CLI-schema file would
+    fire every CLI event twice. ``--host copilot`` is narrowed to ``copilot-cli``
+    or ``copilot-chat`` by :func:`cartograph.hook.resolve_host`.
+
+    ``windows`` is VS Code's key for the PowerShell form and ``powershell`` the
+    CLI's; both are written because each host ignores the other's.
+    """
+    hooks: dict[str, list[dict[str, Any]]] = {}
+    for event, job, host in _COPILOT_HOOKS:
+        windows = powershell_hook_command(job, host=host)
+        hooks[event] = [
+            {
+                "type": "command",
+                "command": hook_command(job, host=host, reads_payload=job in _READS_PAYLOAD),
+                "windows": windows,
+                "powershell": windows,
+                # A ceiling on starting a process: every job returns in well
+                # under a second and hands anything slow to spawn_detached.
+                "timeout": 10,
+            }
+        ]
+    return {"hooks": hooks}
+
+
+def install_copilot_hooks(repo_root: Path) -> Path:
+    """Write ``.github/hooks/cartograph.json`` and return its path.
+
+    Cartograph's own file, replaced whole on every install rather than merged:
+    ``.github/hooks`` is a directory of independent files, so a team's hooks
+    live beside this one and are never touched.
+    """
+    hooks_dir = repo_root / ".github" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    path = hooks_dir / "cartograph.json"
+    path.write_text(
+        json.dumps(generate_copilot_hooks_config(), indent=2) + "\n", encoding="utf-8"
+    )
+    return path
 
 
 def install_codex_hooks(repo_root: Path) -> Path:

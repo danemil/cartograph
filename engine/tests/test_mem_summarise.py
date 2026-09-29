@@ -415,7 +415,9 @@ def test_the_host_is_never_given_a_stdin_or_the_checkout(monkeypatch):
 
     assert seen["stdin"] == subprocess.DEVNULL
     assert seen["timeout"] == summarise.HOST_TIMEOUT_SECONDS
-    assert "cwd" not in seen
+    # Set, not inherited: the detached child that calls this was started in
+    # the repository. See test_copilot_hooks for the checkout itself.
+    assert seen["cwd"] == summarise.tempfile.gettempdir()
 
 
 # --- parsing the answer ----------------------------------------------------

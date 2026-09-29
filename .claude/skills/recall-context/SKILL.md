@@ -39,6 +39,15 @@ the code, which the graph answers better and always knows more currently.
    Narrow with `--session` to stay inside one conversation, or `--date-start`
    when recency matters more than relevance.
 
+   Earlier sessions are recorded for you: every prompt verbatim, and one
+   summary per session with WORKED ON / DECIDED / DEAD ENDS lines. To read
+   only the summaries, which is usually what "did we already try this" wants:
+   ```
+   carto mem search --query "<topic>" --doc-type sessions --format json
+   ```
+   `summary_source: host-agent` means a model wrote it from the prompts;
+   `structural` means it is only a list of what was asked, not a synthesis.
+
 3. **Read `search_mode` before you trust a near miss.** `semantic` and `hybrid`
    mean embeddings participated. `keyword` means lexical matching only — so a
    query phrased differently from what was recorded will miss, and you should

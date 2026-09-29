@@ -34,6 +34,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -80,6 +81,12 @@ MAX_PROMPT_CHARS = 500
 #: start; past it the structural summary is worth more than the wait, and this
 #: process may be a detached child nobody is watching.
 HOST_TIMEOUT_SECONDS = 90
+
+#: Sessions one ``--pending`` run will summarise. Each is an inference call on
+#: the person's Copilot quota, started by nothing more deliberate than opening
+#: a new chat; a backlog left by a machine that ran without a host CLI for a
+#: month should drain over several sessions, not all at once.
+MAX_PENDING = 3
 
 #: `sessions` for the row written, `prompts` for the rows read. Named once so
 #: the two never drift into meaning the same thing.
@@ -316,9 +323,12 @@ def call_host(host: Host, text: str) -> Optional[str]:
     doing it again here would leave nobody to notice the call failed and write
     the fallback.
 
-    ``cwd`` is the interpreter's own, deliberately not the repository: the host
-    is being asked to summarise text that is already in the argv, and giving it
-    the checkout would only widen what a prompt could talk it into.
+    ``cwd`` is the system temp directory, deliberately never the repository —
+    and it has to be set, because the detached child this runs in was started
+    *in* the repository. The host is summarising text already in the argv;
+    the checkout would only widen what a prompt could talk it into, and a
+    trusted checkout's ``.github/hooks`` would load into the session this call
+    creates.
     """
     try:
         proc = subprocess.run(  # noqa: S603 — argv is built here, never user text
@@ -328,6 +338,7 @@ def call_host(host: Host, text: str) -> Optional[str]:
             timeout=HOST_TIMEOUT_SECONDS,
             env=_host_env(),
             stdin=subprocess.DEVNULL,
+            cwd=tempfile.gettempdir(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         logger.debug("%s did not answer: %s", host.binary, exc)
@@ -436,6 +447,35 @@ def summarise(
         # it is reported as a fact about this call rather than as an error.
         result["fallback_reason"] = reason
     return result
+
+
+def summarise_pending(
+    repo_root: Path,
+    *,
+    exclude: Optional[str] = None,
+    project: Optional[str] = None,
+    use_host: bool = True,
+) -> list[dict[str, Any]]:
+    """Summarise the sessions that ended without anything saying so.
+
+    One :func:`summarise` result per session attempted, most recent first, at
+    most :data:`MAX_PENDING`. *exclude* is the session that is starting now:
+    it has barely begun, and summarising it would spend the one summary it is
+    allowed before it has said anything.
+    """
+    path = _store.db_path(repo_root, create=False)
+    with _store.MemoryStore(path) as memory:
+        sessions = memory.unsummarised_sessions(
+            source_type=PROMPT_DOC_TYPE,
+            summary_type=SESSION_DOC_TYPE,
+            min_rows=MIN_PROMPTS,
+            exclude=exclude,
+            limit=MAX_PENDING,
+        )
+    return [
+        summarise(repo_root, session=session, project=project, use_host=use_host)
+        for session in sessions
+    ]
 
 
 def _compose(

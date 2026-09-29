@@ -162,6 +162,10 @@ def capture(
             if session and memory.session_count(session) >= SESSION_CAP:
                 logger.debug("session %s is at the capture cap", session)
                 return False
+            if session and memory.has_document(
+                session, shaped["body"], doc_type=shaped["doc_type"]
+            ):
+                return False
             memory.add(project=repo_root.name, platform_source=host, **shaped)
     except Exception as exc:  # noqa: BLE001 — a hook must not be the thing that fails
         logger.debug("capture skipped: %s", exc)

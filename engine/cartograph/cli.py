@@ -433,6 +433,10 @@ def _handle_init(args: argparse.Namespace) -> None:
         git_hook = install_git_hook(repo_root)
         if git_hook:
             print(f"Installed git pre-commit hook in {git_hook}")
+    if not skip_hooks and target in ("copilot", "copilot-cli", "all"):
+        from .skills import install_copilot_hooks
+
+        print(f"Installed Copilot hooks in {install_copilot_hooks(repo_root)}")
     if not skip_hooks and target in ("claude", "qoder", "all"):
         platforms_to_install = [target] if target != "all" else ["claude", "qoder"]
         for plat in platforms_to_install:
@@ -1541,8 +1545,8 @@ def main() -> None:
     hook_cmd.add_argument(
         "event",
         help=(
-            "Hook event: session-status, file-update or prompt-capture "
-            "(host spellings accepted)"
+            "Hook event: session-status, file-update, prompt-capture, "
+            "session-summarise or session-catchup (host spellings accepted)"
         ),
     )
     hook_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
@@ -1550,7 +1554,8 @@ def main() -> None:
         "--host",
         default=None,
         help=(
-            "Which host is calling, e.g. claude-code. Recorded as an "
+            "Which host is calling, e.g. claude-code; 'copilot' is narrowed to "
+            "copilot-cli or copilot-chat from the environment. Recorded as an "
             "observation's platform_source; only the generated host config "
             "knows it, so nothing downstream has to infer it."
         ),

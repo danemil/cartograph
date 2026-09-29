@@ -106,6 +106,8 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
         "status", help="Whether a memory store exists, and what is in it"
     )
 
+    from . import summarise as _summarise
+
     summarise_cmd = mem_sub.add_parser(
         "summarise",
         help="Synthesise one session's captured prompts into a single observation",
@@ -113,6 +115,17 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     summarise_cmd.add_argument(
         "--session", default=None,
         help="Session to summarise (defaults to the one that recorded the latest prompt)",
+    )
+    summarise_cmd.add_argument(
+        "--pending", action="store_true",
+        help=(
+            "Summarise every recent session that has none yet, instead of one "
+            f"(at most {_summarise.MAX_PENDING} per run)"
+        ),
+    )
+    summarise_cmd.add_argument(
+        "--exclude-session", default=None, dest="exclude_session",
+        help="With --pending: a session to leave alone, normally the one just starting",
     )
     # store_true rather than a store_false spelled `use_host`: the catalogue
     # reports an action's default verbatim, and "--no-host-agent, default: true"
@@ -213,10 +226,21 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
         # describes the store including the row just written.
         from . import summarise as _summarise
 
-        result = _summarise.summarise(
-            repo_root, session=args.session, project=args.project,
-            use_host=not args.no_host_agent,
-        )
+        if args.pending:
+            ran = _summarise.summarise_pending(
+                repo_root, exclude=args.exclude_session, project=args.project,
+                use_host=not args.no_host_agent,
+            )
+            result = {
+                "summary": f"Summarised {sum(1 for r in ran if r.get('observation'))} "
+                f"of {len(ran)} pending session(s).",
+                "sessions": ran,
+            }
+        else:
+            result = _summarise.summarise(
+                repo_root, session=args.session, project=args.project,
+                use_host=not args.no_host_agent,
+            )
         with _store.MemoryStore(path) as memory:
             provenance = memory.provenance()
         _emit_tool_result(
