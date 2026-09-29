@@ -50,6 +50,10 @@ SETTLE_SECONDS = 30 * 60
 #: reparsed on every sync; and the last result, for ``mem status``.
 _FILE_KEY = "sync:file:"
 _STATUS_KEY = "sync:status"
+#: Sessions a sync has recorded prompts for. A session hooks also captured
+#: would still be marked — the mark answers "did the logs carry any of this",
+#: which is the question ``capture`` is asking.
+_FROM_LOGS_KEY = "sync:from-logs:"
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +135,18 @@ def chat_logs(repo_root: Path, user_dirs: Iterable[Path]) -> list[Path]:
             transcripts = meta.parent / "GitHub.copilot-chat" / "transcripts"
             found += sorted(transcripts.glob("*.jsonl"))
     return found + mirrored_chat_logs(repo_root)
+
+
+def workspace_chat_logs(workspace: Path) -> list[Path]:
+    """Both chat logs in one named ``workspaceStorage/<id>/`` directory.
+
+    For the extension, which knows its own. On a remote, that directory holds
+    Copilot's transcripts but no ``workspace.json`` — measured on the Remote
+    SSH VM — so :func:`chat_logs` could never match it by folder.
+    """
+    return sorted((workspace / "chatSessions").glob("*.jsonl")) + sorted(
+        (workspace / "GitHub.copilot-chat" / "transcripts").glob("*.jsonl")
+    )
 
 
 def mirror_dir(repo_root: Path) -> Path:
@@ -255,8 +271,13 @@ def _stamp(path: Path) -> str:
 
 
 def _capture_mode(stats: dict[str, Any]) -> str:
-    """What the numbers say about how prompts are reaching the store."""
-    if stats["imported"]:
+    """What the numbers say about how prompts are reaching the store.
+
+    A prompt already recorded counts for hooks only if an earlier sync did not
+    record it: measured on the Remote SSH VM, a file that changed two minutes
+    after its import was otherwise reported as ``hooks``.
+    """
+    if stats["imported"] or stats["recorded_from_logs"]:
         return "logs"
     if stats["already_recorded"]:
         return "hooks"
@@ -267,6 +288,7 @@ def sync(
     repo_root: Path,
     *,
     user_dirs: Optional[Iterable[Path]] = None,
+    workspace_dirs: Iterable[Path] = (),
     copilot_dir: Optional[Path] = None,
     project: Optional[str] = None,
     summarise_sessions: bool = False,
@@ -277,8 +299,12 @@ def sync(
     Never creates a store unless there is a prompt to put in it, so running it
     on a repository nobody has chatted in leaves nothing behind.
     """
+    chat = chat_logs(repo_root, vscode_user_dirs() if user_dirs is None else user_dirs)
+    for workspace in workspace_dirs:
+        chat += workspace_chat_logs(workspace)
     sources = {
-        CHAT_HOST: chat_logs(repo_root, vscode_user_dirs() if user_dirs is None else user_dirs),
+        # dict.fromkeys: a directory named explicitly may also have matched.
+        CHAT_HOST: list(dict.fromkeys(chat)),
         CLI_HOST: cli_logs(repo_root, copilot_dir or Path.home() / ".copilot"),
     }
     hosts: dict[str, dict[str, Any]] = {}
@@ -290,7 +316,8 @@ def sync(
             memory = _store.MemoryStore(path)
         for host, logs in sources.items():
             stats: dict[str, Any] = {
-                "files": len(logs), "prompts_seen": 0, "already_recorded": 0, "imported": 0,
+                "files": len(logs), "prompts_seen": 0, "already_recorded": 0,
+                "recorded_from_logs": 0, "imported": 0,
             }
             if host == CLI_HOST:
                 stats["hooks_fired"] = False
@@ -311,10 +338,13 @@ def sync(
                         memory = _store.MemoryStore(_store.db_path(repo_root, create=True))
                     if memory.has_document(session, shaped["body"], doc_type=shaped["doc_type"]):
                         stats["already_recorded"] += 1
+                        if memory.get_meta(_FROM_LOGS_KEY + session):
+                            stats["recorded_from_logs"] += 1
                         continue
                     if memory.session_count(session) >= _ingest.SESSION_CAP:
                         continue
                     memory.add(project=project or repo_root.name, platform_source=host, **shaped)
+                    memory.set_meta(_FROM_LOGS_KEY + session, "1")
                     stats["imported"] += 1
                 if memory is not None:
                     memory.set_meta(_FILE_KEY + str(log), _stamp(log))

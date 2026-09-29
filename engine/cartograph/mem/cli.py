@@ -158,6 +158,13 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
         help="A VS Code User directory to read Chat logs from (repeatable; auto-detected)",
     )
     sync_cmd.add_argument(
+        "--vscode-workspace-dir", dest="vscode_workspace_dirs", action="append", default=None,
+        help=(
+            "A VS Code workspaceStorage/<id> directory whose chat logs belong to this "
+            "repository (repeatable; for callers that know it, like the extension)"
+        ),
+    )
+    sync_cmd.add_argument(
         "--no-host-agent", dest="no_host_agent", action="store_true",
         help="With --summarise: write structural summaries without calling a host agent",
     )
@@ -238,6 +245,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
             repo_root,
             user_dirs=[Path(d).expanduser() for d in args.vscode_user_dirs]
             if args.vscode_user_dirs else None,
+            workspace_dirs=[Path(d).expanduser() for d in args.vscode_workspace_dirs or []],
             project=args.project,
             summarise_sessions=args.summarise,
             use_host=not args.no_host_agent,

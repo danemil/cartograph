@@ -441,3 +441,39 @@ def test_mirrored_chat_sessions_are_imported(repo, tmp_path):
         ("s-remote", "copilot-chat")
     ]
     assert result["hosts"]["copilot-chat"]["capture"] == "logs"
+
+
+# --- found on the Remote SSH VM, 2026-09-29 ------------------------------------
+
+
+def test_prompts_imported_earlier_still_count_as_logs(repo, tmp_path):
+    """The VM reported `hooks` two minutes after the import that recorded both
+    prompts: the file changed, the next pass found them already recorded, and
+    already-recorded was taken to mean a hook had done it."""
+    path = _chat_session(tmp_path / "User", repo, "s1", ["Imported from the log, never by a hook"])
+    _sync(repo, tmp_path)
+    os.utime(path, (time.time() + 5, time.time() + 5))
+
+    second = _sync(repo, tmp_path)
+
+    chat = second["hosts"]["copilot-chat"]
+    assert chat["imported"] == 0
+    assert chat["capture"] == "logs"
+
+
+def test_a_workspace_dir_is_read_without_a_workspace_json(repo, tmp_path):
+    """The remote's workspaceStorage/<id>/ has Copilot's transcripts but no
+    workspace.json to match on; the extension names the directory instead."""
+    ws = tmp_path / "remote-ws"
+    (ws / "GitHub.copilot-chat" / "transcripts").mkdir(parents=True)
+    (ws / "GitHub.copilot-chat" / "transcripts" / "s1.jsonl").write_text(
+        "\n".join([
+            _line("session.start", {"sessionId": "s1"}),
+            _line("user.message", {"content": "In the remote transcript only"}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    sync.sync(repo, user_dirs=[], copilot_dir=tmp_path / "copilot", workspace_dirs=[ws])
+
+    assert [r["body"] for r in _rows(repo)] == ["In the remote transcript only"]
