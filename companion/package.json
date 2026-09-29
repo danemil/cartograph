@@ -19,6 +19,6 @@
     "onStartupFinished"
   ],
   "scripts": {
-    "compile": "../extension/node_modules/.bin/tsc -p ./"
+    "compile": "node ../extension/node_modules/typescript/bin/tsc -p ./"
   }
 }

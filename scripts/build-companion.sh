@@ -11,7 +11,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # companion carries no node_modules of its own.
 [ -d "$ROOT/extension/node_modules" ] || (cd "$ROOT/extension" && npm install --silent)
 cd "$ROOT/companion"
-npm run --silent compile
+# Through node, not `npm run`: npm runs scripts under cmd.exe on Windows, which
+# cannot execute a POSIX `.bin/tsc` shim by relative path. CI's win32 job
+# failed on exactly that.
+node "$ROOT/extension/node_modules/typescript/bin/tsc" -p .
 
 VERSION=$(node -p "require('./package.json').version")
 MAIN=$(node -p "require('../extension/package.json').version")
