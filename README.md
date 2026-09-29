@@ -128,6 +128,8 @@ inside a VS Code window — what was verified is the `.vsix` installing through
 `code --install-extension`, and the placement and query code driven directly.
 See `docs/packaging.md`.
 
+To check memory on a real machine, step by step: [docs/verify-memory.md](docs/verify-memory.md).
+
 Verify any of this rather than trusting it:
 
 ```bash

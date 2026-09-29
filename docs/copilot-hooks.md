@@ -49,6 +49,15 @@ Consequences, each of which is now code:
 6. **No `session-status` line for Copilot.** VS Code parses a hook's stdout as
    JSON; the orienting line Claude Code receives would be a parse error there.
 
+## Organisation policy can switch Chat hooks off
+
+`chat.useHooks` can be set by organisation policy. On the first Linux test
+machine it was **off and "Managed by organization"**: VS Code never ran the
+hook, the hook worked when run by hand, and nothing said why. Where that
+policy applies, hooks cannot deliver Chat memory at all. Copilot Chat still
+writes `workspaceStorage/<id>/GitHub.copilot-chat/transcripts/<session>.jsonl`
+with hooks off. See `docs/verify-memory.md`, Findings.
+
 ## The CLI's folder trust
 
 The CLI loads repository hooks only in a folder the person has trusted (its

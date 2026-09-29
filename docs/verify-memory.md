@@ -1,0 +1,174 @@
+---
+tags: [runbook, memory, cartograph]
+updated: 2026-09-29
+---
+
+# Verify memory works
+
+A step-by-step check that Cartograph is recording Copilot sessions on a
+machine, run inside VS Code. Do the steps in order; each one says what to
+expect and where to go when it does not match.
+
+First run: Linux x64 VM over VS Code Remote SSH, VS Code 1.138.0, as root,
+2026-09-29. What it found is under [Findings](#findings).
+
+> Run every command in a **VS Code terminal opened after the extension
+> installed** — that is the terminal whose PATH has `carto` on it.
+
+## Step 1 — Install the `.vsix`
+
+```
+gh release download v0.2.0 -R danemil/cartograph -p '*linux*'
+code --install-extension carto-linux-x64-0.2.0.vsix
+code --list-extensions --show-versions | grep -i carto
+```
+
+**Expect** `cartograph.cartograph@0.2.0`. Use the `.vsix` for the machine's
+platform (`linux-x64`, `win32-x64`, `darwin-arm64`); the release page has all
+three. Over Remote SSH, install it into the remote — the extension, the engine
+and the memory store all live there.
+
+## Step 2 — Open the repository and check what was installed
+
+Open the repository folder, run **Developer: Reload Window**, open a **new**
+terminal, then:
+
+```
+code --list-extensions --show-versions | grep -i carto
+ls .github/hooks/
+carto mem --help
+carto mem status --format text
+```
+
+**Expect** `@0.2.0`, `cartograph.json`, a subcommand list including
+`summarise`, and *"No memory store"* — the store is created by the first
+captured prompt, so its absence here is correct.
+
+- No `cartograph.json` → run **Cartograph: Install Skills and Hooks into
+  Workspace** from the Command Palette.
+- `carto: command not found` → the terminal predates the install; open a new one.
+
+## Step 3 — Send two prompts in Copilot Chat
+
+Open Copilot Chat, choose **Agent** mode, and in **one** chat send:
+
+> We need to decide where to keep build caches for this repo. What are the
+> options? Answer briefly.
+
+> We tried storing the caches in /tmp but they were wiped on every reboot, so
+> that's a dead end. We're going with a .cache folder in the repo instead.
+> Acknowledge briefly.
+
+Then:
+
+```
+carto mem status --format text
+carto mem search --query "caches" --doc-type prompts --format text
+```
+
+**Expect** 2 observations, both `copilot-chat`. Still *"No memory store"* →
+Step 4.
+
+## Step 4 — Run the hook by hand
+
+Runs the exact command VS Code should have run, with a fake payload. It
+separates "the hook is broken here" from "the host never ran it".
+
+```
+git rev-parse --show-toplevel
+which carto
+code --version | head -1
+echo '{"session_id":"manual-test","prompt":"Manual hook test from the terminal"}' | sh -c "$(python3 -c 'import json;print(json.load(open(".github/hooks/cartograph.json"))["hooks"]["UserPromptSubmit"][0]["command"])')"
+carto mem status --format text
+```
+
+- **1 observation now** → the hook works on this machine and **the host did not
+  run it**. Go to Step 5.
+- Still no store → the hook itself fails here. Send the output of every line;
+  the three before the hook say whether git, the launcher or VS Code is the
+  cause.
+
+The manual row stays in the store as session `manual-test`. It is harmless.
+
+## Step 5 — Is Chat allowed to run hooks?
+
+1. Settings (**Ctrl+,**), search `chat.useHooks`.
+2. Search `hooks` and note any other chat hook settings.
+3. Check the status bar for **Restricted Mode**.
+
+- `chat.useHooks` **unticked and "Managed by organization"** → an organisation
+  policy has turned Chat hooks off. Nothing in the workspace can turn them
+  back on, and Chat will capture nothing through hooks. Go to Step 6.
+- Unticked and *not* managed → tick it, reload, and repeat Step 3.
+- Restricted Mode → trust the workspace, reload, and repeat Step 3.
+
+## Step 6 — Does Copilot Chat keep its own conversation log?
+
+```
+ls -d ~/.vscode-server/data/User/workspaceStorage/*/GitHub.copilot-chat/* 2>/dev/null
+find ~/.vscode-server -path '*GitHub.copilot-chat*' -name '*.jsonl' -newermt '-2 hours' 2>/dev/null | head
+```
+
+On a desktop (not Remote SSH) install the root is `~/.config/Code/User`
+(Linux), `~/Library/Application Support/Code/User` (macOS) or
+`%APPDATA%\Code\User` (Windows) instead of `~/.vscode-server/data/User`.
+
+**Expect** a `transcripts/` directory and a recent `transcripts/<session>.jsonl`.
+
+## Step 7 — What is in that log?
+
+Prints each line's type and fields, every value cut to 80 characters:
+
+```
+python3 - <<'EOF'
+import json, glob, os
+f = max(glob.glob(os.path.expanduser('~/.vscode-server/data/User/workspaceStorage/*/GitHub.copilot-chat/transcripts/*.jsonl')), key=os.path.getmtime)
+print(f)
+def short(v):
+    s = json.dumps(v)
+    return s[:80] + ('…' if len(s) > 80 else '')
+for i, line in enumerate(open(f)):
+    d = json.loads(line)
+    print(i, d.get('type'), {k: short(v) for k, v in d.items()})
+EOF
+```
+
+**Expect** `session.start`, then `user.message` / `assistant.turn_start` /
+`assistant.message` / `assistant.turn_end` per exchange.
+
+## Copilot CLI
+
+Independent of Chat — run it even when Chat hooks are blocked.
+
+1. In the repository, run `copilot` **interactively** and accept the *trust this
+   folder* prompt. The CLI runs repository hooks only in a trusted folder, and
+   `copilot -p` in an untrusted one runs none, silently.
+2. Send two prompts, then `/exit`.
+3. Within ~30 seconds:
+   ```
+   carto mem search --query "<a word you used>" --doc-type prompts --format text
+   carto mem search --query "<same word>" --doc-type sessions --format text
+   ```
+
+**Expect** both prompts as `copilot-cli`, and one `sessions` row. Its
+`summary_source` should be `host-agent`; `structural` means no `copilot` binary
+was reachable from a background process, so the summary is an index of the
+prompts rather than a synthesis.
+
+## Findings
+
+### 2026-09-29 — Linux x64, VS Code 1.138.0 over Remote SSH
+
+| Step | Result |
+|---|---|
+| 1–2 | Installed, hook file placed, `mem summarise` present |
+| 3 | **Nothing captured** from Chat |
+| 4 | Hook by hand **worked** — store created, row recorded |
+| 5 | **`chat.useHooks` off, "Managed by organization"** — the cause |
+| 6 | `transcripts/<session>.jsonl` **is** written with hooks off |
+| 7 | Readable, and holds the replies — but the first `user.message` of the session was **missing**, and the log ended at `turn_start` before the second reply. Not yet known whether that is delayed writing or the chat's *Checkpoint Restored* state |
+| CLI | Not yet run |
+
+**Consequence:** where an organisation disables Chat hooks by policy, hooks
+cannot deliver Chat memory. The transcript file is the only local record of a
+Chat conversation that survives the policy; see `docs/copilot-hooks.md`.
