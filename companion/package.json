@@ -1,0 +1,24 @@
+{
+  "name": "cartograph-local",
+  "displayName": "Cartograph Local",
+  "description": "Companion to Cartograph for remote windows (Remote SSH, Dev Containers, WSL): passes Copilot Chat history, which VS Code keeps on this machine, to Cartograph on the remote. No network, no MCP.",
+  "version": "0.4.0",
+  "publisher": "cartograph",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "compile": "../extension/node_modules/.bin/tsc -p ./"
+  }
+}

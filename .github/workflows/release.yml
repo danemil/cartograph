@@ -87,7 +87,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: carto-${{ matrix.target }}
-          path: dist/*.vsix
+          # Only this platform's .vsix: the companion is universal and the
+          # linux job uploads it, so three identical copies do not collide.
+          path: dist/carto-*.vsix
           if-no-files-found: error
 
   release:

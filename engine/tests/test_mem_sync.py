@@ -417,3 +417,27 @@ def test_hidden_requests_are_not_prompts(repo, tmp_path):
                   hidden=True)
     _sync(repo, tmp_path)
     assert not store.db_path(repo, create=False).exists()
+
+
+# --- Remote windows: the mirror ----------------------------------------------
+#
+# Measured on 2026-09-29, Windows host → Remote SSH → Ubuntu VM: VS Code keeps
+# chatSessions on the Windows side, and the VM has none. The companion
+# extension, running on the Windows side, copies each chat file into
+# `.cartograph/chatSessions/` in the repository on the remote, and the same
+# reader handles it there.
+
+
+def test_mirrored_chat_sessions_are_imported(repo, tmp_path):
+    mirror_parent = tmp_path / "unused-user"
+    path = _chat_session(mirror_parent, repo, "s-remote", ["Asked in a Remote SSH window"])
+    mirror = repo / ".cartograph" / "chatSessions"
+    mirror.mkdir(parents=True)
+    (mirror / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    result = _sync(repo, tmp_path)  # no VS Code user dir holds this chat
+
+    assert [(r["session"], r["platform_source"]) for r in _rows(repo)] == [
+        ("s-remote", "copilot-chat")
+    ]
+    assert result["hosts"]["copilot-chat"]["capture"] == "logs"

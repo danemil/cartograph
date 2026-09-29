@@ -42,12 +42,19 @@ cd extension
 [ -d node_modules ] || npm install --silent
 npm run --silent compile
 
+# Cartograph Local rides inside every platform's .vsix, so a remote window can
+# offer to install it without anyone fetching a second file first.
+"$ROOT/scripts/build-companion.sh" >/dev/null
+COMPANION_VERSION=$(node -p "require('./package.json').version")
+
 # Staged as real copies rather than links: `vsce` walks the directory and a
 # symlink into dist/ would be packaged as a link, not as the 127MB behind it.
-rm -rf payload launcher
+rm -rf payload launcher companion
 cp -R "$PAYLOAD" payload
 cp -R "$ROOT/installer/launcher" launcher
-trap 'rm -rf "$ROOT/extension/payload" "$ROOT/extension/launcher"' EXIT
+mkdir companion
+cp "$ROOT/dist/cartograph-local-$COMPANION_VERSION.vsix" companion/cartograph-local.vsix
+trap 'rm -rf "$ROOT/extension/payload" "$ROOT/extension/launcher" "$ROOT/extension/companion"' EXIT
 
 VERSION=$(node -p "require('./package.json').version")
 OUT="$ROOT/dist/carto-$TARGET-$VERSION.vsix"

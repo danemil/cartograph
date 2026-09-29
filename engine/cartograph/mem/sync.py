@@ -130,7 +130,23 @@ def chat_logs(repo_root: Path, user_dirs: Iterable[Path]) -> list[Path]:
             found += sorted((meta.parent / "chatSessions").glob("*.jsonl"))
             transcripts = meta.parent / "GitHub.copilot-chat" / "transcripts"
             found += sorted(transcripts.glob("*.jsonl"))
-    return found
+    return found + mirrored_chat_logs(repo_root)
+
+
+def mirror_dir(repo_root: Path) -> Path:
+    """Where the companion extension copies chat files in a remote window.
+
+    Over Remote SSH, Dev Containers or WSL, VS Code keeps ``chatSessions/`` on
+    the machine the window runs on, and the engine runs on the other one —
+    measured: the Ubuntu VM had none, the Windows host had the chat. The
+    Windows-side companion copies each file here, beside the memory store, in
+    the directory ``carto install`` already keeps out of git.
+    """
+    return _store.db_path(repo_root, create=False).parent / "chatSessions"
+
+
+def mirrored_chat_logs(repo_root: Path) -> list[Path]:
+    return sorted(mirror_dir(repo_root).glob("*.jsonl"))
 
 
 def cli_logs(repo_root: Path, copilot_dir: Path) -> list[Path]:

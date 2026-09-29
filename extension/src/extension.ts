@@ -14,7 +14,7 @@
 
 import * as vscode from "vscode";
 import { Carto, GraphState } from "./carto";
-import { MemorySync, noticeHooksState } from "./memory";
+import { MemorySync, noticeHooksState, registerCompanion } from "./memory";
 import { cartoHome, placeLaunchers, readPayload } from "./payload";
 
 /** Bumped whenever activation must redo work it would otherwise skip. */
@@ -88,6 +88,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       `Cartograph: ${result?.summary ?? "sync did not complete"} ${memory.describe()}`,
     );
   };
+  registerCompanion(context, cwd, () => memory);
   const readLogs = () =>
     vscode.workspace.getConfiguration("cartograph").get<boolean>("readCopilotLogs", true);
   context.subscriptions.push(
