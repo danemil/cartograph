@@ -111,14 +111,19 @@ the engine's reach. **Cartograph Local** (`companion/`) is a UI-side extension
 The main extension writes each received file to `.cartograph/chatSessions/`
 in the repository — beside the memory store, already gitignored — and
 `carto mem sync` reads it there with the same parser. The main `.vsix` carries
-the companion and, in a remote window with Chat hooks off and no companion
-heard from within 90 s, offers to install it; if VS Code will not install a
-local extension from a file on the remote, it says which file to install by
-hand.
+the companion. In a remote window with Chat hooks off it waits 20 s for a
+companion's hello, and if none comes the *hooks are off* notice itself offers
+**Install Cartograph Local**; the status bar shows a bell until one checks in,
+and **Cartograph: Install Cartograph Local** does the same from the palette. (In
+0.4.0 the offer was a second notification 90 s later — on the VM it was never
+seen.) If VS Code will not install a local extension from a file on the
+remote, it says which file to install by hand.
 
-**Verified:** the engine reads the mirror (unit test); both extensions build;
-the companion is embedded. **Not yet run:** the companion in a real remote
-window, and the in-window install offer. Dev Containers could not be tried on
+**Verified on the Remote SSH VM (0.4.0, 2026-09-29):** with Cartograph Local
+installed by hand on the Windows host, the 30,045-byte chat file arrived in
+`.cartograph/chatSessions/` on the VM and both of its prompts were recorded as
+`copilot-chat` — including the first, which the VM's own transcript lacked.
+**Not yet run:** the in-window install from the embedded `.vsix`. Dev Containers could not be tried on
 the Apple Silicon build machine (x64 emulation off in Docker Desktop). The
 user's Remote SSH VM is the first real run — see `docs/verify-memory.md`.
 

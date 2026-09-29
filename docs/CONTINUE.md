@@ -112,9 +112,10 @@ x64 on this Mac. The README now opens with the constraints table.
 
 ## NEXT TASK
 
-1. **Remote SSH acceptance of 0.4.0** on the user's VM, following
-   `docs/verify-memory.md` Steps 8–9: the companion's first real run, and
-   whether the in-window install offer works or the manual install is needed.
+1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
+   companion carries Chat history across; 0.4.1 fixes what that run found.
+   Still unobserved: installing the companion from the embedded `.vsix` via
+   the notice.
 2. **Transcript-aware summaries.** Both hosts send `transcript_path`, which
    holds the agent's replies. Summaries built only from prompts can only say
    what a person typed; the replies say what was concluded.
