@@ -19,10 +19,11 @@ without reading the whole call path by hand.
 ### Steps
 
 1. **Find the entry point.** If the trace names a symbol, skip to step 2.
-   Otherwise search for the symptom's vocabulary — an error string, a field
-   name, a log message.
+   A literal error string or log message lives in file contents, which the
+   graph does not index — `grep -rn "<text>"` finds it exactly and cheaply.
+   Search the graph for a concept or a symbol name you only half know:
    ```
-   carto search "<error text or concept>" --limit 10 --format json
+   carto search "<concept or symbol name>" --limit 10 --format json
    ```
 
 2. **Walk upstream** — who can reach this code, and therefore who can trigger
@@ -60,7 +61,8 @@ without reading the whole call path by hand.
 `carto capabilities --command query`.
 
 A target is a symbol name, or `path/to/file.py::name` when the name is
-ambiguous.
+ambiguous. Result rows read `kind | name | path:line`; join path and name
+with `::` to pass a row back as the next target.
 
 ### Budget
 

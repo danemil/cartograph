@@ -18,6 +18,16 @@ you open twenty files to find the three that matter.
 - You have a symptom to trace → `debug-issue`.
 - You already know the symbol and want its callers → `carto query` directly.
 
+### When NOT to use carto at all
+File-level questions are cheaper with the shell, and just as exact:
+- Largest files, line counts → `wc -l`, e.g. `git ls-files '*.ts' | xargs wc -l | sort -n | tail`.
+- Which files mention a string → `grep -rln` (or `rg -l`).
+- Listing or counting files → `find`, `git ls-files`.
+
+The graph earns its cost where it answers what the file system cannot:
+callers and callees, impact, execution flows, function-level structure, and
+architecture.
+
 ### Steps
 
 1. **Start at the top.** One call, bounded, gives the shape of the whole repo.
@@ -51,6 +61,17 @@ you open twenty files to find the three that matter.
    ```
    carto large-functions --min-lines 80 --limit 20 --format json
    ```
+   Functions and methods only, generated and `.d.ts` files left out (the
+   summary says how many). `--kind` widens and repeats, e.g.
+   `carto large-functions --kind Function --kind Class --include-generated`.
+   For the largest *files*, use `wc -l` instead.
+
+### Reading the rows
+
+List results are one line per row: `301 lines | Function | Store.migrate |
+src/store.ts:20` — the number the command ranks by, kind, name, `path:line`.
+To pass a row back as a target, join path and name: `src/store.ts::Store.migrate`.
+Add `--detail full` only when you need a field the row leaves out.
 
 ### Budget
 

@@ -57,7 +57,9 @@ plan says "then carto applies the rename", the plan is wrong.
   `carto dead-code --json` for the standalone report.
 - Suggestions: `carto refactor suggest --format json --max-tokens 3000` —
   it can return hundreds, so budget it.
-- Oversized functions: `carto large-functions --min-lines 80 --format json`.
+- Oversized functions and methods: `carto large-functions --min-lines 80 --format json`
+  (generated files left out; `--kind Class` widens). For the largest files,
+  `wc -l` is cheaper.
 
 ### Care
 
