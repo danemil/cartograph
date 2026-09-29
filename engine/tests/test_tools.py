@@ -1,6 +1,5 @@
-"""Tests for MCP tool functions."""
+"""Tests for the graph tool functions."""
 
-import importlib.util
 import os
 import tempfile
 import time
@@ -10,7 +9,6 @@ from unittest.mock import MagicMock
 import pytest
 
 import cartograph.tools._common as common_module
-import cartograph.tools.analysis_tools as analysis_module
 import cartograph.tools.docs as docs_module
 import cartograph.tools.query as query_module
 from cartograph.graph import GraphStore, _sanitize_name, node_to_dict
@@ -18,28 +16,14 @@ from cartograph.incremental import full_build
 from cartograph.parser import EdgeInfo, NodeInfo
 from cartograph.tools import (
     _validate_repo_root,
-    get_affected_flows_func,
     get_architecture_overview_func,
     get_community_func,
-    get_docs_section,
     get_flow,
     get_impact_radius,
     get_review_context,
     list_communities_func,
     list_flows,
-    list_graph_stats,
     query_graph,
-)
-
-
-# MCP is banned in the environment Cartograph targets, so `fastmcp` is
-# deliberately not installed and `cartograph.main` (the MCP server) cannot be
-# imported. The MCP surface survives only as an opt-in extra, so the handful of
-# tests that reach into it are gated on the optional dependency rather than
-# deleted — the same reason tests/test_main.py and friends are ignored wholesale.
-_HAS_FASTMCP = importlib.util.find_spec("fastmcp") is not None
-_NEEDS_FASTMCP = pytest.mark.skipif(
-    not _HAS_FASTMCP, reason="fastmcp not installed (MCP is banned in this fork)"
 )
 
 
@@ -783,76 +767,6 @@ class TestQueryGraphTestsFor:
         assert len(result["candidates"]) == 2
 
 
-class TestGetDocsSection:
-    """Tests for the get_docs_section tool."""
-
-    def test_explicit_repo_root_uses_that_docs_file(self, tmp_path):
-        (tmp_path / ".cartograph").mkdir()
-        docs_dir = tmp_path / "docs"
-        docs_dir.mkdir()
-        (docs_dir / "LLM-OPTIMIZED-REFERENCE.md").write_text(
-            '<section name="usage">hello</section>\n',
-            encoding="utf-8",
-        )
-
-        result = get_docs_section("usage", repo_root=str(tmp_path))
-
-        assert result["status"] == "ok"
-        assert result["content"] == "hello"
-
-    def test_section_not_found(self):
-        result = get_docs_section("nonexistent-section")
-        assert result["status"] == "not_found"
-        assert "nonexistent-section" in result["error"]
-
-    def test_section_lists_available(self):
-        result = get_docs_section("bad")
-        assert "Available:" in result["error"]
-
-    def test_real_section_lookup(self):
-        """If the docs file exists, we can retrieve a known section."""
-        # This works because we're running from the repo root
-        result = get_docs_section(
-            "usage",
-            repo_root=str(Path(__file__).parent.parent),
-        )
-        # Either found (if docs exist) or not_found (CI without docs)
-        assert result["status"] in ("ok", "not_found")
-        if result["status"] == "ok":
-            assert len(result["content"]) > 0
-
-    def test_source_tree_docs_lookup_from_outside_repo(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("CRG_REPO_ROOT", raising=False)
-
-        result = get_docs_section(section_name="usage")
-
-        assert result["status"] == "ok"
-        assert len(result["content"]) > 0
-
-    def test_packaged_docs_lookup_from_outside_repo(self, tmp_path, monkeypatch):
-        package_dir = tmp_path / "site-packages" / "cartograph"
-        tools_dir = package_dir / "tools"
-        docs_dir = package_dir / "docs"
-        tools_dir.mkdir(parents=True)
-        docs_dir.mkdir()
-        (docs_dir / "LLM-OPTIMIZED-REFERENCE.md").write_text(
-            '<section name="usage">packaged docs</section>\n',
-            encoding="utf-8",
-        )
-        work_dir = tmp_path / "elsewhere"
-        work_dir.mkdir()
-
-        monkeypatch.chdir(work_dir)
-        monkeypatch.delenv("CRG_REPO_ROOT", raising=False)
-        monkeypatch.setattr(docs_module, "__file__", str(tools_dir / "docs.py"))
-
-        result = docs_module.get_docs_section("usage")
-
-        assert result["status"] == "ok"
-        assert result["content"] == "packaged docs"
-
-
 class TestEmbedGraphProviderErrors:
     """embed_graph must surface provider errors as structured responses,
     never as a traceback, and must always close its GraphStore."""
@@ -906,64 +820,6 @@ _ANALYSIS_TOOL_CASES = [
     ("get_surprising_connections_func", "find_surprising_connections", []),
     ("get_suggested_questions_func", "generate_suggested_questions", []),
 ]
-
-
-class TestAnalysisToolsCloseStore:
-    """Regression tests: the 5 analysis tools leaked their GraphStore
-    (no try/finally), leaving graph.db file descriptors open."""
-
-    @pytest.mark.parametrize(
-        "func_name,analysis_name,ret", _ANALYSIS_TOOL_CASES,
-    )
-    def test_store_closed_on_success(
-        self, monkeypatch, tmp_path, func_name, analysis_name, ret,
-    ):
-        store = MagicMock()
-        monkeypatch.setattr(
-            analysis_module, "_get_store",
-            lambda repo_root=None: (store, tmp_path),
-        )
-        monkeypatch.setattr(
-            analysis_module, analysis_name, lambda *a, **k: ret,
-        )
-        result = getattr(analysis_module, func_name)()
-        assert "next_tool_suggestions" in result
-        store.close.assert_called_once()
-
-    @pytest.mark.parametrize(
-        "func_name,analysis_name,_ret", _ANALYSIS_TOOL_CASES,
-    )
-    def test_store_closed_when_analysis_raises(
-        self, monkeypatch, tmp_path, func_name, analysis_name, _ret,
-    ):
-        store = MagicMock()
-        monkeypatch.setattr(
-            analysis_module, "_get_store",
-            lambda repo_root=None: (store, tmp_path),
-        )
-
-        def boom(*args, **kwargs):
-            raise RuntimeError("boom")
-
-        monkeypatch.setattr(analysis_module, analysis_name, boom)
-        with pytest.raises(RuntimeError, match="boom"):
-            getattr(analysis_module, func_name)()
-        store.close.assert_called_once()
-
-
-class TestGetWikiPageNoStoreLeak:
-    """Regression test: get_wiki_page_func opened a GraphStore just to
-    resolve the repo root and discarded it without closing."""
-
-    def test_get_wiki_page_does_not_open_graph_store(self, tmp_path, monkeypatch):
-        (tmp_path / ".cartograph").mkdir()
-        store_cls = MagicMock()
-        monkeypatch.setattr(common_module, "GraphStore", store_cls)
-        result = docs_module.get_wiki_page_func(
-            "anything", repo_root=str(tmp_path),
-        )
-        assert result["status"] == "not_found"
-        store_cls.assert_not_called()
 
 
 class TestFindLargeFunctions:
@@ -1245,76 +1101,6 @@ class TestFlowTools:
         assert "nodes" in result["summary"]
         assert "depth" in result["summary"]
         assert "criticality" in result["summary"]
-
-    def test_get_affected_flows_with_changed_file(self):
-        result = get_affected_flows_func(
-            changed_files=["auth.py"], repo_root=str(self.root)
-        )
-        assert result["status"] == "ok"
-        assert result["total"] >= 1
-        # The handle_request flow passes through auth.py
-        flow_names = [f["name"] for f in result["affected_flows"]]
-        assert any("handle_request" in n for n in flow_names)
-
-    def test_get_affected_flows_no_changed_files(self):
-        result = get_affected_flows_func(
-            changed_files=[], repo_root=str(self.root)
-        )
-        assert result["status"] == "ok"
-        assert result["total"] == 0
-        assert result["affected_flows"] == []
-
-    def test_get_affected_flows_unrelated_file(self):
-        result = get_affected_flows_func(
-            changed_files=["unrelated.py"], repo_root=str(self.root)
-        )
-        assert result["status"] == "ok"
-        assert result["total"] == 0
-
-    def test_get_affected_flows_summary(self):
-        result = get_affected_flows_func(
-            changed_files=["auth.py"], repo_root=str(self.root)
-        )
-        assert "flow(s) affected" in result["summary"]
-        assert "changed_files" in result
-
-    def test_get_affected_flows_minimal_drops_steps(self):
-        """detail_level="minimal" strips per-flow step details (#849)."""
-        result = get_affected_flows_func(
-            changed_files=["auth.py"],
-            repo_root=str(self.root),
-            detail_level="minimal",
-        )
-        assert result["status"] == "ok"
-        assert result["total"] >= 1
-        for flow in result["affected_flows"]:
-            assert "steps" not in flow
-            assert "path" not in flow
-            assert "name" in flow
-            assert "criticality" in flow
-
-    def test_get_affected_flows_max_flows_truncates(self):
-        """max_flows bounds the list while total keeps the full count (#849)."""
-        result = get_affected_flows_func(
-            changed_files=["auth.py"],
-            repo_root=str(self.root),
-            max_flows=1,
-        )
-        assert result["status"] == "ok"
-        assert len(result["affected_flows"]) <= 1
-        if result["total"] > 1:
-            assert result["truncated"] is True
-            assert "showing 1" in result["summary"]
-
-    def test_get_affected_flows_max_flows_zero_disables_limit(self):
-        result = get_affected_flows_func(
-            changed_files=["auth.py"],
-            repo_root=str(self.root),
-            max_flows=0,
-        )
-        assert result["status"] == "ok"
-        assert result["truncated"] is False
-        assert len(result["affected_flows"]) == result["total"]
 
 
 class TestCommunityTools:
@@ -2119,20 +1905,6 @@ class TestGetMinimalContext:
         assert not db_path.exists()
         assert not db_path.parent.exists()
 
-    @_NEEDS_FASTMCP
-    def test_mcp_wrapper_reports_missing_graph_without_creating_state(self, tmp_path):
-        from cartograph.main import get_minimal_context_tool
-
-        repo = tmp_path / "cold-worktree"
-        repo.mkdir()
-        (repo / ".git").write_text("gitdir: ../main/.git/worktrees/cold\n")
-
-        result = get_minimal_context_tool(repo_root=str(repo))
-
-        assert result["status"] == "not_ready"
-        assert result["reason"] == "missing_graph"
-        assert not (repo / ".cartograph").exists()
-
     def test_missing_graph_does_not_create_external_data_dir(self, tmp_path, monkeypatch):
         from cartograph.tools.context import get_minimal_context
 
@@ -2404,50 +2176,6 @@ class TestGraphProvenance:
 
     def test_invalid_repo_root_has_no_envelope(self, tmp_path):
         assert common_module.graph_provenance(str(tmp_path / "missing")) is None
-
-    def test_with_provenance_preserves_response_fields(self, tmp_path):
-        repo = self._make_repo(
-            tmp_path, {"last_updated": "2000-01-02T03:04:05"},
-        )
-        response = {"status": "ok", "results": [{"name": "handle"}]}
-        result = common_module.with_provenance(response, str(repo))
-        assert result is response
-        assert result["status"] == "ok"
-        assert result["results"] == [{"name": "handle"}]
-        assert result["_graph"]["updated_at"] == "2000-01-02T03:04:05"
-
-    def test_with_provenance_handles_noop_cases(self, tmp_path):
-        repo_without_metadata = self._make_repo(tmp_path, name="empty")
-        response = {"status": "ok"}
-        assert common_module.with_provenance(
-            response, str(repo_without_metadata),
-        ) == response
-
-        repo = self._make_repo(
-            tmp_path, {"last_updated": "2000-01-02T03:04:05"}, "full",
-        )
-        assert common_module.with_provenance([1, 2], str(repo)) == [1, 2]
-        assert common_module.with_provenance(None, str(repo)) is None
-        existing = {"_graph": {"updated_at": "existing"}}
-        assert common_module.with_provenance(existing, str(repo)) is existing
-        assert existing["_graph"] == {"updated_at": "existing"}
-
-    @_NEEDS_FASTMCP
-    def test_registered_sync_tool_preserves_existing_fields(self, tmp_path):
-        from cartograph.main import list_graph_stats_tool
-
-        repo = self._make_repo(tmp_path, {
-            "last_updated": "2000-01-02T03:04:05",
-            "git_branch": "main",
-        })
-        expected = list_graph_stats(repo_root=str(repo))
-        underlying = getattr(list_graph_stats_tool, "fn", None) or list_graph_stats_tool
-        result = underlying(repo_root=str(repo))
-
-        envelope = result.pop("_graph")
-        assert result == expected
-        assert envelope["updated_at"] == "2000-01-02T03:04:05"
-        assert envelope["built_on_branch"] == "main"
 
 
 def test_impact_radius_tool_exposes_best_first_scores(monkeypatch, tmp_path):

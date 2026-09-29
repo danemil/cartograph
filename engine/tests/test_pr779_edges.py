@@ -11,7 +11,6 @@ does not exist — which is exactly the defect these skills were rewritten to
 fix. The test now forbids what it used to require.
 """
 
-import ast
 import re
 from pathlib import Path
 
@@ -25,21 +24,6 @@ SKILL_NAMES = sorted(p.parent.name for p in CANONICAL_SKILLS.glob("*/SKILL.md"))
 
 _BACKTICK = re.compile(r"`([^`]+)`")
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-
-def _exported_tool_names() -> set[str]:
-    """Collect function names registered via @mcp.tool() in main.py."""
-    src = (REPO_ROOT / "cartograph" / "main.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for dec in node.decorator_list:
-            target = dec.func if isinstance(dec, ast.Call) else dec
-            if isinstance(target, ast.Attribute) and target.attr == "tool":
-                names.add(node.name)
-    return names
 
 
 def _backticked_identifiers(markdown: str) -> list[str]:
@@ -59,20 +43,6 @@ def _all_skill_files(tmp_path: Path) -> list[Path]:
         files.append(generated / name / "SKILL.md")
         files.append(CANONICAL_SKILLS / name / "SKILL.md")
     return files
-
-
-def test_exported_schema_is_nonempty_and_contains_renamed_tools():
-    exported = _exported_tool_names()
-    assert len(exported) >= 20, exported
-    for tool in [
-        "get_minimal_context_tool",
-        "list_graph_stats_tool",
-        "get_community_tool",
-        "list_flows_tool",
-        "get_flow_tool",
-        "find_large_functions_tool",
-    ]:
-        assert tool in exported
 
 
 def test_generated_and_bundled_skills_byte_identical(tmp_path):

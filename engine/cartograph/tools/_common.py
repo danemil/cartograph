@@ -19,13 +19,6 @@ _PROVENANCE_GIT_TIMEOUT_SECONDS = 1.0
 logger = logging.getLogger(__name__)
 
 
-def _error_response(
-    message: str, status: str = "error", **extra: Any,
-) -> dict[str, Any]:
-    """Build a standardised error response dict."""
-    return {"status": status, "error": message, "summary": message, **extra}
-
-
 def _read_live_git_head(root: Path) -> str | None:
     """Return the checked-out commit without making provenance mandatory.
 
@@ -121,15 +114,6 @@ def graph_provenance(repo_root: str | None = None) -> dict[str, Any] | None:
     except Exception:
         return None
 
-
-def with_provenance(result: Any, repo_root: str | None = None) -> Any:
-    """Attach a ``_graph`` envelope without changing existing fields."""
-    if not isinstance(result, dict) or "_graph" in result:
-        return result
-    provenance = graph_provenance(repo_root)
-    if provenance:
-        result["_graph"] = provenance
-    return result
 
 # Common JS/TS builtin method names filtered from callers_of results.
 # "Who calls .map()?" returns hundreds of hits and is never useful.
@@ -266,7 +250,7 @@ def _resolve_graph_file_paths(
 # Result bounding (#849 follow-up)
 # ---------------------------------------------------------------------------
 #
-# Every MCP tool response has to survive a client-side context window. #849
+# Every tool response has to survive a client-side context window. #849
 # found get_affected_flows returning 247k tokens inside a workflow documented
 # as "5 tool calls, 800 tokens total"; PR #853 capped that one tool. These
 # helpers give the remaining tools the same contract:
@@ -277,7 +261,7 @@ def _resolve_graph_file_paths(
 #
 # Each tool pairs a caller-facing default with a hard ceiling. The ceiling
 # exists so a caller passing ``max_results=1_000_000`` still gets a response
-# that fits the ~25k-token budget most MCP clients allow for one tool result.
+# that fits the ~25k-token budget most agent hosts allow for one tool result.
 
 
 def _validate_positive_int(value: int, name: str) -> int:

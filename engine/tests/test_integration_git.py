@@ -10,8 +10,6 @@ Tests cover:
 
 from __future__ import annotations
 
-import importlib.util
-import inspect
 import json
 import subprocess
 import sys
@@ -33,18 +31,6 @@ from cartograph.incremental import (
     resolve_incremental_base,
 )
 from cartograph.tools.build import build_or_update_graph
-from cartograph.wiki import get_wiki_page
-
-
-# MCP is banned in the environment Cartograph targets, so `fastmcp` is
-# deliberately not installed and `cartograph.main` (the MCP server) cannot be
-# imported. The MCP surface survives only as an opt-in extra, so the handful of
-# tests that reach into it are gated on the optional dependency rather than
-# deleted — the same reason tests/test_main.py and friends are ignored wholesale.
-_HAS_FASTMCP = importlib.util.find_spec("fastmcp") is not None
-_NEEDS_FASTMCP = pytest.mark.skipif(
-    not _HAS_FASTMCP, reason="fastmcp not installed (MCP is banned in this fork)"
-)
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -365,19 +351,6 @@ def test_full_build_with_recurse_submodules(
         assert len(sub_nodes) > 0
     finally:
         store.close()
-
-
-def test_wiki_page_path_traversal_blocked(tmp_path: Path) -> None:
-    """get_wiki_page must not serve files outside the wiki directory."""
-    wiki_dir = tmp_path / "wiki"
-    wiki_dir.mkdir()
-
-    # Create a legitimate page
-    (wiki_dir / "my-module.md").write_text("# My Module\n")
-
-    # Attempt a path traversal — should return None
-    result = get_wiki_page(str(wiki_dir), "../../etc/passwd")
-    assert result is None
 
 
 def test_incremental_rename_matches_a_fresh_full_rebuild(
@@ -704,17 +677,6 @@ def test_update_explicit_base_bypasses_auto_resolution(tmp_path: Path) -> None:
     assert res["build_type"] == "incremental"
     assert res["base_resolved"] == "HEAD~1"
     assert res["changed_files"] == ["gamma.py"]
-
-
-@_NEEDS_FASTMCP
-def test_mcp_tool_base_defaults_to_none() -> None:
-    """The MCP wrapper must default base to None so omitted-base calls reach
-    the auto-resolution path instead of a hardcoded HEAD~1."""
-    from cartograph.main import build_or_update_graph_tool
-
-    # FastMCP may wrap the tool; the underlying callable is stored on ``.fn``.
-    fn = getattr(build_or_update_graph_tool, "fn", build_or_update_graph_tool)
-    assert inspect.signature(fn).parameters["base"].default is None
 
 
 def test_cli_update_brief_default_base_does_not_crash(

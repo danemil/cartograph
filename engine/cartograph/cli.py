@@ -9,8 +9,6 @@ Usage:
     carto forget PATH [PATH ...] [--dry-run]
     carto watch
     carto status
-    carto serve [--auto-watch] [--http] [--host ADDR] [--port PORT]
-    carto mcp [--auto-watch]
     carto visualize
     carto wiki
     carto detect-changes [--base BASE] [--brief]
@@ -137,7 +135,7 @@ def _print_banner() -> None:
 {c}  ●──●──●{r}       {d}smarter code reviews{r}
 
   {b}Commands:{r}
-    {g}install{r}     Set up MCP server for AI coding platforms
+    {g}install{r}     Place skills, hooks and instructions for AI coding platforms
     {g}init{r}        Alias for install
     {g}build{r}       Full graph build {d}(parse all files){r}
     {g}update{r}      Incremental update {d}(changed files only){r}
@@ -152,7 +150,6 @@ def _print_banner() -> None:
     {g}postprocess{r} Run post-processing {d}(flows, communities, FTS){r}
     {g}daemon{r}      Multi-repo watch daemon management
     {g}eval{r}        Run evaluation benchmarks
-    {g}serve{r}       Start MCP server {d}(stdio, or {g}--http{r} on localhost:5555){r}
 
   {d}Run{r} {b}cartograph <command> --help{r} {d}for details{r}
 """)
@@ -209,10 +206,9 @@ def _instruction_files_to_modify(
 def _confirm_yes_no(prompt: str, default_yes: bool = True) -> bool:
     """Prompt the user [Y/n] and return True for yes.
 
-    Non-interactive environments (no TTY on stdin, e.g. an MCP wrapper
-    piping the CLI) return ``default_yes`` without blocking — the
-    stdio transport cannot safely read from stdin without corrupting
-    the JSON-RPC stream. See: #173, #174
+    Non-interactive environments (no TTY on stdin, e.g. an installer or
+    extension piping the CLI) return ``default_yes`` without blocking, since
+    nobody is there to answer. See: #173, #174
     """
     if not sys.stdin.isatty():
         return default_yes
@@ -283,12 +279,8 @@ def _match_files_to_forget(
 
 
 def _handle_init(args: argparse.Namespace) -> None:
-    """Install skills, hooks and instructions for detected AI coding platforms.
-
-    MCP server registration is opt-in via ``--with-mcp``; see the note below.
-    """
+    """Install skills, hooks and instructions for detected AI coding platforms."""
     from .incremental import ensure_repo_gitignore_excludes_crg, find_repo_root
-    from .skills import install_platform_configs
 
     repo_root = Path(args.repo) if args.repo else find_repo_root()
     if not repo_root:
@@ -300,22 +292,6 @@ def _handle_init(args: argparse.Namespace) -> None:
         target = "claude"
     auto_yes = getattr(args, "yes", False)
     skip_instructions = getattr(args, "no_instructions", False)
-
-    # MCP registration is OFF by default. Cartograph exists because MCP servers
-    # are prohibited in the target environment, so writing .mcp.json,
-    # .cursor/mcp.json, .vscode/mcp.json and the rest would have `install`
-    # violate the constraint the whole project is built around. The server code
-    # is still here for anyone who can use it, behind an explicit opt-in.
-    if getattr(args, "with_mcp", False):
-        print("Installing MCP server config...")
-        configured = install_platform_configs(repo_root, target=target, dry_run=dry_run)
-        if not configured:
-            print("No platforms detected.")
-        else:
-            print(f"\nConfigured {len(configured)} platform(s): {', '.join(configured)}")
-    else:
-        configured = []
-        print("Skipping MCP server config (pass --with-mcp to register one).")
 
     # Preview the instruction files that would be touched (#173).
     instr_targets = _instruction_files_to_modify(repo_root, target)
@@ -649,8 +625,6 @@ _PATH_REPO_COMMANDS = frozenset({
     "wiki",
     "detect-changes",
     "dead-code",
-    "serve",
-    "mcp",
     *_GRAPH_TOOL_COMMANDS,
 })
 
@@ -1092,22 +1066,14 @@ def main() -> None:
     sub = ap.add_subparsers(dest="command")
 
     # install (primary) + init (alias)
-    install_cmd = sub.add_parser("install", help="Register MCP server with AI coding platforms")
+    install_cmd = sub.add_parser(
+        "install", help="Place skills, hooks and instructions for AI coding platforms"
+    )
     install_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
     install_cmd.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be done without writing files",
-    )
-    install_cmd.add_argument(
-        "--with-mcp",
-        action="store_true",
-        dest="with_mcp",
-        help=(
-            "Also register an MCP server with detected platforms. Off by default: "
-            "Cartograph is the CLI-and-skills answer to environments where MCP "
-            "servers are not permitted."
-        ),
     )
     install_cmd.add_argument(
         "--no-skills",
@@ -1817,53 +1783,6 @@ def main() -> None:
             help="Token budget for the response",
         )
 
-    # serve / mcp
-    serve_cmd = sub.add_parser(
-        "serve",
-        help="Start MCP server (stdio by default, or HTTP on localhost with --http)",
-    )
-    serve_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
-    serve_cmd.add_argument(
-        "--auto-watch",
-        action="store_true",
-        help="Start filesystem watch in a daemon thread while MCP server runs",
-    )
-    serve_cmd.add_argument(
-        "--tools", default=None,
-        help=(
-            "Comma-separated list of tool names to expose "
-            "(e.g. query_graph_tool,semantic_search_nodes_tool). "
-            "Unlisted tools are removed. Falls back to CRG_TOOLS env var. "
-            "When unset, all tools are available."
-        ),
-    )
-    serve_cmd.add_argument(
-        "--http",
-        action="store_true",
-        help="Listen for MCP over Streamable HTTP on localhost (default port 5555)",
-    )
-    serve_cmd.add_argument(
-        "--host",
-        default=None,
-        metavar="ADDR",
-        help="Bind address for --http (default: 127.0.0.1)",
-    )
-    serve_cmd.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        metavar="PORT",
-        help="Port for --http (default: 5555)",
-    )
-
-    mcp_cmd = sub.add_parser("mcp", help="Alias for serve")
-    mcp_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
-    mcp_cmd.add_argument(
-        "--auto-watch",
-        action="store_true",
-        help="Start filesystem watch in a daemon thread while MCP server runs",
-    )
-
     # daemon
     daemon_cmd = sub.add_parser(
         "daemon",
@@ -2037,32 +1956,6 @@ def main() -> None:
         return
 
     embedding_refresh_kwargs = _embedding_refresh_kwargs(args, ap)
-
-    if args.command in ("serve", "mcp"):
-        from .main import main as serve_main
-
-        auto_watch = getattr(args, "auto_watch", False)
-        if args.command == "serve":
-            if args.port is not None and not args.http:
-                serve_cmd.error("--port requires --http")
-            if args.host is not None and not args.http:
-                serve_cmd.error("--host requires --http")
-            if args.http:
-                host = args.host if args.host is not None else "127.0.0.1"
-                port = args.port if args.port is not None else 5555
-                serve_main(
-                    repo_root=args.repo,
-                    auto_watch=auto_watch,
-                    transport="streamable-http",
-                    host=host,
-                    port=port,
-                    tools=args.tools,
-                )
-            else:
-                serve_main(repo_root=args.repo, auto_watch=auto_watch, tools=args.tools)
-        else:
-            serve_main(repo_root=args.repo, auto_watch=auto_watch)
-        return
 
     if args.command == "daemon":
         if not args.daemon_command:

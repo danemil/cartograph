@@ -1,4 +1,4 @@
-"""Per-tool token budgets for every registered MCP tool.
+"""Per-tool token budgets for the tool functions behind the ``carto`` commands.
 
 Why this file exists
 --------------------
@@ -10,15 +10,14 @@ of bug in ten more places -- ``list_communities`` returned 206k tokens with
 *default* arguments, ``get_community`` 134k, ``get_architecture_overview``
 625k in standard mode.
 
-This module is the regression guard. It calls every registered tool against
+This module is the regression guard. It calls every tool function against
 one real, module-scoped fixture graph and asserts the serialized response
 stays under a documented per-tool ceiling. Removing a cap, or adding an
 unbounded field to a response, makes the matching case fail loudly.
 
 How the numbers are produced
 ----------------------------
-* Responses are serialized the way FastMCP 3.x serializes them:
-  ``pydantic_core.to_json(value, fallback=str)`` -- compact JSON, no indent.
+* Responses are serialized as compact JSON, no indent.
 * Tokens are counted with tiktoken ``cl100k_base`` when tiktoken is
   importable. tiktoken is not a project dependency, so the documented
   fallback is ``len(serialized) / 4``. The two agree within ~5% on this
@@ -41,8 +40,6 @@ the fixture's node count and blows the ceiling immediately.
 
 from __future__ import annotations
 
-import asyncio
-import inspect
 import json
 import os
 from pathlib import Path
@@ -50,10 +47,10 @@ from typing import Any
 
 import pytest
 
-from cartograph import main as crg_main
+from cartograph import tools
 from cartograph.graph import GraphStore
 from cartograph.incremental import full_build
-from cartograph.tools import analysis_tools, community_tools, review
+from cartograph.tools import community_tools, review
 from cartograph.tools import refactor_tools as refactor_mod
 
 try:  # pragma: no cover - exercised only when tiktoken is installed
@@ -140,8 +137,7 @@ def graph_repo(tmp_path_factory) -> dict[str, Any]:
         full_build(root, store)
 
     # Populate communities and flows so the tools that read them have data.
-    asyncio.run(crg_main.run_postprocess_tool(repo_root=str(root)))
-    asyncio.run(crg_main.generate_wiki_tool(repo_root=str(root)))
+    tools.run_postprocess(repo_root=str(root))
 
     return {
         "root": str(root),
@@ -158,13 +154,8 @@ def graph_repo(tmp_path_factory) -> dict[str, Any]:
 
 
 def _serialize(value: Any) -> str:
-    """Serialize a tool result the way the FastMCP layer does."""
-    try:
-        import pydantic_core
-
-        return pydantic_core.to_json(value, fallback=str).decode()
-    except Exception:  # pragma: no cover - pydantic_core ships with fastmcp
-        return json.dumps(value, default=str, separators=(",", ":"))
+    """Serialize a tool result compactly, as the envelope carries it."""
+    return json.dumps(value, default=str, separators=(",", ":"))
 
 
 def count_tokens(value: Any) -> int:
@@ -190,20 +181,16 @@ HUGE = 10**6
 # module is owned elsewhere and its unbounded worst cases are reported, not
 # fixed, by this change:
 #   * get_impact_radius  -- changed_nodes and edges ignore max_results
-#     (3.4M tokens on a whole-repo diff), and max_results is not even
-#     exposed on the MCP tool signature.
+#     (3.4M tokens on a whole-repo diff).
 #   * find_large_functions -- limit is neither validated nor capped
 #     (737k tokens at limit=10**6).
-#   * traverse_graph -- token_budget is neither validated nor capped
-#     (385k tokens at token_budget=10**6).
 #   * semantic_search_nodes -- limit is neither validated nor capped.
 # Their *default* budgets are still asserted below; only the worst case is
 # skipped, so a regression in normal use is still caught here.
 QUERY_OWNED_UNBOUNDED = {
-    "get_impact_radius_tool",
-    "find_large_functions_tool",
-    "traverse_graph_tool",
-    "semantic_search_nodes_tool",
+    "get_impact_radius",
+    "find_large_functions",
+    "semantic_search_nodes",
 }
 
 # No tool this change owns may exceed this even with every knob maxed out.
@@ -218,25 +205,25 @@ ABSOLUTE_MAX_TOKENS = 50_000
 # ordinary parser or fixture drift does not turn this into a flaky test,
 # while removing a cap (which multiplies a list by 5-50x) still fails.
 BUDGETS: dict[str, dict[str, Any]] = {
-    "build_or_update_graph_tool": {
+    "build_or_update_graph": {
         "default": {"postprocess": "none"},
         "worst": {"postprocess": "none"},
         "default_max": 1_500,
         "worst_max": 1_500,
     },
-    "run_postprocess_tool": {
+    "run_postprocess": {
         "default": {},
         "worst": {},
         "default_max": 1_500,
         "worst_max": 1_500,
     },
-    "get_minimal_context_tool": {
+    "get_minimal_context": {
         "default": {},
         "worst": {"task": "review the pull request", "changed_files": "ALL"},
         "default_max": 800,
         "worst_max": 800,
     },
-    "get_impact_radius_tool": {
+    "get_impact_radius": {
         "default": {"changed_files": "LEAF"},
         "worst": {"changed_files": "ALL", "max_depth": 5},
         # Higher than it should be: changed_nodes and edges ignore
@@ -245,7 +232,7 @@ BUDGETS: dict[str, dict[str, Any]] = {
         "default_max": 12_000,
         "worst_max": None,  # see QUERY_OWNED_UNBOUNDED
     },
-    "query_graph_tool": {
+    "query_graph": {
         "default": {"pattern": "callers_of", "target": "helper_0_0_0"},
         "worst": {
             "pattern": "file_summary", "target": "pkg0/mod0.py",
@@ -256,7 +243,7 @@ BUDGETS: dict[str, dict[str, Any]] = {
         # own value, so a whole-file summary is the realistic worst case.
         "worst_max": 40_000,
     },
-    "get_review_context_tool": {
+    "get_review_context": {
         "default": {"changed_files": "LEAF"},
         "worst": {
             "changed_files": "ALL", "include_source": True,
@@ -270,13 +257,13 @@ BUDGETS: dict[str, dict[str, Any]] = {
         "default_max": 20_000,
         "worst_max": 50_000,
     },
-    "semantic_search_nodes_tool": {
+    "semantic_search_nodes": {
         "default": {"query": "helper"},
         "worst": {"query": "helper", "limit": HUGE},
         "default_max": 8_000,
         "worst_max": None,  # see QUERY_OWNED_UNBOUNDED
     },
-    "embed_graph_tool": {
+    "embed_graph": {
         # sentence-transformers is not a test dependency, so this exercises
         # the structured "provider unavailable" error response.
         "default": {},
@@ -284,31 +271,25 @@ BUDGETS: dict[str, dict[str, Any]] = {
         "default_max": 800,
         "worst_max": 800,
     },
-    "list_graph_stats_tool": {
+    "list_graph_stats": {
         "default": {},
         "worst": {},
         "default_max": 1_500,
         "worst_max": 1_500,
     },
-    "get_docs_section_tool": {
-        "default": {"section_name": "usage"},
-        "worst": {"section_name": "commands"},
-        "default_max": 4_000,
-        "worst_max": 4_000,
-    },
-    "find_large_functions_tool": {
+    "find_large_functions": {
         "default": {},
         "worst": {"min_lines": 1, "limit": HUGE},
         "default_max": 20_000,
         "worst_max": None,  # see QUERY_OWNED_UNBOUNDED
     },
-    "list_flows_tool": {
+    "list_flows": {
         "default": {},
         "worst": {"limit": HUGE},
         "default_max": 12_000,
         "worst_max": 40_000,
     },
-    "get_flow_tool": {
+    "get_flow": {
         "default": {"flow_id": "FLOW_ID"},
         "worst": {
             "flow_id": "FLOW_ID", "include_source": True,
@@ -317,23 +298,13 @@ BUDGETS: dict[str, dict[str, Any]] = {
         "default_max": 8_000,
         "worst_max": 40_000,
     },
-    "get_affected_flows_tool": {
-        "default": {"changed_files": "LEAF"},
-        # max_flows=0 is PR #853's documented "no caller limit" escape; it is
-        # now still subject to the per-detail-level ceiling.
-        "worst": {"changed_files": "ALL", "max_flows": 0},
-        "default_max": 6_000,
-        # Standard mode carries a full steps list per flow (~980 tokens each
-        # on a real repo), so the ceiling is 25 flows rather than PR #853's 50.
-        "worst_max": 40_000,
-    },
-    "list_communities_tool": {
+    "list_communities_func": {
         "default": {},
         "worst": {"max_results": HUGE, "max_members": HUGE},
         "default_max": 12_000,
         "worst_max": 40_000,
     },
-    "get_community_tool": {
+    "get_community_func": {
         "default": {"community_id": "COMMUNITY_ID"},
         "worst": {
             "community_id": "COMMUNITY_ID", "include_members": True,
@@ -342,7 +313,7 @@ BUDGETS: dict[str, dict[str, Any]] = {
         "default_max": 3_000,
         "worst_max": 20_000,
     },
-    "get_architecture_overview_tool": {
+    "get_architecture_overview_func": {
         "default": {},
         "worst": {
             "detail_level": "standard", "max_results": HUGE,
@@ -353,7 +324,7 @@ BUDGETS: dict[str, dict[str, Any]] = {
         # cross-community rows plus 25 members per community.
         "worst_max": 50_000,
     },
-    "detect_changes_tool": {
+    "detect_changes_func": {
         "default": {"changed_files": "LEAF"},
         "worst": {
             "changed_files": "ALL", "include_source": True, "max_depth": 5,
@@ -362,22 +333,22 @@ BUDGETS: dict[str, dict[str, Any]] = {
         "default_max": 12_000,
         "worst_max": 50_000,
     },
-    "refactor_tool:dead_code": {
-        "tool": "refactor_tool",
+    "refactor_func:dead_code": {
+        "tool": "refactor_func",
         "default": {"mode": "dead_code"},
         "worst": {"mode": "dead_code", "max_results": HUGE},
         "default_max": 12_000,
         "worst_max": 40_000,
     },
-    "refactor_tool:suggest": {
-        "tool": "refactor_tool",
+    "refactor_func:suggest": {
+        "tool": "refactor_func",
         "default": {"mode": "suggest"},
         "worst": {"mode": "suggest", "max_results": HUGE},
         "default_max": 12_000,
         "worst_max": 40_000,
     },
-    "refactor_tool:rename": {
-        "tool": "refactor_tool",
+    "refactor_func:rename": {
+        "tool": "refactor_func",
         "default": {
             "mode": "rename", "old_name": "helper_0_0_0",
             "new_name": "renamed_helper",
@@ -389,91 +360,13 @@ BUDGETS: dict[str, dict[str, Any]] = {
         "default_max": 8_000,
         "worst_max": 20_000,
     },
-    "apply_refactor_tool": {
-        "default": {"refactor_id": "REFACTOR_ID", "dry_run": True},
-        "worst": {
-            "refactor_id": "REFACTOR_ID", "dry_run": True,
-            "max_diff_files": HUGE,
-        },
-        # A dry-run diff is a bulk artifact by nature -- one unified diff per
-        # touched file. It is bounded by max_diff_files (25 by default),
-        # never by trimming the individual diffs, so a reviewer always sees
-        # a complete diff for each file shown.
-        "default_max": 25_000,
-        "worst_max": 40_000,
-    },
-    "generate_wiki_tool": {
-        "default": {},
-        "worst": {"force": True},
-        "default_max": 1_000,
-        "worst_max": 1_000,
-    },
-    "get_wiki_page_tool": {
-        "default": {"community_name": "COMMUNITY_NAME"},
-        "worst": {"community_name": "COMMUNITY_NAME", "max_chars": HUGE},
-        "default_max": 8_000,
-        "worst_max": 25_000,
-    },
-    "get_hub_nodes_tool": {
-        "default": {},
-        "worst": {"top_n": HUGE},
-        "default_max": 4_000,
-        "worst_max": 25_000,
-    },
-    "get_bridge_nodes_tool": {
-        "default": {},
-        "worst": {"top_n": HUGE},
-        "default_max": 4_000,
-        "worst_max": 25_000,
-    },
-    "get_knowledge_gaps_tool": {
-        "default": {},
-        "worst": {"max_per_category": HUGE},
-        "default_max": 8_000,
-        "worst_max": 20_000,
-    },
-    "get_surprising_connections_tool": {
-        "default": {},
-        "worst": {"top_n": HUGE},
-        "default_max": 4_000,
-        "worst_max": 30_000,
-    },
-    "get_suggested_questions_tool": {
-        # Bounded by construction: generate_suggested_questions draws at most
-        # 3 bridges + 3 hubs + 3 surprises + 2 thin communities + 2 untested
-        # hotspots, so it takes no result cap.
-        "default": {},
-        "worst": {},
-        "default_max": 2_000,
-        "worst_max": 2_000,
-    },
-    "traverse_graph_tool": {
-        "default": {"query": "helper_0_0_0"},
-        "worst": {"query": "helper_0_0_0", "depth": 6, "token_budget": HUGE},
-        "default_max": 8_000,
-        "worst_max": None,  # see QUERY_OWNED_UNBOUNDED
-    },
-    "list_repos_tool": {
-        "no_repo_root": True,
-        "default": {},
-        "worst": {},
-        "default_max": 2_000,
-        "worst_max": 2_000,
-    },
-    "cross_repo_search_tool": {
-        "no_repo_root": True,
-        "default": {"query": "helper"},
-        "worst": {"query": "helper", "limit": HUGE, "max_results": HUGE},
-        "default_max": 4_000,
-        "worst_max": 30_000,
-    },
 }
 
 
 def _pick_row(repo: dict[str, Any], sql: str, column: int) -> Any:
     """Read one id straight from the graph, at call time.
 
-    ``run_postprocess_tool`` is itself under test and rebuilds the flows and
+    ``run_postprocess`` is itself under test and rebuilds the flows and
     communities tables with fresh ids, so ids captured once in the fixture
     go stale mid-module.
     """
@@ -502,8 +395,6 @@ def _resolve_kwargs(kwargs: dict[str, Any], repo: dict[str, Any]) -> dict[str, A
             resolved[key] = _pick_row(repo, _COMMUNITY_SQL, 0)
         elif value == "COMMUNITY_NAME":
             resolved[key] = _pick_row(repo, _COMMUNITY_SQL, 1)
-        elif value == "REFACTOR_ID":
-            resolved[key] = repo["refactor_id"]
         else:
             resolved[key] = value
     return resolved
@@ -511,25 +402,16 @@ def _resolve_kwargs(kwargs: dict[str, Any], repo: dict[str, Any]) -> dict[str, A
 
 def _call(name: str, spec: dict[str, Any], kwargs: dict[str, Any],
           repo: dict[str, Any]) -> Any:
-    """Invoke one registered tool with fixture-resolved arguments."""
-    tool = getattr(crg_main, spec.get("tool", name))
-    func = getattr(tool, "fn", tool)
+    """Invoke one tool function with fixture-resolved arguments."""
+    func = getattr(tools, spec.get("tool", name))
     call_kwargs = _resolve_kwargs(kwargs, repo)
-    if not spec.get("no_repo_root"):
-        call_kwargs["repo_root"] = repo["root"]
-    if inspect.iscoroutinefunction(func):
-        return asyncio.run(func(**call_kwargs))
+    call_kwargs["repo_root"] = repo["root"]
     return func(**call_kwargs)
 
 
 @pytest.fixture(scope="module")
 def repo(graph_repo) -> dict[str, Any]:
-    """Fixture graph plus a live refactor_id for apply_refactor_tool."""
-    preview = crg_main.refactor_tool(
-        mode="rename", old_name="helper_0_0_0", new_name="renamed_helper",
-        repo_root=graph_repo["root"],
-    )
-    return {**graph_repo, "refactor_id": preview.get("refactor_id", "missing")}
+    return graph_repo
 
 
 # ---------------------------------------------------------------------------
@@ -537,20 +419,20 @@ def repo(graph_repo) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def test_budget_table_covers_every_registered_tool():
-    """Every ``@mcp.tool()`` in main.py must have a budget entry.
+def test_budget_table_covers_every_tool_function():
+    """Every public function ``cartograph.tools`` exports needs a budget entry.
 
     Without this, a new tool could ship unbounded and no case would notice.
     """
-    registered = {
-        name for name in dir(crg_main)
-        if name.endswith("_tool") and callable(getattr(crg_main, name))
-        and not name.startswith("_")
+    exported = {
+        name for name in tools.__all__
+        if not name.startswith("_") and callable(getattr(tools, name))
+        and getattr(tools, name).__module__.startswith("cartograph.tools.")
     }
     covered = {spec.get("tool", name) for name, spec in BUDGETS.items()}
-    assert registered - covered == set(), (
-        "MCP tools missing a token budget entry: "
-        f"{sorted(registered - covered)}"
+    assert exported - covered == set(), (
+        "Tool functions missing a token budget entry: "
+        f"{sorted(exported - covered)}"
     )
 
 
@@ -586,7 +468,7 @@ def test_worst_case_args_stay_in_budget(name, repo):
     )
     assert tokens <= ABSOLUTE_MAX_TOKENS, (
         f"{name} returned {tokens} tokens, over the {ABSOLUTE_MAX_TOKENS} "
-        "absolute ceiling that no MCP tool response may cross."
+        "absolute ceiling that no tool response may cross."
     )
 
 
@@ -598,26 +480,15 @@ def test_caps_actually_bind_on_the_fixture_graph(repo):
     fails even where the raw token count would still squeak under budget.
     """
     root = repo["root"]
-    all_files = repo["files"]
     cases = {
-        "list_communities": crg_main.list_communities_tool(
+        "list_communities": tools.list_communities_func(
             repo_root=root, max_results=1,
         ),
-        "list_flows": crg_main.list_flows_tool(repo_root=root, limit=1),
-        "get_affected_flows": crg_main.get_affected_flows_tool(
-            repo_root=root, changed_files=all_files, max_flows=1,
-        ),
-        "refactor_dead_code": crg_main.refactor_tool(
+        "list_flows": tools.list_flows(repo_root=root, limit=1),
+        "refactor_dead_code": tools.refactor_func(
             repo_root=root, mode="dead_code", max_results=1,
         ),
-        "get_hub_nodes": crg_main.get_hub_nodes_tool(repo_root=root, top_n=1),
-        "get_bridge_nodes": crg_main.get_bridge_nodes_tool(
-            repo_root=root, top_n=1,
-        ),
-        "get_surprising_connections": crg_main.get_surprising_connections_tool(
-            repo_root=root, top_n=1,
-        ),
-        "get_architecture_overview": crg_main.get_architecture_overview_tool(
+        "get_architecture_overview": tools.get_architecture_overview_func(
             repo_root=root, max_results=1,
         ),
     }
@@ -636,24 +507,11 @@ MAX_CEILINGS = {
     "community_tools._MAX_MEMBERS": (community_tools._MAX_MEMBERS, 25),
     "community_tools._MAX_COMMUNITIES": (community_tools._MAX_COMMUNITIES, 200),
     "community_tools._MAX_CROSS_EDGES": (community_tools._MAX_CROSS_EDGES, 200),
-    "analysis_tools._MAX_HUB_NODES": (analysis_tools._MAX_HUB_NODES, 100),
-    "analysis_tools._MAX_BRIDGE_NODES": (analysis_tools._MAX_BRIDGE_NODES, 100),
-    "analysis_tools._MAX_SURPRISING": (analysis_tools._MAX_SURPRISING, 100),
-    "analysis_tools._MAX_GAPS_PER_CATEGORY": (
-        analysis_tools._MAX_GAPS_PER_CATEGORY, 50,
-    ),
     "review._MAX_REVIEW_NODES": (review._MAX_REVIEW_NODES, 100),
     "review._MAX_REVIEW_EDGES": (review._MAX_REVIEW_EDGES, 150),
     "review._MAX_REVIEW_SOURCE_LINES": (review._MAX_REVIEW_SOURCE_LINES, 800),
     "review._MAX_LINES_PER_FILE": (review._MAX_LINES_PER_FILE, 500),
     "review._MAX_CHANGED_FUNCTIONS": (review._MAX_CHANGED_FUNCTIONS, 100),
-    "review._MAX_AFFECTED_FLOWS_STANDARD": (
-        review._MAX_AFFECTED_FLOWS_STANDARD, 25,
-    ),
-    "review._MAX_AFFECTED_FLOWS_MINIMAL": (
-        review._MAX_AFFECTED_FLOWS_MINIMAL, 500,
-    ),
-    "review._MAX_AFFECTED_FLOW_STEPS": (review._MAX_AFFECTED_FLOW_STEPS, 400),
     "refactor_tools._MAX_REFACTOR_RESULTS": (
         refactor_mod._MAX_REFACTOR_RESULTS, 150,
     ),
@@ -683,7 +541,7 @@ def test_hard_ceilings_bind(repo):
     root = repo["root"]
     all_files = repo["files"]
 
-    communities = crg_main.list_communities_tool(
+    communities = tools.list_communities_func(
         repo_root=root, max_members=HUGE,
     )["communities"]
     oversized = [c for c in communities if c["size"] > 25]
@@ -692,33 +550,13 @@ def test_hard_ceilings_bind(repo):
         assert len(community["members"]) == community_tools._MAX_MEMBERS
         assert community["members_truncated"] is True
 
-    hubs = crg_main.get_hub_nodes_tool(repo_root=root, top_n=HUGE)
-    assert hubs["total"] > analysis_tools._MAX_HUB_NODES
-    assert len(hubs["hub_nodes"]) == analysis_tools._MAX_HUB_NODES
-
-    surprises = crg_main.get_surprising_connections_tool(
-        repo_root=root, top_n=HUGE,
-    )
-    assert len(surprises["surprising_connections"]) == (
-        min(surprises["total"], analysis_tools._MAX_SURPRISING)
-    )
-
-    flows = crg_main.get_affected_flows_tool(
-        repo_root=root, changed_files=all_files, max_flows=HUGE,
-    )
-    assert flows["total"] > review._MAX_AFFECTED_FLOWS_STANDARD
-    assert len(flows["affected_flows"]) == review._MAX_AFFECTED_FLOWS_STANDARD
-    # The shared step budget must also hold, whatever the flow depth.
-    emitted = sum(len(f.get("steps") or []) for f in flows["affected_flows"])
-    assert emitted <= review._MAX_AFFECTED_FLOW_STEPS
-
-    changes = asyncio.run(crg_main.detect_changes_tool(
+    changes = tools.detect_changes_func(
         repo_root=root, changed_files=all_files, max_results=HUGE,
-    ))
+    )
     assert changes["changed_functions_total"] > review._MAX_CHANGED_FUNCTIONS
     assert len(changes["changed_functions"]) == review._MAX_CHANGED_FUNCTIONS
 
-    context = crg_main.get_review_context_tool(
+    context = tools.get_review_context(
         repo_root=root, changed_files=all_files, max_results=HUGE,
         max_files=HUGE, include_source=True, max_lines_per_file=HUGE,
     )["context"]
@@ -732,7 +570,7 @@ def test_hard_ceilings_bind(repo):
     # a small margin over the raw line budget.
     assert emitted_lines <= review._MAX_REVIEW_SOURCE_LINES * 1.5
 
-    dead = crg_main.refactor_tool(
+    dead = tools.refactor_func(
         repo_root=root, mode="dead_code", max_results=HUGE,
     )
     assert len(dead["dead_code"]) == min(
@@ -744,7 +582,7 @@ class TestTruncationContract:
     """The contract PR #853 established, applied to the newly capped tools."""
 
     def test_list_communities_reports_untruncated_total(self, repo):
-        result = crg_main.list_communities_tool(
+        result = tools.list_communities_func(
             repo_root=repo["root"], max_results=1,
         )
         assert result["status"] == "ok"
@@ -753,7 +591,7 @@ class TestTruncationContract:
         assert f"showing {len(result['communities'])} of" in result["summary"]
 
     def test_get_community_keeps_true_size_when_members_cut(self, repo):
-        result = crg_main.get_community_tool(
+        result = tools.get_community_func(
             repo_root=repo["root"],
             community_id=_pick_row(repo, _COMMUNITY_SQL, 0),
             include_members=True, max_members=1,
@@ -765,40 +603,23 @@ class TestTruncationContract:
 
     def test_detect_changes_flows_carry_no_step_lists(self, repo):
         """#849's payload must not leak back in through detect_changes."""
-        result = asyncio.run(crg_main.detect_changes_tool(
+        result = tools.detect_changes_func(
             repo_root=repo["root"], changed_files=repo["files"],
-        ))
+        )
         for flow in result["affected_flows"]:
             assert "steps" not in flow, (
                 "detect_changes embeds per-flow metadata only; full step "
                 "lists are what made get_affected_flows return 247k tokens"
             )
 
-    def test_affected_flows_zero_still_hits_the_ceiling(self, repo):
-        """``max_flows=0`` means 'no caller limit', not 'no limit'."""
-        result = crg_main.get_affected_flows_tool(
-            repo_root=repo["root"], changed_files=repo["files"], max_flows=0,
-        )
-        assert len(result["affected_flows"]) <= 25
-        assert result["total"] >= len(result["affected_flows"])
-
-    def test_rename_preview_response_is_cut_but_apply_is_not(self, repo):
-        """Truncating the response must not truncate the stored refactor."""
-        preview = crg_main.refactor_tool(
+    def test_rename_preview_response_is_cut(self, repo):
+        preview = tools.refactor_func(
             repo_root=repo["root"], mode="rename", old_name="helper_0_0_0",
             new_name="renamed_helper", max_results=1,
         )
         assert preview["truncated"] is True
         assert len(preview["edits"]) == 1
         assert preview["total"] > 1
-        # The stored preview still holds every edit, so a dry run reports the
-        # full set of files rather than the one shown edit.
-        applied = crg_main.apply_refactor_tool(
-            repo_root=repo["root"], refactor_id=preview["refactor_id"],
-            dry_run=True,
-        )
-        assert applied["status"] == "ok"
-        assert applied["edits_applied"] >= preview["total"]
 
 
 class TestBoundValidation:
@@ -807,41 +628,28 @@ class TestBoundValidation:
     @pytest.mark.parametrize(
         ("tool", "kwargs"),
         [
-            ("get_hub_nodes_tool", {"top_n": 0}),
-            ("get_hub_nodes_tool", {"top_n": True}),
-            ("get_bridge_nodes_tool", {"top_n": -1}),
-            ("get_surprising_connections_tool", {"top_n": 0}),
-            ("get_knowledge_gaps_tool", {"max_per_category": 0}),
-            ("list_communities_tool", {"max_results": 0}),
-            ("list_communities_tool", {"max_members": True}),
-            ("get_community_tool", {"max_members": 0}),
-            ("get_architecture_overview_tool", {"max_results": 0}),
-            ("list_flows_tool", {"limit": 0}),
-            ("get_flow_tool", {"max_steps": 0}),
-            ("get_flow_tool", {"max_source_lines": -5}),
-            ("get_review_context_tool", {"max_results": 0}),
-            ("get_review_context_tool", {"max_files": True}),
-            ("get_wiki_page_tool", {"community_name": "x", "max_chars": 0}),
-            ("apply_refactor_tool", {"refactor_id": "x", "max_diff_files": 0}),
+            ("list_communities_func", {"max_results": 0}),
+            ("list_communities_func", {"max_members": True}),
+            ("get_community_func", {"max_members": 0}),
+            ("get_architecture_overview_func", {"max_results": 0}),
+            ("list_flows", {"limit": 0}),
+            ("get_flow", {"max_steps": 0}),
+            ("get_flow", {"max_source_lines": -5}),
+            ("get_review_context", {"max_results": 0}),
+            ("get_review_context", {"max_files": True}),
         ],
     )
     def test_rejects_non_positive_bounds(self, tool, kwargs, repo):
-        func = getattr(crg_main, tool)
+        func = getattr(tools, tool)
         with pytest.raises(ValueError, match="greater than or equal to 1"):
             func(repo_root=repo["root"], **kwargs)
 
     def test_refactor_rejects_non_positive_max_results(self, repo):
         with pytest.raises(ValueError, match="greater than or equal to 1"):
-            crg_main.refactor_tool(
+            tools.refactor_func(
                 repo_root=repo["root"], mode="dead_code", max_results=0,
             )
 
     def test_detect_changes_rejects_non_positive_bounds(self, repo):
         with pytest.raises(ValueError, match="greater than or equal to 1"):
-            asyncio.run(crg_main.detect_changes_tool(
-                repo_root=repo["root"], max_results=0,
-            ))
-
-    def test_cross_repo_search_rejects_non_positive_bounds(self):
-        with pytest.raises(ValueError, match="greater than or equal to 1"):
-            crg_main.cross_repo_search_tool(query="x", max_results=0)
+            tools.detect_changes_func(repo_root=repo["root"], max_results=0)

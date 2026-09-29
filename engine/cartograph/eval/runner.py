@@ -307,7 +307,7 @@ def run_eval(
 
         # Resolve the repo path to an absolute Path before handing it to
         # full_build / get_db_path so the stored qualified_names match what
-        # the CLI/MCP layer produces (those paths go through _get_store ->
+        # the CLI layer produces (those paths go through _get_store ->
         # _validate_repo_root which .resolve()s). Without this, a later
         # ``carto update --repo <relative>`` writes the same
         # function under a new absolute-prefixed qualified_name, leaving the
@@ -324,7 +324,7 @@ def run_eval(
 
         try:
             full_build(repo_path, store)
-            # full_build is the parsing-only primitive; the higher-level CLI/MCP
+            # full_build is the parsing-only primitive; the higher-level CLI
             # wrappers run postprocessing on top. The eval framework bypasses
             # those, so call it directly here. Without this, FTS5 stays empty
             # and downstream benchmarks (token_efficiency, search_quality)

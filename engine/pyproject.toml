@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "cartograph"
 version = "2.3.8"
-description = "Local-first knowledge graph for token-efficient code review through MCP and CLI"
+description = "Local-first knowledge graph for token-efficient code review, as a CLI"
 readme = {file = "README.md", content-type = "text/markdown"}
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "Tirth" },
 ]
-keywords = ["code-review", "knowledge-graph", "tree-sitter", "mcp", "ai-coding-tools"]
+keywords = ["code-review", "knowledge-graph", "tree-sitter", "ai-coding-tools"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -25,11 +25,6 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-    "mcp>=1.0.0,<3",
-    # fastmcp >=3.2.4 is required for Message-based prompts and includes the
-    # CVE-2025-62800/62801/66416 fixes; <4 prevents the next major release
-    # from breaking the server the way fastmcp 3.0 did. See: #488
-    "fastmcp>=3.2.4,<4",
     "tree-sitter>=0.23.0,<1",
     # Declared range widened to admit 1.x, which is what is actually installed,
     # tested and frozen into the .vsix payload. The two lines are different

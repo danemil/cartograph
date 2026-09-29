@@ -27,12 +27,6 @@ from .parser import CodeParser, normalize_file_path
 
 _MAX_PARSE_WORKERS = int(os.environ.get("CRG_PARSE_WORKERS", str(min(os.cpu_count() or 4, 8))))
 
-# Set only while the in-process FastMCP server is using stdio transport.
-# This is deliberately separate from ``sys.stdin.isatty()``: CI, cron, and
-# redirected CLI builds also have non-TTY stdin, but do not share the MCP
-# transport's file-descriptor lifetime problem.
-_MCP_STDIO_ACTIVE = False
-
 # Each process-pool worker runs this module in its own process, while each
 # thread-pool worker needs isolated parser state.  A thread-local cache covers
 # both cases and avoids rebuilding CodeParser (including its grammar probes and
@@ -44,11 +38,9 @@ def _select_executor_kind() -> str:
     """Return 'process' or 'thread' for parallel parsing.
 
     Defaults to ``process`` (the original behavior, fastest on Linux/macOS).
-    Auto-switches to ``thread`` for an active MCP stdio server on every
-    platform, where ``ProcessPoolExecutor`` workers can inherit the transport
-    pipe/socket and prevent EOF shutdown. The older Windows non-TTY fallback
-    remains for direct integrations that predate the explicit transport flag
-    (issues #46, #136, PR #615).
+    Switches to ``thread`` on Windows when stdin is not a TTY, where
+    ``ProcessPoolExecutor`` workers can inherit the caller's pipe handles and
+    prevent it from seeing EOF (issues #46, #136).
 
     Override explicitly with ``CRG_PARSE_EXECUTOR={process,thread}``.
 
@@ -60,8 +52,6 @@ def _select_executor_kind() -> str:
     explicit = os.environ.get("CRG_PARSE_EXECUTOR", "").strip().lower()
     if explicit in ("process", "thread"):
         return explicit
-    if _MCP_STDIO_ACTIVE:
-        return "thread"
     if sys.platform == "win32" and not sys.stdin.isatty():
         return "thread"
     return "process"
@@ -1323,9 +1313,7 @@ def full_build(
                 logger.info("Progress: %d/%d files parsed", i, file_count)
     else:
         # Parallel parsing — store calls remain serial (SQLite single-writer).
-        # Executor kind auto-selected: process for normal CLI/automation;
-        # thread for MCP stdio to avoid pipe-handle inheritance deadlocks and
-        # orphan workers (issues #46, #136, PR #615). Override via
+        # Executor kind auto-selected, see _select_executor_kind. Override via
         # CRG_PARSE_EXECUTOR env.
         args_list = [(rel_path, str(repo_root)) for rel_path in files]
         with _make_executor(_MAX_PARSE_WORKERS) as executor:

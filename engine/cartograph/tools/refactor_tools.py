@@ -1,14 +1,11 @@
-"""Tools 17, 18: refactor_func, apply_refactor_func."""
+"""Tool 17: refactor_func."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from ..hints import generate_hints, get_session
-from ..incremental import find_project_root
 from ..refactor import (
-    apply_refactor,
     find_dead_code,
     rename_preview,
     suggest_refactorings,
@@ -18,7 +15,6 @@ from ._common import (
     _get_store,
     _shown_of,
     _validate_positive_int,
-    _validate_repo_root,
 )
 
 # ---------------------------------------------------------------------------
@@ -66,8 +62,7 @@ def refactor_func(
         repo_root: Repository root path. Auto-detected if omitted.
         max_results: Maximum edits/symbols/suggestions to include in the
             response (default 50, capped at 150). ``total`` always reports
-            the untruncated count. The stored rename preview keeps every
-            edit, so ``apply_refactor_tool`` still applies the full set.
+            the untruncated count.
         detail_level: "standard" (default) returns full records; "minimal"
             keeps only the identifying fields per record.
 
@@ -101,9 +96,6 @@ def refactor_func(
                     "status": "not_found",
                     "summary": f"No node found matching '{old_name}'.",
                 }
-            # Bound only the response copy. ``preview`` is the object held in
-            # the pending-refactor registry, so apply_refactor still writes
-            # every edit; slicing it here would silently drop real edits.
             edits, total, truncated = _bounded(
                 preview["edits"], max_results, _MAX_REFACTOR_RESULTS,
             )
@@ -114,9 +106,7 @@ def refactor_func(
                 "summary": (
                     f"Rename preview: {old_name} -> {new_name}, "
                     f"{total} edit(s)"
-                    + _shown_of(len(edits), total) + ". "
-                    f"Use apply_refactor_tool(refactor_id="
-                    f"'{preview['refactor_id']}') to apply."
+                    + _shown_of(len(edits), total) + "."
                 ),
                 **preview,
                 "edits": edits,
@@ -178,63 +168,3 @@ def refactor_func(
         return {"status": "error", "error": str(exc)}
     finally:
         store.close()
-
-
-# ---------------------------------------------------------------------------
-# Tool 18: apply_refactor_tool  [REFACTOR]
-# ---------------------------------------------------------------------------
-
-
-def apply_refactor_func(
-    refactor_id: str,
-    repo_root: str | None = None,
-    dry_run: bool = False,
-    max_diff_files: int = 25,
-) -> dict[str, Any]:
-    """Apply a previously previewed refactoring to source files.
-
-    [REFACTOR] Validates the refactor_id, checks expiry, ensures all edit
-    paths are within the repo root, then performs exact string replacements.
-
-    Args:
-        refactor_id: ID returned by a prior ``refactor_tool(mode="rename")``
-            call.
-        repo_root: Repository root path. Auto-detected if omitted.
-        dry_run: If True, return a unified diff of what would change
-            without touching disk. The refactor_id remains valid so the
-            user can review the diff, then call again with ``dry_run=False``
-            to actually write the changes. See: #176
-        max_diff_files: Maximum per-file diffs to include in a dry run
-            (default 25, capped at 150). Renaming a widely-used symbol
-            produces one diff per touched file; ``would_modify`` still
-            lists every file that would change, and the write path is
-            never affected.
-
-    Returns:
-        Status with count of applied edits and modified files. When
-        ``dry_run=True`` the response additionally contains ``would_modify``
-        (list of file paths), ``diffs`` (map of file -> unified-diff
-        string), and ``diffs_truncated``.
-    """
-    _validate_positive_int(max_diff_files, "max_diff_files")
-
-    try:
-        root = (
-            _validate_repo_root(Path(repo_root))
-            if repo_root
-            else find_project_root()
-        )
-    except (RuntimeError, ValueError) as exc:
-        return {"status": "error", "error": str(exc)}
-
-    result = apply_refactor(refactor_id, root, dry_run=dry_run)
-
-    diffs = result.get("diffs")
-    if isinstance(diffs, dict) and diffs:
-        limit = min(max_diff_files, _MAX_REFACTOR_RESULTS)
-        if len(diffs) > limit:
-            kept = sorted(diffs)[:limit]
-            result["diffs"] = {path: diffs[path] for path in kept}
-            result["diffs_total"] = len(diffs)
-            result["diffs_truncated"] = True
-    return result

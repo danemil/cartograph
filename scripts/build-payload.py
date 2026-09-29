@@ -31,12 +31,13 @@ call entirely. The launcher written by either consumer sets that variable.
 
 ## Why the build venv is assembled by hand
 
-`engine/pyproject.toml` still declares `mcp` and `fastmcp` as hard
-dependencies — inherited from upstream, where the MCP server was the product.
-Cartograph deleted that transport, and `engine/.venv` has run without either
-package for the whole project. Installing the project as declared would freeze
-the starlette/uvicorn stack into an artifact that never imports it, so the
-runtime dependencies are listed explicitly below instead.
+`engine/pyproject.toml` declared `mcp` and `fastmcp` as hard dependencies
+until the MCP server was removed — inherited from upstream, where that server
+was the product. Installing the project as declared would have frozen the
+starlette/uvicorn stack into an artifact that never imports it, so the runtime
+dependencies are listed explicitly below. The list matches what the project
+declares now; a dependency added there reaches the artifact only once it is
+added here too.
 """
 
 from __future__ import annotations

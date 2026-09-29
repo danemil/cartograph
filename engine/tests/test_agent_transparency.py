@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import cartograph.main as main_module
 import cartograph.tools._common as common_module
 import cartograph.tools.query as query_module
 from cartograph.graph import GraphStore
@@ -439,26 +438,3 @@ def test_impact_minimal_reports_nodes_omitted(tmp_path, monkeypatch):
 
     assert result["truncated"] is True
     assert result["nodes_omitted"] == 3
-
-
-def test_mcp_query_wrapper_forwards_max_results(monkeypatch):
-    captured = {}
-
-    def fake_query_graph(**kwargs):
-        captured.update(kwargs)
-        return {"status": "ok", "results": []}
-
-    monkeypatch.setattr(main_module, "query_graph", fake_query_graph)
-    monkeypatch.setattr(
-        main_module, "_resolve_repo_root", lambda repo_root=None: "/repo",
-    )
-    monkeypatch.setattr(
-        main_module, "with_provenance", lambda result, repo_root=None: result,
-    )
-
-    tool = getattr(main_module.query_graph_tool, "fn", None)
-    underlying = tool or main_module.query_graph_tool
-    result = underlying("callers_of", "target", max_results=7)
-
-    assert result["status"] == "ok"
-    assert captured["max_results"] == 7

@@ -2225,7 +2225,7 @@ def _sanitize_name(s: str, max_len: int = 256) -> str:
     Node names extracted from source code could contain adversarial strings
     (e.g. ``IGNORE_ALL_PREVIOUS_INSTRUCTIONS``).  This function removes control
     characters (0x00-0x1F except tab and newline) and enforces a length limit so
-    that names flowing through MCP tool responses cannot easily influence AI
+    that names flowing through tool responses cannot easily influence AI
     agent behaviour.
     """
     # Strip control chars 0x00-0x1F except \t (0x09) and \n (0x0A)

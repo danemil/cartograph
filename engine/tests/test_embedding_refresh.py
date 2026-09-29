@@ -1,7 +1,5 @@
 """Explicit, provider-scoped embedding refresh and orphan cleanup."""
 
-import asyncio
-import importlib.util
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,17 +11,6 @@ from cartograph.graph import GraphStore
 from cartograph.parser import NodeInfo
 from cartograph.postprocessing import run_post_processing
 from cartograph.tools.build import _run_postprocess
-
-
-# MCP is banned in the environment Cartograph targets, so `fastmcp` is
-# deliberately not installed and `cartograph.main` (the MCP server) cannot be
-# imported. The MCP surface survives only as an opt-in extra, so the handful of
-# tests that reach into it are gated on the optional dependency rather than
-# deleted — the same reason tests/test_main.py and friends are ignored wholesale.
-_HAS_FASTMCP = importlib.util.find_spec("fastmcp") is not None
-_NEEDS_FASTMCP = pytest.mark.skipif(
-    not _HAS_FASTMCP, reason="fastmcp not installed (MCP is banned in this fork)"
-)
 
 
 class _StubProvider:
@@ -364,57 +351,6 @@ class TestRefreshWiring:
             )
         finally:
             graph.close()
-
-    @_NEEDS_FASTMCP
-    def test_mcp_build_and_postprocess_forward_exact_scope(self):
-        from cartograph import main as crg_main
-
-        build_tool = getattr(
-            crg_main.build_or_update_graph_tool,
-            "fn",
-            crg_main.build_or_update_graph_tool,
-        )
-        postprocess_tool = getattr(
-            crg_main.run_postprocess_tool,
-            "fn",
-            crg_main.run_postprocess_tool,
-        )
-        with (
-            patch.object(
-                crg_main,
-                "with_provenance",
-                side_effect=lambda result, _root: result,
-            ),
-            patch.object(
-                crg_main,
-                "build_or_update_graph",
-                return_value={"status": "ok"},
-            ) as build,
-            patch.object(
-                crg_main,
-                "run_postprocess",
-                return_value={"status": "ok"},
-            ) as postprocess,
-        ):
-            asyncio.run(
-                build_tool(
-                    repo_root="/repo",
-                    embedding_provider="local",
-                    embedding_model="test-model",
-                )
-            )
-            asyncio.run(
-                postprocess_tool(
-                    repo_root="/repo",
-                    embedding_provider="local",
-                    embedding_model="test-model",
-                )
-            )
-
-        assert build.call_args.kwargs["embedding_provider"] == "local"
-        assert build.call_args.kwargs["embedding_model"] == "test-model"
-        assert postprocess.call_args.kwargs["embedding_provider"] == "local"
-        assert postprocess.call_args.kwargs["embedding_model"] == "test-model"
 
     def test_cli_build_forwards_exact_scope(self):
         from cartograph import cli

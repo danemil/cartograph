@@ -3,29 +3,19 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from cartograph import skills, uninstall
 from cartograph.cli import _handle_init
 
 
-def _args(
-    tmp_path: Path, platform: str, *, with_mcp: bool = True
-) -> argparse.Namespace:
-    """Install arguments for a test.
-
-    ``with_mcp`` defaults to True here and False in the CLI. These tests cover
-    the MCP registration lifecycle, which still exists behind ``--with-mcp``;
-    the shipped default does not write MCP config at all, because MCP servers
-    are prohibited in the environment Cartograph is built for.
-    """
+def _args(tmp_path: Path, platform: str) -> argparse.Namespace:
+    """Install arguments for a test."""
     return argparse.Namespace(
         repo=str(tmp_path),
         dry_run=False,
         platform=platform,
         yes=True,
-        with_mcp=with_mcp,
         no_instructions=True,
         no_skills=False,
         no_hooks=False,
@@ -39,23 +29,7 @@ def test_copilot_cli_install_reinstall_uninstall_lifecycle(
     repo = tmp_path / "repo"
     (repo / ".git" / "hooks").mkdir(parents=True)
     home = tmp_path / "home"
-    config = home / ".copilot" / "mcp-config.json"
-    config.parent.mkdir(parents=True)
-    config.write_text(
-        json.dumps(
-            {
-                "mcpServers": {
-                    "current-server": {"command": "keep-current"},
-                },
-                "servers": {
-                    "cartograph": {},
-                    "legacy-server": {"command": "keep-legacy"},
-                },
-                "theme": "dark",
-            }
-        ),
-        encoding="utf-8",
-    )
+    home.mkdir()
     legacy_instruction = repo / ".github" / "cartograph.instruction.md"
     legacy_instruction.parent.mkdir(parents=True)
     legacy_instruction.write_text(
@@ -69,7 +43,6 @@ def test_copilot_cli_install_reinstall_uninstall_lifecycle(
     args.no_hooks = True
 
     _handle_init(args)
-    first_config = config.read_bytes()
     current_instruction = (
         repo
         / ".github"
@@ -79,31 +52,12 @@ def test_copilot_cli_install_reinstall_uninstall_lifecycle(
     first_instruction = current_instruction.read_bytes()
     _handle_init(args)
 
-    assert config.read_bytes() == first_config
     assert current_instruction.read_bytes() == first_instruction
-    installed = json.loads(config.read_text(encoding="utf-8"))
-    assert installed["mcpServers"]["current-server"] == {
-        "command": "keep-current",
-    }
-    assert installed["mcpServers"]["cartograph"]["type"] == "local"
-    assert installed["mcpServers"]["cartograph"]["tools"] == ["*"]
-    assert installed["servers"] == {
-        "legacy-server": {"command": "keep-legacy"},
-    }
     assert legacy_instruction.read_text(encoding="utf-8") == "# User notes\n"
 
     report = uninstall.run(repo=repo, keep_data=True)
 
     assert report.errors == []
-    assert json.loads(config.read_text(encoding="utf-8")) == {
-        "mcpServers": {
-            "current-server": {"command": "keep-current"},
-        },
-        "servers": {
-            "legacy-server": {"command": "keep-legacy"},
-        },
-        "theme": "dark",
-    }
     assert legacy_instruction.read_text(encoding="utf-8") == "# User notes\n"
     assert not current_instruction.exists()
 
@@ -116,10 +70,6 @@ def test_handle_init_codex_skips_claude_skills(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         "cartograph.incremental.ensure_repo_gitignore_excludes_crg",
         lambda repo_root: "created",
-    )
-    monkeypatch.setattr(
-        "cartograph.skills.install_platform_configs",
-        lambda repo_root, target, dry_run=False: ["Codex"],
     )
 
     called = {"generate_skills": False, "codex_hooks": False, "git_hook": False}
@@ -157,10 +107,6 @@ def test_handle_init_cursor_installs_cursor_hooks(monkeypatch, tmp_path, capsys)
     monkeypatch.setattr(
         "cartograph.incremental.ensure_repo_gitignore_excludes_crg",
         lambda repo_root: "created",
-    )
-    monkeypatch.setattr(
-        "cartograph.skills.install_platform_configs",
-        lambda repo_root, target, dry_run=False: ["Cursor"],
     )
     monkeypatch.setitem(
         __import__("cartograph.skills", fromlist=["PLATFORMS"]).PLATFORMS,
@@ -202,10 +148,6 @@ def test_handle_init_codebuddy_installs_only_codebuddy_native_files(
     monkeypatch.setattr(
         "cartograph.incremental.ensure_repo_gitignore_excludes_crg",
         lambda repo_root: "created",
-    )
-    monkeypatch.setattr(
-        "cartograph.skills.install_platform_configs",
-        lambda repo_root, target, dry_run=False: ["CodeBuddy Code"],
     )
 
     called = {
@@ -278,7 +220,7 @@ def test_install_writes_no_mcp_config_by_default(monkeypatch, tmp_path):
     home.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
 
-    _handle_init(_args(repo, "all", with_mcp=False))
+    _handle_init(_args(repo, "all"))
 
     written = [p for p in repo.rglob("*") if p.is_file() and "mcp" in p.name.lower()]
     assert written == [], f"install wrote MCP config: {written}"

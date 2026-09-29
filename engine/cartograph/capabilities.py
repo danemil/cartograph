@@ -25,7 +25,7 @@ from typing import Any, Optional
 #: Commands that exist for humans or installation, not for agents. Listing them
 #: spends an agent's context on things it should never call.
 _NOT_AGENT_FACING = frozenset({
-    "install", "init", "uninstall", "serve", "mcp", "daemon", "watch", "eval",
+    "install", "init", "uninstall", "daemon", "watch", "eval",
     "register", "unregister", "capabilities",
     # `hook` is invoked by the host, not by the agent. It speaks the hook
     # protocol, not this one — an agent that called it would get a line of

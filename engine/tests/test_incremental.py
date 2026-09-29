@@ -34,31 +34,24 @@ from cartograph.incremental import (
 
 
 class TestParseExecutorSelection:
-    def test_stdio_mcp_uses_threads_on_unix(self, monkeypatch):
+    def test_unix_automation_keeps_process_default(self, monkeypatch):
         monkeypatch.delenv("CRG_PARSE_EXECUTOR", raising=False)
-        monkeypatch.setattr(
-            incremental_module, "_MCP_STDIO_ACTIVE", True, raising=False,
-        )
-        monkeypatch.setattr(incremental_module.sys, "platform", "linux")
-        monkeypatch.setattr(incremental_module.sys.stdin, "isatty", lambda: False)
-
-        assert incremental_module._select_executor_kind() == "thread"
-
-    def test_non_mcp_unix_automation_keeps_process_default(self, monkeypatch):
-        monkeypatch.delenv("CRG_PARSE_EXECUTOR", raising=False)
-        monkeypatch.setattr(
-            incremental_module, "_MCP_STDIO_ACTIVE", False, raising=False,
-        )
         monkeypatch.setattr(incremental_module.sys, "platform", "linux")
         monkeypatch.setattr(incremental_module.sys.stdin, "isatty", lambda: False)
 
         assert incremental_module._select_executor_kind() == "process"
 
-    def test_explicit_process_override_wins_in_stdio_mcp(self, monkeypatch):
+    def test_windows_without_tty_uses_threads(self, monkeypatch):
+        monkeypatch.delenv("CRG_PARSE_EXECUTOR", raising=False)
+        monkeypatch.setattr(incremental_module.sys, "platform", "win32")
+        monkeypatch.setattr(incremental_module.sys.stdin, "isatty", lambda: False)
+
+        assert incremental_module._select_executor_kind() == "thread"
+
+    def test_explicit_process_override_wins_on_windows(self, monkeypatch):
         monkeypatch.setenv("CRG_PARSE_EXECUTOR", "process")
-        monkeypatch.setattr(
-            incremental_module, "_MCP_STDIO_ACTIVE", True, raising=False,
-        )
+        monkeypatch.setattr(incremental_module.sys, "platform", "win32")
+        monkeypatch.setattr(incremental_module.sys.stdin, "isatty", lambda: False)
 
         assert incremental_module._select_executor_kind() == "process"
 

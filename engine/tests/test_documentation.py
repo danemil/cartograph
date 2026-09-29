@@ -23,7 +23,6 @@ OPTIONAL_GROUPS = (
 USER_DOC_FILES = README_FILES + (
     "docs/COMMANDS.md",
     "docs/FAQ.md",
-    "cartograph/docs/LLM-OPTIMIZED-REFERENCE.md",
     "docs/TROUBLESHOOTING.md",
 )
 

@@ -1,4 +1,4 @@
-"""Tools 4, 12, 16: review context, affected flows, detect changes."""
+"""Tools 4, 16: review context, detect changes."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from typing import Any
 
 from ..changes import analyze_changes, parse_diff_ranges, parse_git_diff_ranges  # noqa: F401
 from ..context_savings import attach_context_savings, estimate_file_tokens
-from ..flows import get_affected_flows as _get_affected_flows
 from ..graph import edge_to_dict, node_to_dict
 from ..hints import generate_hints, get_session
 from ..incremental import get_changed_files, get_staged_and_unstaged
@@ -36,25 +35,13 @@ _MAX_REVIEW_SOURCE_LINES = 800
 _MAX_LINES_PER_FILE = 500
 _MAX_CHANGED_FUNCTIONS = 100
 _MAX_DETECT_SOURCE_LINES = 600
-
-# ``get_affected_flows`` in standard mode carries a full ``steps`` list per
-# flow (~980 tokens each), so 50 flows is still ~49k tokens — #849 was only
-# half-closed by capping the count. The ceiling therefore depends on
-# detail_level, the same way query.py caps minimal mode at five results.
-_MAX_AFFECTED_FLOWS_STANDARD = 25
-_MAX_AFFECTED_FLOWS_MINIMAL = 500
-# Flow depth varies hugely between codebases, so a flow *count* alone does
-# not bound the response. Steps are filled from the most critical flow
-# down until this shared budget runs out; the rest keep their metadata and
-# are marked ``steps_omitted``.
-_MAX_AFFECTED_FLOW_STEPS = 400
 _MAX_DETECT_FLOWS = 200
 
 # ``detect_changes`` embeds affected flows for context, not for flow
 # spelunking: every flow carries a full ``steps`` list, which is exactly
 # what made get_affected_flows return 247k tokens in #849. Callers who want
-# step detail should use get_affected_flows_tool, so the embedded copy keeps
-# per-flow metadata only.
+# step detail should use ``carto flow``, so the embedded copy keeps per-flow
+# metadata only.
 _DETECT_FLOW_FIELDS = (
     "id", "name", "criticality", "depth", "node_count", "file_count",
 )
@@ -63,32 +50,6 @@ _DETECT_FLOW_FIELDS = (
 def _project(rows: list[dict[str, Any]], fields: tuple[str, ...]) -> list[dict[str, Any]]:
     """Keep only *fields* on each row, dropping keys the row does not have."""
     return [{k: r[k] for k in fields if k in r} for r in rows]
-
-
-def _bound_flow_steps(
-    flows: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], bool]:
-    """Spend a shared step budget across *flows*, most critical first.
-
-    Returns ``(flows, truncated)``. Flows are already sorted by criticality,
-    so the ones a reviewer cares about keep their full step list; the tail
-    keeps metadata and is marked ``steps_omitted``. Every flow reports
-    ``total_steps`` so the untruncated depth is never lost.
-    """
-    budget = _MAX_AFFECTED_FLOW_STEPS
-    truncated = False
-    bounded: list[dict[str, Any]] = []
-    for flow in flows:
-        out = dict(flow)
-        steps = out.get("steps") or []
-        out["total_steps"] = len(steps)
-        if len(steps) > budget:
-            out["steps"] = steps[:budget]
-            out["steps_omitted"] = True
-            truncated = True
-        budget -= min(len(steps), budget)
-        bounded.append(out)
-    return bounded, truncated
 
 
 # ---------------------------------------------------------------------------
@@ -416,107 +377,6 @@ def _generate_review_guidance(
         )
 
     return "\n".join(guidance_parts)
-
-
-# ---------------------------------------------------------------------------
-# Tool 12: get_affected_flows  [REVIEW]
-# ---------------------------------------------------------------------------
-
-
-def get_affected_flows_func(
-    changed_files: list[str] | None = None,
-    base: str = "HEAD~1",
-    repo_root: str | None = None,
-    detail_level: str = "standard",
-    max_flows: int = 50,
-) -> dict[str, Any]:
-    """Find execution flows affected by changed files.
-
-    [REVIEW] Identifies which execution flows pass through nodes in the
-    changed files.  Useful during code review to understand which user-facing
-    or critical paths are affected by a change.
-
-    Args:
-        changed_files: List of changed file paths (relative to repo root).
-                       Auto-detected from git diff if omitted.
-        base: Git ref for auto-detecting changes (default: HEAD~1).
-        repo_root: Repository root path. Auto-detected if omitted.
-        detail_level: "standard" for full step details, "minimal" for
-            per-flow metadata only (name, criticality, depth, counts).
-            Every flow carries a full ``steps`` list in standard mode, so
-            large change sets can exceed 200k tokens without a bound (#849).
-        max_flows: Maximum flows to return (default: 50). ``total`` always
-            reports the untruncated count; 0 means "no caller limit".
-            Standard mode additionally caps the visible flows at 25 and
-            minimal mode at 500, because one standard flow costs ~980
-            tokens against ~18 for a minimal one. This mirrors the way
-            query.py caps minimal-mode results at five. Standard mode also
-            spends a shared 400-step budget across the returned flows, so
-            a codebase with very deep call chains cannot blow the budget
-            with a legal flow count.
-
-    Returns:
-        Affected flows sorted by criticality; ``truncated`` is set when
-        ``max_flows``, the per-detail-level ceiling, or the step budget cut
-        the response.
-    """
-    store, root = _get_store(repo_root)
-    try:
-        if changed_files is None:
-            changed_files = get_changed_files(root, base)
-            if not changed_files:
-                changed_files = get_staged_and_unstaged(root)
-
-        if not changed_files:
-            return {
-                "status": "ok",
-                "summary": "No changed files detected.",
-                "affected_flows": [],
-                "total": 0,
-            }
-
-        # Convert to absolute paths for graph lookup. Graph identity uses
-        # POSIX separators (#774), so normalize the joined paths.
-        abs_files = [normalize_file_path(root / f) for f in changed_files]
-        result = _get_affected_flows(store, abs_files)
-
-        total = result["total"]
-        flows = result["affected_flows"]
-        ceiling = (
-            _MAX_AFFECTED_FLOWS_MINIMAL if detail_level == "minimal"
-            else _MAX_AFFECTED_FLOWS_STANDARD
-        )
-        # ``max_flows=0`` keeps its documented "no caller limit" meaning, but
-        # the ceiling still applies -- an escape hatch that can return 250k
-        # tokens is the bug #849 reported, not a feature.
-        limit = ceiling if max_flows <= 0 else min(max_flows, ceiling)
-        truncated = total > limit
-        flows = flows[:limit]
-        if detail_level == "minimal":
-            flows = _project(flows, _DETECT_FLOW_FIELDS)
-        else:
-            flows, steps_cut = _bound_flow_steps(flows)
-            truncated = truncated or steps_cut
-        out = {
-            "status": "ok",
-            "summary": (
-                f"{total} flow(s) affected by changes "
-                f"in {len(changed_files)} file(s)"
-                + _shown_of(len(flows), total)
-            ),
-            "changed_files": changed_files,
-            "affected_flows": flows,
-            "total": total,
-            "truncated": truncated,
-        }
-        out["_hints"] = generate_hints(
-            "get_affected_flows", out, get_session()
-        )
-        return out
-    except Exception as exc:
-        return {"status": "error", "error": str(exc)}
-    finally:
-        store.close()
 
 
 # ---------------------------------------------------------------------------

@@ -1,17 +1,11 @@
 """Tests for graph-powered refactoring operations."""
 
 import tempfile
-import threading
-import time
 from pathlib import Path
 
 from cartograph.graph import GraphStore
 from cartograph.parser import CodeParser, EdgeInfo, NodeInfo
 from cartograph.refactor import (
-    REFACTOR_EXPIRY_SECONDS,
-    _pending_refactors,
-    _refactor_lock,
-    apply_refactor,
     find_dead_code,
     rename_preview,
     suggest_refactorings,
@@ -30,9 +24,6 @@ class TestRenamePreview:
     def teardown_method(self):
         self.store.close()
         Path(self.tmp.name).unlink(missing_ok=True)
-        # Clean up pending refactors.
-        with _refactor_lock:
-            _pending_refactors.clear()
 
     def _seed(self):
         """Seed the store with test data for rename tests."""
@@ -67,12 +58,11 @@ class TestRenamePreview:
         ))
         self.store.commit()
 
-    def test_rename_preview_returns_edits_with_refactor_id(self):
-        """rename_preview returns a dict with refactor_id and edits."""
+    def test_rename_preview_returns_edits(self):
+        """rename_preview returns a dict of edits, and nothing to apply them by."""
         result = rename_preview(self.store, "helper", "new_helper")
         assert result is not None
-        assert "refactor_id" in result
-        assert len(result["refactor_id"]) == 8
+        assert "refactor_id" not in result
         assert result["type"] == "rename"
         assert result["old_name"] == "helper"
         assert result["new_name"] == "new_helper"
@@ -127,14 +117,6 @@ class TestRenamePreview:
         """rename_preview returns None if symbol not found."""
         result = rename_preview(self.store, "nonexistent_function", "new_name")
         assert result is None
-
-    def test_rename_stores_in_pending(self):
-        """rename_preview stores the preview in _pending_refactors."""
-        result = rename_preview(self.store, "helper", "new_helper")
-        assert result is not None
-        rid = result["refactor_id"]
-        with _refactor_lock:
-            assert rid in _pending_refactors
 
 
 class TestFindDeadCode:
@@ -600,245 +582,6 @@ class TestSuggestRefactorings:
             assert "symbols" in s
             assert "rationale" in s
             assert s["type"] in ("move", "remove")
-
-
-class TestApplyRefactor:
-    """Tests for apply_refactor."""
-
-    def setup_method(self):
-        with _refactor_lock:
-            _pending_refactors.clear()
-
-    def teardown_method(self):
-        with _refactor_lock:
-            _pending_refactors.clear()
-
-    def test_apply_refactor_validates_id(self):
-        """apply_refactor rejects nonexistent refactor_id."""
-        # Use a real temp dir as repo_root (needs .git or .cartograph)
-        tmp_dir = Path(tempfile.mkdtemp())
-        (tmp_dir / ".git").mkdir()
-        try:
-            result = apply_refactor("nonexistent_id", tmp_dir)
-            assert result["status"] == "error"
-            assert "not found" in result["error"].lower() or "expired" in result["error"].lower()
-        finally:
-            (tmp_dir / ".git").rmdir()
-            tmp_dir.rmdir()
-
-    def test_apply_refactor_expiry(self):
-        """apply_refactor rejects expired previews."""
-        tmp_dir = Path(tempfile.mkdtemp())
-        (tmp_dir / ".git").mkdir()
-        try:
-            # Insert a preview that is already expired.
-            rid = "expired1"
-            with _refactor_lock:
-                _pending_refactors[rid] = {
-                    "refactor_id": rid,
-                    "type": "rename",
-                    "old_name": "old",
-                    "new_name": "new",
-                    "edits": [],
-                    "stats": {"high": 0, "medium": 0, "low": 0},
-                    "created_at": time.time() - REFACTOR_EXPIRY_SECONDS - 10,
-                }
-            result = apply_refactor(rid, tmp_dir)
-            assert result["status"] == "error"
-            assert "expired" in result["error"].lower()
-        finally:
-            (tmp_dir / ".git").rmdir()
-            tmp_dir.rmdir()
-
-    def test_apply_refactor_path_traversal(self):
-        """apply_refactor blocks edits outside repo root."""
-        tmp_dir = Path(tempfile.mkdtemp())
-        (tmp_dir / ".git").mkdir()
-        try:
-            rid = "traversal"
-            with _refactor_lock:
-                _pending_refactors[rid] = {
-                    "refactor_id": rid,
-                    "type": "rename",
-                    "old_name": "old",
-                    "new_name": "new",
-                    "edits": [{
-                        "file": "/etc/passwd",
-                        "line": 1,
-                        "old": "old",
-                        "new": "new",
-                        "confidence": "high",
-                    }],
-                    "stats": {"high": 1, "medium": 0, "low": 0},
-                    "created_at": time.time(),
-                }
-            result = apply_refactor(rid, tmp_dir)
-            assert result["status"] == "error"
-            assert "outside repo root" in result["error"].lower()
-        finally:
-            (tmp_dir / ".git").rmdir()
-            tmp_dir.rmdir()
-
-    def test_apply_refactor_success(self):
-        """apply_refactor applies string replacement to a real file."""
-        tmp_dir = Path(tempfile.mkdtemp())
-        (tmp_dir / ".git").mkdir()
-        target_file = tmp_dir / "example.py"
-        target_file.write_text("def old_func():\n    pass\n", encoding="utf-8")
-        try:
-            rid = "success1"
-            with _refactor_lock:
-                _pending_refactors[rid] = {
-                    "refactor_id": rid,
-                    "type": "rename",
-                    "old_name": "old_func",
-                    "new_name": "new_func",
-                    "edits": [{
-                        "file": str(target_file),
-                        "line": 1,
-                        "old": "old_func",
-                        "new": "new_func",
-                        "confidence": "high",
-                    }],
-                    "stats": {"high": 1, "medium": 0, "low": 0},
-                    "created_at": time.time(),
-                }
-            result = apply_refactor(rid, tmp_dir)
-            assert result["status"] == "ok"
-            assert result["edits_applied"] == 1
-            assert len(result["files_modified"]) == 1
-            # Verify file content was changed.
-            content = target_file.read_text(encoding="utf-8")
-            assert "new_func" in content
-            assert "old_func" not in content
-        finally:
-            target_file.unlink(missing_ok=True)
-            (tmp_dir / ".git").rmdir()
-            tmp_dir.rmdir()
-
-    def test_apply_refactor_dry_run_returns_diff_without_writing(self):
-        """dry_run=True returns a unified diff without touching disk and
-        keeps the refactor_id valid for a follow-up write (#176)."""
-        tmp_dir = Path(tempfile.mkdtemp())
-        (tmp_dir / ".git").mkdir()
-        target_file = tmp_dir / "example.py"
-        original = "def old_func():\n    pass\n"
-        target_file.write_text(original, encoding="utf-8")
-        try:
-            rid = "dryrun1"
-            with _refactor_lock:
-                _pending_refactors[rid] = {
-                    "refactor_id": rid,
-                    "type": "rename",
-                    "old_name": "old_func",
-                    "new_name": "new_func",
-                    "edits": [{
-                        "file": str(target_file),
-                        "line": 1,
-                        "old": "old_func",
-                        "new": "new_func",
-                        "confidence": "high",
-                    }],
-                    "stats": {"high": 1, "medium": 0, "low": 0},
-                    "created_at": time.time(),
-                }
-
-            # Step 1: dry_run — no writes, returns diff
-            result = apply_refactor(rid, tmp_dir, dry_run=True)
-            assert result["status"] == "ok"
-            assert result["dry_run"] is True
-            assert result["edits_applied"] == 1
-            assert len(result["would_modify"]) == 1
-            assert result["files_modified"] == []  # nothing written yet
-            assert str(target_file) in result["would_modify"]
-            # Diff should mention both the old and new name
-            diff = result["diffs"][str(target_file)]
-            assert "-def old_func():" in diff
-            assert "+def new_func():" in diff
-            # File on disk must be unchanged
-            assert target_file.read_text(encoding="utf-8") == original
-
-            # Step 2: refactor_id should still be valid — dry_run doesn't consume it
-            with _refactor_lock:
-                assert rid in _pending_refactors
-
-            # Step 3: real apply — uses same refactor_id
-            real_result = apply_refactor(rid, tmp_dir, dry_run=False)
-            assert real_result["status"] == "ok"
-            assert real_result.get("dry_run") is None  # not set on the real path
-            assert real_result["edits_applied"] == 1
-            assert len(real_result["files_modified"]) == 1
-            # File content changed
-            new_content = target_file.read_text(encoding="utf-8")
-            assert "new_func" in new_content
-            assert "old_func" not in new_content
-
-            # refactor_id consumed after real apply
-            with _refactor_lock:
-                assert rid not in _pending_refactors
-        finally:
-            target_file.unlink(missing_ok=True)
-            (tmp_dir / ".git").rmdir()
-            tmp_dir.rmdir()
-
-    def test_apply_refactor_dry_run_no_edits(self):
-        """dry_run with an empty edit list returns an empty diff dict."""
-        tmp_dir = Path(tempfile.mkdtemp())
-        (tmp_dir / ".git").mkdir()
-        try:
-            rid = "dryrun-empty"
-            with _refactor_lock:
-                _pending_refactors[rid] = {
-                    "refactor_id": rid,
-                    "type": "rename",
-                    "old_name": "x",
-                    "new_name": "y",
-                    "edits": [],
-                    "stats": {"high": 0, "medium": 0, "low": 0},
-                    "created_at": time.time(),
-                }
-            result = apply_refactor(rid, tmp_dir, dry_run=True)
-            assert result["status"] == "ok"
-            assert result["dry_run"] is True
-            assert result["would_modify"] == []
-            assert result["diffs"] == {}
-        finally:
-            with _refactor_lock:
-                _pending_refactors.pop("dryrun-empty", None)
-            (tmp_dir / ".git").rmdir()
-            tmp_dir.rmdir()
-
-
-class TestPendingRefactorsThreadSafe:
-    """Tests for thread-safety of the pending refactors storage."""
-
-    def test_pending_refactors_thread_safe(self):
-        """The _refactor_lock is a threading.Lock instance."""
-        assert isinstance(_refactor_lock, type(threading.Lock()))
-
-    def test_concurrent_access(self):
-        """Multiple threads can safely access _pending_refactors."""
-        results = []
-
-        def writer(rid: str):
-            with _refactor_lock:
-                _pending_refactors[rid] = {
-                    "refactor_id": rid,
-                    "created_at": time.time(),
-                }
-                results.append(rid)
-
-        threads = [threading.Thread(target=writer, args=(f"t{i}",)) for i in range(10)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        with _refactor_lock:
-            assert len(results) == 10
-            assert len(_pending_refactors) >= 10
-            # Clean up
-            _pending_refactors.clear()
 
 
 class TestFindDeadCodeWithReferences:

@@ -1,6 +1,5 @@
-"""Tests for CLI helpers and MCP serve command wiring."""
+"""Tests for CLI helpers."""
 
-import importlib.util
 import io
 import json
 import logging
@@ -12,16 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cartograph import cli
-
-# MCP is banned in the environment Cartograph targets, so `fastmcp` is
-# deliberately not installed here and `cartograph.main` (the stdio/HTTP MCP
-# server) cannot be imported. `carto serve` / `carto mcp` still exist as an
-# opt-in extra, so these tests are gated on the optional dependency rather
-# than deleted — the same reason tests/test_main.py and friends are ignored.
-_HAS_FASTMCP = importlib.util.find_spec("fastmcp") is not None
-_NEEDS_FASTMCP = pytest.mark.skipif(
-    not _HAS_FASTMCP, reason="fastmcp not installed (MCP is banned in this fork)"
-)
 
 
 def test_main_handles_legacy_stdio_encoding(monkeypatch):
@@ -82,43 +71,6 @@ def test_get_version_returns_dev_when_both_sources_fail(monkeypatch, caplog):
         version = cli._get_version()
 
     assert version == "dev"
-
-
-@_NEEDS_FASTMCP
-class TestServeCommand:
-    def test_serve_passes_auto_watch_flag(self):
-        argv = [
-            "cartograph",
-            "serve",
-            "--repo",
-            "repo-root",
-            "--auto-watch",
-        ]
-        with patch.object(sys, "argv", argv):
-            with patch("cartograph.main.main") as mock_serve:
-                cli.main()
-
-        mock_serve.assert_called_once_with(
-            repo_root=str(Path("repo-root").resolve()),
-            auto_watch=True,
-            tools=None,
-        )
-
-    def test_mcp_alias_maps_to_serve(self):
-        argv = [
-            "cartograph",
-            "mcp",
-            "--repo",
-            "repo-root",
-        ]
-        with patch.object(sys, "argv", argv):
-            with patch("cartograph.main.main") as mock_serve:
-                cli.main()
-
-        mock_serve.assert_called_once_with(
-            repo_root=str(Path("repo-root").resolve()),
-            auto_watch=False,
-        )
 
 
 class TestWatchInteraction:

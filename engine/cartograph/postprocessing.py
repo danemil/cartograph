@@ -13,7 +13,7 @@ An embedding refresh can be added as an explicit fifth step by supplying an
 exact provider and model.  It is default-off because cloud providers transmit
 source-derived text and may incur API cost.
 
-This module extracts that pipeline so every entry point — MCP tool, CLI
+This module extracts that pipeline so every entry point — the tool functions, CLI
 commands, and watch mode — produces identical results.
 """
 

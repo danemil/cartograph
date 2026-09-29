@@ -1,9 +1,7 @@
 """Graph-powered refactoring operations.
 
-Provides rename previews, dead code detection, refactoring suggestions,
-and safe application of refactoring edits to source files. All file writes
-go through a preview-then-apply workflow with expiry enforcement and path
-traversal prevention.
+Provides rename previews, dead code detection and refactoring suggestions.
+Every one is a preview: nothing here writes to a source file.
 """
 
 from __future__ import annotations
@@ -11,9 +9,6 @@ from __future__ import annotations
 import functools
 import logging
 import re
-import threading
-import time
-import uuid
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -44,26 +39,6 @@ _MOCK_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
-# ---------------------------------------------------------------------------
-# Thread-safe pending refactors storage
-# ---------------------------------------------------------------------------
-
-_refactor_lock = threading.Lock()
-_pending_refactors: dict[str, dict] = {}
-REFACTOR_EXPIRY_SECONDS = 600  # 10 minutes
-
-
-def _cleanup_expired() -> int:
-    """Remove expired refactors from the pending dict.  Returns count removed."""
-    now = time.time()
-    expired = [
-        rid for rid, r in _pending_refactors.items()
-        if now - r["created_at"] > REFACTOR_EXPIRY_SECONDS
-    ]
-    for rid in expired:
-        del _pending_refactors[rid]
-    return len(expired)
-
 
 # ---------------------------------------------------------------------------
 # 1. rename_preview
@@ -78,8 +53,7 @@ def rename_preview(
     """Build a rename edit list for *old_name* -> *new_name*.
 
     Finds the node via ``store.search_nodes(old_name)``, collects
-    definition and reference sites, generates a unique ``refactor_id``,
-    and stores the preview in the thread-safe ``_pending_refactors`` dict.
+    definition and reference sites.
 
     Returns:
         A refactor preview dict, or ``None`` if the node is not found.
@@ -159,24 +133,16 @@ def rename_preview(
     for e in edits:
         stats[e["confidence"]] += 1
 
-    refactor_id = uuid.uuid4().hex[:8]
     preview: dict[str, Any] = {
-        "refactor_id": refactor_id,
         "type": "rename",
         "old_name": _sanitize_name(old_name),
         "new_name": _sanitize_name(new_name),
         "edits": edits,
         "stats": stats,
-        "created_at": time.time(),
     }
 
-    with _refactor_lock:
-        _cleanup_expired()
-        _pending_refactors[refactor_id] = preview
-
     logger.info(
-        "rename_preview: created refactor %s (%s -> %s, %d edits)",
-        refactor_id, old_name, new_name, len(edits),
+        "rename_preview: %s -> %s, %d edits", old_name, new_name, len(edits),
     )
     return preview
 
@@ -704,186 +670,3 @@ def suggest_refactorings(store: GraphStore) -> list[dict[str, Any]]:
 
     logger.info("suggest_refactorings: produced %d suggestions", len(suggestions))
     return suggestions
-
-
-# ---------------------------------------------------------------------------
-# 4. apply_refactor
-# ---------------------------------------------------------------------------
-
-
-def apply_refactor(
-    refactor_id: str,
-    repo_root: Path,
-    dry_run: bool = False,
-) -> dict[str, Any]:
-    """Apply a previously previewed refactoring to source files.
-
-    Validates the refactor_id, checks expiry, ensures all edit paths are
-    within the repo root, then performs exact string replacements on the
-    target files.
-
-    Args:
-        refactor_id: ID from a prior ``rename_preview`` call.
-        repo_root: Validated repository root path.
-        dry_run: If True, compute the would-be changes and return a
-            unified-diff representation per affected file, but do NOT
-            write anything to disk. The ``refactor_id`` is preserved so
-            the same preview can be committed afterwards via a second
-            call without ``dry_run``. See: #176
-
-    Returns:
-        Status dict with applied count and modified files. When
-        ``dry_run=True`` the dict additionally contains:
-
-        - ``dry_run``: ``True``
-        - ``would_modify``: list of file paths that would be changed
-        - ``diffs``: map of file path → unified diff string showing the
-          proposed change
-    """
-    repo_root = repo_root.resolve()
-
-    with _refactor_lock:
-        _cleanup_expired()
-        preview = _pending_refactors.get(refactor_id)
-
-    if preview is None:
-        logger.warning("apply_refactor: unknown or expired refactor_id %s", refactor_id)
-        return {"status": "error", "error": f"Refactor '{refactor_id}' not found or expired."}
-
-    # Check expiry explicitly.
-    age = time.time() - preview["created_at"]
-    if age > REFACTOR_EXPIRY_SECONDS:
-        with _refactor_lock:
-            _pending_refactors.pop(refactor_id, None)
-        logger.warning("apply_refactor: refactor %s expired (%.0fs old)", refactor_id, age)
-        return {"status": "error", "error": f"Refactor '{refactor_id}' has expired."}
-
-    edits = preview.get("edits", [])
-    if not edits:
-        if dry_run:
-            return {
-                "status": "ok", "dry_run": True, "applied": 0,
-                "files_modified": [], "edits_applied": 0,
-                "would_modify": [], "diffs": {},
-            }
-        return {"status": "ok", "applied": 0, "files_modified": [], "edits_applied": 0}
-
-    # --- Path traversal validation ---
-    for edit in edits:
-        edit_path = Path(edit["file"]).resolve()
-        try:
-            edit_path.relative_to(repo_root)
-        except ValueError:
-            logger.error(
-                "apply_refactor: path traversal blocked for %s (repo_root=%s)",
-                edit_path, repo_root,
-            )
-            return {
-                "status": "error",
-                "error": f"Edit path '{edit['file']}' is outside repo root.",
-            }
-
-    # --- Compute new content for every edit (shared by dry-run and write paths) ---
-    # Group edits by file so multiple edits to the same file apply
-    # sequentially against the updated content rather than stomping each
-    # other. Dry-run and write modes then share this computation.
-    from collections import defaultdict
-    edits_by_file: dict[str, list[dict]] = defaultdict(list)
-    for edit in edits:
-        edits_by_file[edit["file"]].append(edit)
-
-    planned: dict[str, tuple[str, str, int]] = {}  # file -> (old_content, new_content, edit_count)
-    for file_str, file_edits in edits_by_file.items():
-        file_path = Path(file_str)
-        if not file_path.is_file():
-            logger.warning("apply_refactor: file not found: %s", file_path)
-            continue
-        try:
-            original = file_path.read_text(encoding="utf-8", errors="replace")
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.warning("apply_refactor: could not read %s: %s", file_path, exc)
-            continue
-
-        content = original
-        file_edits_applied = 0
-        for edit in file_edits:
-            old_text = edit["old"]
-            new_text = edit["new"]
-            if old_text not in content:
-                logger.warning(
-                    "apply_refactor: old text %r not found in %s",
-                    old_text, file_path,
-                )
-                continue
-            target_line = edit.get("line")
-            if target_line is not None:
-                lines = content.splitlines(keepends=True)
-                idx = target_line - 1
-                if 0 <= idx < len(lines) and old_text in lines[idx]:
-                    lines[idx] = lines[idx].replace(old_text, new_text, 1)
-                    content = "".join(lines)
-                else:
-                    content = content.replace(old_text, new_text, 1)
-            else:
-                content = content.replace(old_text, new_text, 1)
-            file_edits_applied += 1
-
-        if file_edits_applied > 0:
-            planned[file_str] = (original, content, file_edits_applied)
-
-    # --- Dry-run path: return diffs, no writes ---
-    if dry_run:
-        import difflib
-        diffs: dict[str, str] = {}
-        for file_str, (original, new_content, _count) in planned.items():
-            diff_lines = list(difflib.unified_diff(
-                original.splitlines(keepends=True),
-                new_content.splitlines(keepends=True),
-                fromfile=f"a/{file_str}",
-                tofile=f"b/{file_str}",
-                n=3,
-            ))
-            diffs[file_str] = "".join(diff_lines)
-        total_edits = sum(count for _o, _n, count in planned.values())
-        result = {
-            "status": "ok",
-            "dry_run": True,
-            "applied": 0,
-            "edits_applied": total_edits,
-            "would_modify": sorted(planned.keys()),
-            "files_modified": [],
-            "diffs": diffs,
-        }
-        logger.info(
-            "apply_refactor: dry-run %s — %d edits would be applied to %d files",
-            refactor_id, total_edits, len(planned),
-        )
-        # Do NOT pop the pending refactor — let the user commit via a
-        # second call with dry_run=False.
-        return result
-
-    # --- Real-write path: write the pre-computed new content ---
-    files_modified: set[str] = set()
-    edits_applied = 0
-    for file_str, (_original, new_content, count) in planned.items():
-        file_path = Path(file_str)
-        try:
-            file_path.write_text(new_content, encoding="utf-8")
-            edits_applied += count
-            files_modified.add(str(file_path))
-            logger.info("apply_refactor: applied %d edit(s) to %s", count, file_path)
-        except OSError as exc:
-            logger.error("apply_refactor: could not write %s: %s", file_path, exc)
-
-    # Remove from pending after successful application.
-    with _refactor_lock:
-        _pending_refactors.pop(refactor_id, None)
-
-    result = {
-        "status": "ok",
-        "applied": edits_applied,
-        "files_modified": sorted(files_modified),
-        "edits_applied": edits_applied,
-    }
-    logger.info("apply_refactor: completed %s — %d edits applied", refactor_id, edits_applied)
-    return result

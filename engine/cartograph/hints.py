@@ -1,9 +1,9 @@
-"""Context-aware hints system for MCP tool responses.
+"""Context-aware hints for tool responses.
 
-Tracks session state (in-memory only) and generates intelligent
-next-step suggestions after each tool call.  Hints are appended as
-``_hints`` to new tool responses so that Claude Code can propose
-follow-up actions without the user having to discover them.
+Tracks session state (in-memory only) and generates next-step suggestions
+after each tool call.  Hints are appended as ``_hints`` to tool responses so
+an agent can propose follow-up actions without the user having to discover
+them.
 """
 
 from __future__ import annotations
@@ -178,7 +178,7 @@ _MAX_NODES_TRACKED = 1000
 
 
 class SessionState:
-    """In-memory session state for a single MCP connection."""
+    """In-memory session state for one process."""
 
     def __init__(self) -> None:
         self.tools_called: deque[str] = deque(maxlen=_MAX_TOOLS_HISTORY)

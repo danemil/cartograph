@@ -423,7 +423,7 @@ def analyze_changes(
         # Windows, where the LIKE-suffix fallback cannot bridge
         # "src/app.py" to "C:\repo\src\app.py" (#528). Keys that are
         # already absolute pass through pathlib joining unchanged. The
-        # explicit changed_ranges path (MCP) is untouched — tools/review.py
+        # explicit changed_ranges path is untouched — tools/review.py
         # remaps before calling, and remapping twice would corrupt keys.
         root_path = Path(repo_root)
         changed_ranges = {
@@ -435,9 +435,9 @@ def analyze_changes(
     # changed_files against nodes.file_path, which stores absolute
     # normalized paths. CLI callers pass repo-relative diff paths, so an
     # exact IN (...) match finds no nodes and detect-changes reports
-    # "0 affected flow(s)" even when the MCP tool reports hundreds on the
+    # "0 affected flow(s)" even when the tool function reports hundreds on the
     # same input (#848). Remap the same way as changed_ranges keys;
-    # already-absolute inputs (MCP) pass through pathlib joining unchanged.
+    # already-absolute inputs pass through pathlib joining unchanged.
     if repo_root is not None:
         _root = Path(repo_root)
         changed_files = [
