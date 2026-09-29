@@ -58,6 +58,34 @@ policy applies, hooks cannot deliver Chat memory at all. Copilot Chat still
 writes `workspaceStorage/<id>/GitHub.copilot-chat/transcripts/<session>.jsonl`
 with hooks off. See `docs/verify-memory.md`, Findings.
 
+**Copilot's transcript is not enough with hooks off.** Measured on macOS with
+`chat.useHooks` off (VS Code 1.139.1): `transcripts/<session>.jsonl` held
+`session.start` and nothing else. VS Code's own chat store,
+`workspaceStorage/<id>/chatSessions/<session>.jsonl`, held every prompt and
+reply under the same session id. It is a snapshot line (`kind` 0) followed by
+patches (`kind` 1 sets the value at path `k`, `kind` 2 appends to the list at
+`k`), and sync replays it.
+
+**The fallback: `carto mem sync`** (`engine/cartograph/mem/sync.py`). It reads
+both Chat logs for workspaces opened on the repository and CLI
+`session-state/*/events.jsonl` whose `session.start` names the repository as
+its git root, and imports prompts not already recorded. Session ids in the
+logs equal the hooks' ids, so it never double-records. Imported-versus-already-
+recorded is the empirical test of whether hooks fire, stored and shown by
+`mem status` as `capture_copilot_chat` / `capture_copilot_cli`. The extension
+runs it on activation, 30 s after a transcript changes, and every 10 minutes,
+with `--summarise` for sessions whose log has been quiet for 30 minutes.
+Proven on this Mac against real logs: with the hooks' store, 7 of 7 logged
+prompts already recorded (`hooks`); with the store removed, the same 7
+recovered with the same session ids (`logs`). And through the extension
+itself, in a VS Code profile with `chat.useHooks` off: a Chat prompt reached
+memory 75 seconds after it was sent, `capture_copilot_chat: logs`, with no
+hook involved.
+
+**Open: Remote SSH.** `chatSessions/` is VS Code core's store, and under Remote
+SSH it may live on the client machine rather than the remote where the
+extension and engine run. Unverified; see `docs/verify-memory.md`.
+
 ## The CLI's folder trust
 
 The CLI loads repository hooks only in a folder the person has trusted (its

@@ -66,8 +66,10 @@ carto mem status --format text
 carto mem search --query "caches" --doc-type prompts --format text
 ```
 
-**Expect** 2 observations, both `copilot-chat`. Still *"No memory store"* →
-Step 4.
+**Expect** 2 observations, both `copilot-chat`. With hooks working they
+appear at once; from 0.3.0, when hooks are blocked, the extension imports them
+from Copilot's own log within about a minute — run **Cartograph: Sync Memory
+from Copilot Logs** to do it immediately. Still *"No memory store"* → Step 4.
 
 ## Step 4 — Run the hook by hand
 
@@ -136,6 +138,30 @@ EOF
 **Expect** `session.start`, then `user.message` / `assistant.turn_start` /
 `assistant.message` / `assistant.turn_end` per exchange.
 
+## Step 8 — The log fallback (0.3.0 and later)
+
+When hooks are blocked, the extension reads Copilot's conversation log instead
+(setting `cartograph.readCopilotLogs`, on by default) and says so once:
+
+> *Cartograph: Copilot Chat hooks are turned off … Memory is being kept from
+> Copilot's own conversation log instead.*
+
+```
+carto mem sync --format text
+carto mem status --format text
+```
+
+**Expect** `mem sync` to list `copilot-chat` with `imported` above 0 the first
+time and 0 after, and `mem status` to show a line like
+
+```
+capture copilot chat   logs (2 imported, 0 already recorded, at …)
+```
+
+`logs` means prompts reached memory only through the log — hooks are blocked
+or not firing. `hooks` means every logged prompt had already been recorded by a
+hook. The status bar tooltip carries the same line.
+
 ## Copilot CLI
 
 Independent of Chat — run it even when Chat hooks are blocked.
@@ -150,7 +176,10 @@ Independent of Chat — run it even when Chat hooks are blocked.
    carto mem search --query "<same word>" --doc-type sessions --format text
    ```
 
-**Expect** both prompts as `copilot-cli`, and one `sessions` row. Its
+**Expect** both prompts as `copilot-cli`, and one `sessions` row. If the
+folder was not trusted, or CLI hooks are disabled, `carto mem sync` imports the
+prompts from `~/.copilot/session-state/` instead, and its `copilot-cli` entry
+reports `hooks_fired: false`. Its
 `summary_source` should be `host-agent`; `structural` means no `copilot` binary
 was reachable from a background process, so the summary is an index of the
 prompts rather than a synthesis.
@@ -170,5 +199,14 @@ prompts rather than a synthesis.
 | CLI | Not yet run |
 
 **Consequence:** where an organisation disables Chat hooks by policy, hooks
-cannot deliver Chat memory. The transcript file is the only local record of a
-Chat conversation that survives the policy; see `docs/copilot-hooks.md`.
+cannot deliver Chat memory, and 0.3.0 adds the log fallback (Step 8).
+
+### 2026-09-29 — macOS, VS Code 1.139.1, `chat.useHooks` off in a test profile
+
+- Copilot's `transcripts/<session>.jsonl` held **only `session.start`** — no
+  prompt, no reply. So the transcript alone is not a dependable fallback.
+- VS Code's own `chatSessions/<session>.jsonl` held **every prompt and reply**,
+  same session id. 0.3.0 reads both.
+- End to end through the 0.3.0 extension: a Chat prompt reached memory **75 s**
+  after it was sent, `capture copilot chat: logs`.
+- Not verified: the one-time notice's wording on screen.

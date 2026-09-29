@@ -86,11 +86,25 @@ first.
 - Proven live on macOS against Copilot CLI 1.0.82 and VS Code 1.139.1, both
   host-agent summary paths included. Nothing proven on Linux or Windows yet.
 
+## Done later on 2026-09-29 — v0.3.0, the hooks-blocked fallback
+
+The first Linux run found `chat.useHooks` **disabled by organisation policy**:
+Chat hooks never ran. `carto mem sync` now imports prompts from the logs that
+exist regardless — VS Code's `chatSessions/`, Copilot's `transcripts/`, and the
+CLI's `~/.copilot/session-state/` — and records whether capture came via
+hooks or logs (`mem status`: `capture_copilot_chat`, `capture_copilot_cli`).
+The extension runs it on activation, after chat writes, and every 10 minutes
+(`cartograph.readCopilotLogs`, on by default — the user's decision), and says
+once when hooks are off. `build-vsix.sh` now refuses a payload older than the
+engine source; a local build had silently shipped a 12-day-old engine.
+Evidence in `docs/copilot-hooks.md`; runbook in `docs/verify-memory.md`.
+
 ## NEXT TASK
 
-1. **Linux acceptance of the 0.2.0 `.vsix`** on the user's test machine — the
-   checklist is the one given to them in conversation on 2026-09-29, and the
-   first results decide what is next.
+1. **Linux acceptance of 0.3.0** on the user's test machine, over Remote SSH,
+   following `docs/verify-memory.md`. The open question is whether
+   `chatSessions/` exists on the remote at all — if VS Code keeps it on the
+   client, the remote engine cannot see it and Remote SSH needs another route.
 2. **Transcript-aware summaries.** Both hosts send `transcript_path`, which
    holds the agent's replies. Summaries built only from prompts can only say
    what a person typed; the replies say what was concluded.
