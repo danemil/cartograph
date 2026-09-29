@@ -17,6 +17,9 @@ import pytest
 
 from cartograph import skills, uninstall
 
+INSTRUCTIONS = Path(skills.INSTRUCTION_FILE)
+HOOK_FILE = Path(".github") / "hooks" / "cartograph.json"
+
 
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,19 +30,11 @@ def _write_json(path: Path, value: object) -> None:
     _write(path, json.dumps(value, indent=2) + "\n")
 
 
-def _read_jsonc(path: Path) -> object:
-    return json.loads(skills._strip_jsonc(path.read_text(encoding="utf-8")))
-
-
 @pytest.fixture
 def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", lambda: home)
-    # conftest pins HERMES_HOME to its own temp dir so no test can reach the
-    # real config. Re-point it inside this fake home so the Hermes platform
-    # is exercised within the user-scope boundary uninstall enforces.
-    monkeypatch.setenv("HERMES_HOME", str(home / ".hermes"))
     return home
 
 
@@ -51,401 +46,67 @@ def fake_repo(tmp_path: Path) -> Path:
     return repo
 
 
-@pytest.mark.parametrize("platform_name", tuple(skills.PLATFORMS))
-def test_uninstall_removes_mcp_entry_for_every_current_platform_spec(
-    platform_name: str,
+def _legacy_copilot_section() -> str:
+    """The longest recorded Copilot block from an earlier release."""
+    return next(
+        block
+        for block in skills.LEGACY_INSTRUCTION_SECTIONS
+        if block.startswith("---\n")
+    )
+
+
+def test_hook_file_is_removed_and_team_hooks_are_kept(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    """The uninstall inventory follows PLATFORMS, including future path changes."""
-    spec = skills.PLATFORMS[platform_name]
-    config_path = spec["config_path"](fake_repo)
-    if spec["format"] == "toml":
-        _write(
-            config_path,
-            "theme = \"dark\"\n\n"
-            "[mcp_servers.cartograph]\n"
-            "command = \"cartograph\"\n\n"
-            "[mcp_servers.other]\ncommand = \"other\"\n",
-        )
-    elif spec["format"] == "yaml":
-        _write(
-            config_path,
-            "theme: dark\n\n"
-            f"{spec['key']}:\n"
-            "  cartograph:\n"
-            "    command: cartograph\n"
-            "  other:\n"
-            "    url: https://example.test/mcp\n",
-        )
-    else:
-        if spec["format"] == "array":
-            container: object = [
-                {"name": "cartograph", "command": "cartograph"},
-                {"name": "other", "url": "https://example.test/mcp"},
-            ]
-        else:
-            container = {
-                "cartograph": {"command": "cartograph"},
-                "other": {"url": "https://example.test/mcp"},
-            }
-        _write_json(config_path, {spec["key"]: container, "theme": "dark"})
+    ours = fake_repo / HOOK_FILE
+    theirs = ours.parent / "team.json"
+    skills.install_copilot_hooks(fake_repo)
+    _write_json(theirs, {"hooks": {}})
 
     report = uninstall.run(repo=fake_repo, keep_data=True)
 
     assert report.errors == []
-    if spec["format"] == "toml":
-        text = config_path.read_text(encoding="utf-8")
-        assert "[mcp_servers.cartograph]" not in text
-        assert "[mcp_servers.other]" in text
-        assert 'theme = "dark"' in text
-    elif spec["format"] == "yaml":
-        import yaml
-
-        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        assert set(data[spec["key"]]) == {"other"}
-        assert data["theme"] == "dark"
-    else:
-        data = _read_jsonc(config_path)
-        container = data[spec["key"]]
-        if spec["format"] == "array":
-            assert [entry["name"] for entry in container] == ["other"]
-        else:
-            assert set(container) == {"other"}
-        assert data["theme"] == "dark"
+    assert not ours.exists()
+    assert theirs.exists()
 
 
-def test_platform_inventory_is_derived_not_hard_coded(
-    fake_repo: Path,
-    fake_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config = fake_repo / ".future-editor" / "mcp.json"
-    monkeypatch.setitem(
-        skills.PLATFORMS,
-        "future-editor",
-        {
-            "name": "Future Editor",
-            "config_path": lambda root: root / ".future-editor" / "mcp.json",
-            "key": "servers",
-            "detect": lambda: True,
-            "format": "object",
-            "needs_type": False,
-        },
-    )
-    _write_json(config, {"servers": {"cartograph": {}, "mine": {}}})
-
-    uninstall.run(repo=fake_repo, keep_data=True)
-
-    assert _read_jsonc(config) == {"servers": {"mine": {}}}
-
-
-def test_copilot_cli_uninstall_removes_current_and_legacy_entries(
+def test_skill_directory_keeps_user_files_and_unrelated_skills(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    """Uninstall cleans every CRG key ever written without touching user data."""
-    config = fake_home / ".copilot" / "mcp-config.json"
-    _write_json(
-        config,
-        {
-            "mcpServers": {
-                "cartograph": {"type": "local"},
-                "current-server": {"command": "keep-current"},
-            },
-            "servers": {
-                "cartograph": {},
-                "legacy-server": {"command": "keep-legacy"},
-            },
-            "theme": "dark",
-        },
-    )
-
-    report = uninstall.run(repo=fake_repo, keep_data=True)
-
-    assert report.errors == []
-    assert _read_jsonc(config) == {
-        "mcpServers": {
-            "current-server": {"command": "keep-current"},
-        },
-        "servers": {
-            "legacy-server": {"command": "keep-legacy"},
-        },
-        "theme": "dark",
-    }
-
-
-def test_source_pr_legacy_mcp_paths_remain_supported(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    repo_legacy = fake_repo / ".opencode.json"
-    user_legacy = fake_home / ".cursor" / "mcp.json"
-    for path in (repo_legacy, user_legacy):
-        _write_json(
-            path,
-            {"mcpServers": {"cartograph": {}, "other": {}}},
-        )
-
-    uninstall.run(repo=fake_repo, keep_data=True)
-
-    for path in (repo_legacy, user_legacy):
-        assert _read_jsonc(path) == {"mcpServers": {"other": {}}}
-
-
-@pytest.mark.parametrize("platform_name", ["zed", "opencode"])
-def test_jsonc_comments_trailing_commas_and_https_survive(
-    platform_name: str,
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    spec = skills.PLATFORMS[platform_name]
-    path = spec["config_path"](fake_repo)
-    _write(
-        path,
-        "{\n"
-        "  // keep top-level comment\n"
-        f'  "{spec["key"]}": {{\n'
-        "    // remove only the next member\n"
-        '    "cartograph": {"command": "cartograph"},\n'
-        "    // keep server comment\n"
-        '    "other": {"url": "https://example.test/a//b"},\n'
-        "  },\n"
-        "  // keep trailing comment\n"
-        '  "theme": "dark",\n'
-        "}\n",
-    )
-
-    uninstall.run(repo=fake_repo, keep_data=True)
-
-    raw = path.read_text(encoding="utf-8")
-    assert "keep top-level comment" in raw
-    assert "remove only the next member" in raw
-    assert "keep server comment" in raw
-    assert "keep trailing comment" in raw
-    assert "https://example.test/a//b" in raw
-    assert "cartograph" not in raw
-    assert _read_jsonc(path)[spec["key"]]["other"]["url"].startswith("https://")
-
-
-def test_gemini_shared_settings_removes_mcp_and_owned_hooks(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    settings = fake_repo / ".gemini" / "settings.json"
-    _write_json(
-        settings,
-        {
-            "mcpServers": {
-                "cartograph": {"command": "cartograph"},
-                "other": {"command": "other"},
-            },
-            "hooks": {
-                "SessionStart": [
-                    {
-                        "matcher": "",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": "bash .gemini/hooks/crg-session-start.sh",
-                            }
-                        ],
-                    },
-                    {"matcher": "", "hooks": [{"command": "user-session-hook"}]},
-                ],
-                "AfterTool": [
-                    {
-                        "matcher": "write_file|replace",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": "bash .gemini/hooks/crg-update.sh",
-                            }
-                        ],
-                    }
-                ],
-            },
-            "theme": "dark",
-        },
-    )
-    for filename in ("crg-session-start.sh", "crg-update.sh"):
-        _write(fake_repo / ".gemini" / "hooks" / filename, "#!/bin/sh\n")
-
-    uninstall.run(repo=fake_repo, keep_data=True)
-
-    data = _read_jsonc(settings)
-    assert set(data["mcpServers"]) == {"other"}
-    assert data["hooks"]["SessionStart"] == [
-        {"matcher": "", "hooks": [{"command": "user-session-hook"}]}
-    ]
-    assert "AfterTool" not in data["hooks"]
-    assert data["theme"] == "dark"
-    assert not (fake_repo / ".gemini" / "hooks" / "crg-session-start.sh").exists()
-    assert not (fake_repo / ".gemini" / "hooks" / "crg-update.sh").exists()
-
-
-def test_cursor_shared_hooks_directory_keeps_unrelated_scripts(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    cursor_dir = fake_home / ".cursor"
-    config = skills.generate_cursor_hooks_config()
-    config["hooks"]["sessionStart"].append({"command": "user-session-hook"})
-    _write_json(cursor_dir / "hooks.json", config)
-    for filename in skills._cursor_hook_scripts():
-        _write(cursor_dir / "hooks" / filename, "#!/bin/sh\n")
-    _write(cursor_dir / "hooks" / "my-company-hook.sh", "#!/bin/sh\n")
-
-    uninstall.run(repo=fake_repo, keep_data=True)
-
-    assert (cursor_dir / "hooks").is_dir()
-    assert (cursor_dir / "hooks" / "my-company-hook.sh").exists()
-    for filename in skills._cursor_hook_scripts():
-        assert not (cursor_dir / "hooks" / filename).exists()
-    data = _read_jsonc(cursor_dir / "hooks.json")
-    assert data["hooks"]["sessionStart"] == [{"command": "user-session-hook"}]
-
-
-def test_hook_cleanup_handles_owned_entries_and_mixed_nested_groups(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    owned = skills.generate_cursor_hooks_config()["hooks"]["sessionStart"][0]["command"]
-    hooks_path = fake_home / ".cursor" / "hooks.json"
-    _write_json(
-        hooks_path,
-        {
-            "hooks": {
-                "sessionStart": [
-                    {"command": owned},
-                    {
-                        "matcher": "",
-                        "hooks": [
-                            {"command": owned},
-                            {"command": "user-session-hook"},
-                        ],
-                    },
-                ]
-            }
-        },
-    )
-
-    uninstall.run(repo=fake_repo, keep_data=True)
-
-    assert _read_jsonc(hooks_path) == {
-        "hooks": {
-            "sessionStart": [
-                {"matcher": "", "hooks": [{"command": "user-session-hook"}]}
-            ]
-        }
-    }
-
-
-def test_source_pr_legacy_hook_commands_are_removed_exactly(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    repo_arg = json.dumps(fake_repo.resolve().as_posix())
-    legacy_repo_command = (
-        "git rev-parse --git-dir >/dev/null 2>&1"
-        " && carto update --skip-flows"
-        f" --repo {repo_arg}"
-        " || true"
-    )
-    legacy_codex_command = (
-        "git rev-parse --git-dir >/dev/null 2>&1"
-        " && carto status"
-        " || echo 'Not a git repo, skipping'"
-    )
-    _write_json(
-        fake_repo / ".claude" / "settings.json",
-        {"hooks": {"PostToolUse": [{"hooks": [{"command": legacy_repo_command}]}]}},
-    )
-    _write_json(
-        fake_home / ".codex" / "hooks.json",
-        {"hooks": {"SessionStart": [{"hooks": [{"command": legacy_codex_command}]}]}},
-    )
-
-    uninstall.run(repo=fake_repo, keep_data=True)
-
-    assert _read_jsonc(fake_repo / ".claude" / "settings.json") == {}
-    assert _read_jsonc(fake_home / ".codex" / "hooks.json") == {}
-
-
-def test_shared_skill_directories_keep_user_files_and_unrelated_skills(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    generated_roots = [
-        fake_repo / ".claude" / "skills",
-        fake_repo / ".gemini" / "skills",
-        fake_repo / ".codebuddy" / "skills",
-    ]
+    root = fake_repo / skills.HOST_SKILL_DIR
     generated_slug = next(iter(skills._SKILLS)).removesuffix(".md")
-    for root in generated_roots:
-        _write(root / generated_slug / "SKILL.md", "generated\n")
-        _write(root / generated_slug / "notes.txt", "keep\n")
-        _write(root / "user-skill" / "SKILL.md", "keep\n")
-
-    _write(fake_repo / "skills" / "project-skill" / "SKILL.md", "source\n")
-    _write(fake_repo / ".qoder" / "skills" / "project-skill" / "SKILL.md", "copy\n")
-    _write(fake_repo / ".qoder" / "skills" / "project-skill" / "notes.txt", "keep\n")
-    _write(fake_repo / ".qoder" / "skills" / "user-skill" / "SKILL.md", "keep\n")
+    _write(root / generated_slug / "SKILL.md", "generated\n")
+    _write(root / generated_slug / "notes.txt", "keep\n")
+    _write(root / "user-skill" / "SKILL.md", "keep\n")
 
     uninstall.run(repo=fake_repo, keep_data=True)
 
-    for root in generated_roots:
-        assert not (root / generated_slug / "SKILL.md").exists()
-        assert (root / generated_slug / "notes.txt").exists()
-        assert (root / "user-skill" / "SKILL.md").exists()
-    assert not (fake_repo / ".qoder" / "skills" / "project-skill" / "SKILL.md").exists()
-    assert (fake_repo / ".qoder" / "skills" / "project-skill" / "notes.txt").exists()
-    assert (fake_repo / ".qoder" / "skills" / "user-skill" / "SKILL.md").exists()
+    assert not (root / generated_slug / "SKILL.md").exists()
+    assert (root / generated_slug / "notes.txt").exists()
+    assert (root / "user-skill" / "SKILL.md").exists()
 
 
-def test_instruction_inventory_and_git_hook_are_surgical(
+def test_installed_skills_are_all_removed(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    instruction_paths = ["CLAUDE.md", *skills._PLATFORM_INSTRUCTION_FILES]
-    for relative in instruction_paths:
-        section = skills._PLATFORM_INSTRUCTION_CUSTOM_SECTIONS.get(
-            relative,
-            (skills._CLAUDE_MD_SECTION_MARKER, skills._CLAUDE_MD_SECTION),
-        )[1]
-        _write(
-            fake_repo / relative,
-            "user instructions\n\n" + section,
-        )
-    hook = fake_repo / ".git" / "hooks" / "pre-commit"
-    _write(
-        hook,
-        "#!/bin/sh\necho user-hook\n"
-        "# Installed by cartograph. Remove this file to disable pre-commit graph checks.\n"
-        "if command -v carto >/dev/null 2>&1; then\n"
-        "    carto update || true\n"
-        "    carto detect-changes --brief || true\n"
-        "fi\n",
-    )
+    root = skills.install_host_skills(fake_repo)
 
     uninstall.run(repo=fake_repo, keep_data=True)
 
-    for relative in instruction_paths:
-        assert (fake_repo / relative).read_text(encoding="utf-8") == "user instructions\n"
-    assert hook.read_text(encoding="utf-8") == "#!/bin/sh\necho user-hook\n"
+    assert list(root.iterdir()) == []
 
 
 def test_uninstall_cleans_current_and_legacy_copilot_instruction_paths(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    """Both Copilot paths lose only the generated CRG instruction section."""
+    """Both Copilot paths lose only the generated instruction section."""
     paths = (
-        fake_repo
-        / ".github"
-        / "instructions"
-        / "cartograph.instructions.md",
-        fake_repo / ".github" / "cartograph.instruction.md",
+        fake_repo / INSTRUCTIONS,
+        fake_repo / skills.LEGACY_INSTRUCTION_FILE,
     )
     for path in paths:
         _write(path, "# User notes\n\n" + skills._COPILOT_SECTION)
@@ -457,23 +118,14 @@ def test_uninstall_cleans_current_and_legacy_copilot_instruction_paths(
         assert path.read_text(encoding="utf-8") == "# User notes\n"
 
 
-def _legacy_claude_section() -> str:
-    """The longest recorded pre-guardrails CLAUDE.md-shaped block."""
-    return next(
-        block
-        for block in skills.LEGACY_INSTRUCTION_SECTIONS
-        if not block.startswith("---\n")
-    )
-
-
 def test_uninstall_removes_a_section_written_by_an_older_release(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
     """Removal used to match only the running version's text, so a block from
     any earlier release survived an explicit uninstall (#314)."""
-    path = fake_repo / "CLAUDE.md"
-    _write(path, "user instructions\n\n" + _legacy_claude_section())
+    path = fake_repo / INSTRUCTIONS
+    _write(path, "user instructions\n\n" + _legacy_copilot_section())
 
     report = uninstall.run(repo=fake_repo, keep_data=True)
 
@@ -486,23 +138,34 @@ def test_uninstall_removes_the_current_section_including_its_end_marker(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    path = fake_repo / "CLAUDE.md"
-    _write(path, "user instructions\n\n" + skills._CLAUDE_MD_SECTION)
+    path = fake_repo / INSTRUCTIONS
+    _write(path, "user instructions\n\n" + skills._COPILOT_SECTION)
 
     uninstall.run(repo=fake_repo, keep_data=True)
 
     remaining = path.read_text(encoding="utf-8")
     assert remaining == "user instructions\n"
-    assert skills._CLAUDE_MD_SECTION_END_MARKER not in remaining
+    assert skills._SECTION_END_MARKER not in remaining
+
+
+def test_a_generated_only_instruction_file_is_deleted(
+    fake_repo: Path,
+    fake_home: Path,
+) -> None:
+    skills.inject_instruction_files(fake_repo)
+
+    uninstall.run(repo=fake_repo, keep_data=True)
+
+    assert not (fake_repo / INSTRUCTIONS).exists()
 
 
 def test_uninstall_leaves_a_hand_edited_section_alone_and_reports_it(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    path = fake_repo / "CLAUDE.md"
-    content = "user prefix\n\n" + _legacy_claude_section().replace(
-        "### Key Tools", "### Key Tools (our notes)"
+    path = fake_repo / INSTRUCTIONS
+    content = "user prefix\n\n" + _legacy_copilot_section().replace(
+        "### ", "### (our notes) ", 1
     )
     _write(path, content)
 
@@ -518,8 +181,8 @@ def test_uninstall_keeps_user_content_on_both_sides_of_the_block(
 ) -> None:
     head = "# House rules\n\nNever force push.\n\n"
     tail = "\n## Deploy notes\n\nRun the migration first.\n"
-    path = fake_repo / "CLAUDE.md"
-    _write(path, head + _legacy_claude_section() + tail)
+    path = fake_repo / INSTRUCTIONS
+    _write(path, head + _legacy_copilot_section() + tail)
 
     uninstall.run(repo=fake_repo, keep_data=True)
 
@@ -527,7 +190,7 @@ def test_uninstall_keeps_user_content_on_both_sides_of_the_block(
     assert remaining == (
         "# House rules\n\nNever force push.\n\n## Deploy notes\n\nRun the migration first.\n"
     )
-    assert skills._CLAUDE_MD_SECTION_MARKER not in remaining
+    assert skills._SECTION_MARKER not in remaining
     # One blank line where the block was, not a pileup left by the removal.
     assert "\n\n\n" not in remaining
 
@@ -540,9 +203,9 @@ def test_uninstall_clears_every_duplicate_stale_block(
     older = [
         block
         for block in skills.LEGACY_INSTRUCTION_SECTIONS
-        if not block.startswith("---\n")
+        if block.startswith("---\n")
     ]
-    path = fake_repo / "CLAUDE.md"
+    path = fake_repo / INSTRUCTIONS
     _write(path, "user instructions\n\n" + older[0] + "\n" + older[1] + "\n" + older[0])
 
     report = uninstall.run(repo=fake_repo, keep_data=True)
@@ -556,10 +219,10 @@ def test_install_then_uninstall_restores_the_file_byte_for_byte(
     fake_home: Path,
 ) -> None:
     original = "# House rules\n\nNever force push.\n"
-    path = fake_repo / "CLAUDE.md"
+    path = fake_repo / INSTRUCTIONS
     _write(path, original)
 
-    skills.inject_claude_md(fake_repo)
+    skills.inject_instruction_files(fake_repo)
     assert path.read_text(encoding="utf-8") != original
 
     uninstall.run(repo=fake_repo, keep_data=True)
@@ -567,37 +230,14 @@ def test_install_then_uninstall_restores_the_file_byte_for_byte(
     assert path.read_text(encoding="utf-8") == original
 
 
-def test_uninstall_removes_older_sections_from_every_instruction_path(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    older_claude = _legacy_claude_section()
-    older_copilot = next(
-        block for block in skills.LEGACY_INSTRUCTION_SECTIONS if block.startswith("---\n")
-    )
-    relatives = ["CLAUDE.md", *skills._PLATFORM_INSTRUCTION_FILES]
-    for relative in relatives:
-        custom = relative in skills._PLATFORM_INSTRUCTION_CUSTOM_SECTIONS
-        _write(
-            fake_repo / relative,
-            "user instructions\n\n" + (older_copilot if custom else older_claude),
-        )
-
-    report = uninstall.run(repo=fake_repo, keep_data=True)
-
-    assert report.errors == []
-    for relative in relatives:
-        assert (fake_repo / relative).read_text(encoding="utf-8") == "user instructions\n"
-
-
 def test_modified_instruction_section_is_not_guessed_or_truncated(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    path = fake_repo / "CLAUDE.md"
+    path = fake_repo / INSTRUCTIONS
     content = (
         "user prefix\n"
-        f"{skills._CLAUDE_MD_SECTION_MARKER}\n"
+        f"{skills._SECTION_MARKER}\n"
         "user modified this formerly generated section\n"
         "user suffix that must not be truncated\n"
     )
@@ -633,40 +273,37 @@ def test_dry_run_is_meaningful_and_byte_for_byte_read_only(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    config = fake_repo / ".mcp.json"
-    _write_json(config, {"mcpServers": {"cartograph": {}}})
+    instructions = fake_repo / INSTRUCTIONS
+    _write(instructions, "user instructions\n\n" + skills._COPILOT_SECTION)
+    hook_file = skills.install_copilot_hooks(fake_repo)
     data = fake_repo / ".cartograph" / "graph.db"
     data.parent.mkdir()
     data.write_bytes(b"graph")
-    plugin = fake_home / ".config" / "opencode" / "plugins" / "crg-plugin.ts"
-    _write(plugin, "plugin")
     before = {
         path: path.read_bytes()
-        for path in (config, data, plugin)
+        for path in (instructions, hook_file, data)
     }
 
     report = uninstall.run(repo=fake_repo, dry_run=True)
 
     assert report.total_actions >= 3
-    assert any(str(config) in action for action in report.edited_paths)
+    assert any(str(instructions) in action for action in report.edited_paths)
+    assert any(str(hook_file) in action for action in report.removed_paths)
     assert any(str(data.parent) in action for action in report.removed_paths)
     for path, content in before.items():
         assert path.read_bytes() == content
 
 
 @pytest.mark.parametrize("failure_point", ("fsync", "replace"))
-def test_failed_atomic_config_write_preserves_original_bytes(
+def test_failed_atomic_edit_preserves_original_bytes(
     failure_point: str,
     fake_repo: Path,
     fake_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = fake_repo / ".mcp.json"
-    _write_json(
-        config,
-        {"mcpServers": {"cartograph": {}, "other": {"command": "mine"}}},
-    )
-    original = config.read_bytes()
+    path = fake_repo / INSTRUCTIONS
+    _write(path, "user instructions\n\n" + skills._COPILOT_SECTION)
+    original = path.read_bytes()
 
     def fail(*args: object, **kwargs: object) -> None:
         raise OSError(f"simulated {failure_point} failure")
@@ -679,21 +316,21 @@ def test_failed_atomic_config_write_preserves_original_bytes(
         keep_user_configs=True,
     )
 
-    assert config.read_bytes() == original
-    assert not list(config.parent.glob(f".{config.name}.*.tmp"))
+    assert path.read_bytes() == original
+    assert not list(path.parent.glob(f".{path.name}.*.tmp"))
     assert any(
-        str(config) in error and f"simulated {failure_point} failure" in error
+        str(path) in error and f"simulated {failure_point} failure" in error
         for error in report.errors
     )
 
 
-def test_atomic_config_replace_preserves_file_mode(
+def test_atomic_edit_preserves_file_mode(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    config = fake_repo / ".mcp.json"
-    _write_json(config, {"mcpServers": {"cartograph": {}, "other": {}}})
-    config.chmod(0o640)
+    path = fake_repo / INSTRUCTIONS
+    _write(path, "user instructions\n\n" + skills._COPILOT_SECTION)
+    path.chmod(0o640)
 
     report = uninstall.run(
         repo=fake_repo,
@@ -702,8 +339,8 @@ def test_atomic_config_replace_preserves_file_mode(
     )
 
     assert report.errors == []
-    assert stat.S_IMODE(config.stat().st_mode) == 0o640
-    assert _read_jsonc(config) == {"mcpServers": {"other": {}}}
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    assert path.read_text(encoding="utf-8") == "user instructions\n"
 
 
 def test_non_repository_directory_is_refused_without_deleting_data(
@@ -712,9 +349,9 @@ def test_non_repository_directory_is_refused_without_deleting_data(
 ) -> None:
     ordinary_directory = tmp_path / "ordinary-directory"
     data = ordinary_directory / ".cartograph" / "unrelated.txt"
-    config = ordinary_directory / ".mcp.json"
+    instructions = ordinary_directory / INSTRUCTIONS
     _write(data, "not owned by CRG")
-    _write_json(config, {"mcpServers": {"cartograph": {}}})
+    _write(instructions, skills._COPILOT_SECTION)
 
     report = uninstall.run(
         repo=ordinary_directory,
@@ -722,7 +359,7 @@ def test_non_repository_directory_is_refused_without_deleting_data(
     )
 
     assert data.read_text(encoding="utf-8") == "not owned by CRG"
-    assert _read_jsonc(config) == {"mcpServers": {"cartograph": {}}}
+    assert instructions.read_text(encoding="utf-8") == skills._COPILOT_SECTION
     assert report.total_actions == 0
     assert any(
         str(ordinary_directory) in item and "Git or SVN repository" in item
@@ -749,64 +386,26 @@ def test_repository_subdirectory_normalises_to_vcs_root(
     assert not data.parent.exists()
 
 
-def test_symlink_and_out_of_boundary_paths_are_skipped(
+def test_symlinked_paths_are_skipped(
     fake_repo: Path,
     fake_home: Path,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     outside_data = tmp_path / "outside-data"
     outside_data.mkdir()
     _write(outside_data / "keep.txt", "keep")
     os.symlink(outside_data, fake_repo / ".cartograph", target_is_directory=True)
 
-    outside_config = tmp_path / "outside-config.json"
-    _write_json(outside_config, {"servers": {"cartograph": {}, "other": {}}})
-    monkeypatch.setitem(
-        skills.PLATFORMS,
-        "malicious-path",
-        {
-            "name": "Malicious",
-            "config_path": lambda root: outside_config,
-            "key": "servers",
-            "detect": lambda: True,
-            "format": "object",
-            "needs_type": False,
-        },
-    )
+    outside_github = tmp_path / "outside-github"
+    _write(outside_github / "hooks" / "cartograph.json", "{}\n")
+    os.symlink(outside_github, fake_repo / ".github", target_is_directory=True)
 
     report = uninstall.run(repo=fake_repo)
 
     assert (outside_data / "keep.txt").read_text(encoding="utf-8") == "keep"
     assert (fake_repo / ".cartograph").is_symlink()
-    assert _read_jsonc(outside_config)["servers"] == {
-        "cartograph": {},
-        "other": {},
-    }
+    assert (outside_github / "hooks" / "cartograph.json").exists()
     assert any("boundary" in item or "symlink" in item for item in report.skipped_paths)
-
-
-def test_malformed_config_is_unchanged_and_other_cleanup_continues(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    malformed = fake_repo / ".cursor" / "mcp.json"
-    _write(malformed, '{"mcpServers": { this is not JSON')
-    malformed_toml = fake_home / ".codex" / "config.toml"
-    _write(
-        malformed_toml,
-        'broken = "unterminated\n[mcp_servers.cartograph]\ncommand = "crg"\n',
-    )
-    valid = fake_repo / ".mcp.json"
-    _write_json(valid, {"mcpServers": {"cartograph": {}, "other": {}}})
-
-    report = uninstall.run(repo=fake_repo, keep_data=True)
-
-    assert malformed.read_text(encoding="utf-8") == '{"mcpServers": { this is not JSON'
-    assert malformed_toml.read_text(encoding="utf-8").startswith('broken = "unterminated')
-    assert _read_jsonc(valid) == {"mcpServers": {"other": {}}}
-    assert any(str(malformed) in item and "parse" in item for item in report.skipped_paths)
-    assert any(str(malformed_toml) in item and "parse" in item for item in report.skipped_paths)
 
 
 def test_partial_filesystem_failure_is_reported_and_does_not_stop_cleanup(
@@ -838,8 +437,8 @@ def test_second_run_is_idempotent(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
-    config = fake_repo / ".mcp.json"
-    _write_json(config, {"mcpServers": {"cartograph": {}, "other": {}}})
+    path = fake_repo / INSTRUCTIONS
+    _write(path, "user instructions\n\n" + skills._COPILOT_SECTION)
 
     first = uninstall.run(repo=fake_repo, keep_data=True)
     second = uninstall.run(repo=fake_repo, keep_data=True)
@@ -847,10 +446,10 @@ def test_second_run_is_idempotent(
     assert first.total_actions == 1
     assert second.total_actions == 0
     assert second.errors == []
-    assert _read_jsonc(config) == {"mcpServers": {"other": {}}}
+    assert path.read_text(encoding="utf-8") == "user instructions\n"
 
 
-def test_keep_flags_preserve_data_and_user_configuration(
+def test_keep_flags_preserve_data_and_user_state(
     fake_repo: Path,
     fake_home: Path,
 ) -> None:
@@ -862,8 +461,6 @@ def test_keep_flags_preserve_data_and_user_configuration(
     user_data = fake_home / ".cartograph"
     user_data.mkdir()
     (user_data / "registry.json").write_text("{}", encoding="utf-8")
-    user_config = fake_home / ".qwen" / "settings.json"
-    _write_json(user_config, {"mcpServers": {"cartograph": {}}})
 
     uninstall.run(
         repo=fake_repo,
@@ -874,7 +471,6 @@ def test_keep_flags_preserve_data_and_user_configuration(
     assert repo_data.exists()
     assert legacy.exists()
     assert user_data.exists()
-    assert "cartograph" in _read_jsonc(user_config)["mcpServers"]
 
 
 def test_all_repos_reads_registry_before_removing_user_data(
@@ -884,8 +480,7 @@ def test_all_repos_reads_registry_before_removing_user_data(
 ) -> None:
     registered = tmp_path / "registered"
     (registered / ".git").mkdir(parents=True)
-    registered_config = registered / ".mcp.json"
-    _write_json(registered_config, {"mcpServers": {"cartograph": {}}})
+    registered_hooks = skills.install_copilot_hooks(registered)
     external_data = tmp_path / "external-data"
     external_data.mkdir()
     (external_data / "graph.db").write_bytes(b"keep")
@@ -898,7 +493,7 @@ def test_all_repos_reads_registry_before_removing_user_data(
 
     report = uninstall.run(repo=fake_repo, all_repos=True)
 
-    assert _read_jsonc(registered_config) == {"mcpServers": {}}
+    assert not registered_hooks.exists()
     assert not registry_dir.exists()
     assert (external_data / "graph.db").read_bytes() == b"keep"
     assert any(str(external_data) in item and "retained" in item for item in report.skipped_paths)
@@ -911,8 +506,7 @@ def test_cli_dry_run_and_confirmation_are_safe(
 ) -> None:
     from cartograph import cli
 
-    config = fake_repo / ".mcp.json"
-    _write_json(config, {"mcpServers": {"cartograph": {}}})
+    hook_file = skills.install_copilot_hooks(fake_repo)
 
     with patch.object(
         sys,
@@ -921,7 +515,7 @@ def test_cli_dry_run_and_confirmation_are_safe(
     ):
         cli.main()
     assert "dry-run" in capsys.readouterr().out.lower()
-    assert "cartograph" in config.read_text(encoding="utf-8")
+    assert hook_file.exists()
 
     with (
         patch.object(
@@ -933,101 +527,4 @@ def test_cli_dry_run_and_confirmation_are_safe(
     ):
         cli.main()
     assert "aborted" in capsys.readouterr().out.lower()
-    assert "cartograph" in config.read_text(encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Platform-scoped unbind (``uninstall --platform``)
-# ---------------------------------------------------------------------------
-
-
-def test_normalise_platform_filter() -> None:
-    normalise = uninstall._normalise_platform_filter
-    assert normalise(None) is None
-    assert normalise([]) is None
-    assert normalise(["all"]) is None
-    assert normalise(["codex", "all"]) is None
-    assert normalise(["claude-code"]) == frozenset({"claude"})
-    assert normalise(["codex", "claude"]) == frozenset({"codex", "claude"})
-
-
-def _write_codex_config(path: Path) -> None:
-    _write(
-        path,
-        'theme = "dark"\n\n'
-        "[mcp_servers.cartograph]\n"
-        'command = "cartograph"\n\n'
-        "[mcp_servers.other]\n"
-        'command = "other"\n',
-    )
-
-
-def test_platform_scoped_unbind_removes_only_target_and_keeps_data(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    """Unbinding one platform removes its MCP entry but keeps data + siblings."""
-    claude_config = fake_repo / ".mcp.json"
-    _write_json(claude_config, {"mcpServers": {"cartograph": {}, "other": {}}})
-    codex_config = fake_home / ".codex" / "config.toml"
-    _write_codex_config(codex_config)
-
-    data_db = fake_repo / ".cartograph" / "graph.db"
-    _write(data_db, "graph")
-
-    report = uninstall.run(repo=fake_repo, platforms=["claude"])
-
-    assert report.errors == []
-    # Claude's binding is gone, its sibling entry survives.
-    assert _read_jsonc(claude_config) == {"mcpServers": {"other": {}}}
-    # Codex was never named, so its binding is untouched.
-    assert "[mcp_servers.cartograph]" in codex_config.read_text(encoding="utf-8")
-    # Graph data is preserved even though keep_data was not requested.
-    assert data_db.exists()
-
-
-def test_platform_scoped_unbind_targets_user_scope_toml(
-    fake_repo: Path,
-    fake_home: Path,
-) -> None:
-    """A user-scope platform (Codex/TOML) unbinds without touching repo configs."""
-    claude_config = fake_repo / ".mcp.json"
-    _write_json(claude_config, {"mcpServers": {"cartograph": {}}})
-    codex_config = fake_home / ".codex" / "config.toml"
-    _write_codex_config(codex_config)
-
-    uninstall.run(repo=fake_repo, platforms=["codex"])
-
-    text = codex_config.read_text(encoding="utf-8")
-    assert "[mcp_servers.cartograph]" not in text
-    assert "[mcp_servers.other]" in text
-    # Claude was not named, so its repo binding stays put.
-    assert "cartograph" in claude_config.read_text(encoding="utf-8")
-
-
-def test_cli_uninstall_platform_scopes_to_one_binding(
-    fake_repo: Path,
-    fake_home: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from cartograph import cli
-
-    claude_config = fake_repo / ".mcp.json"
-    _write_json(claude_config, {"mcpServers": {"cartograph": {}, "other": {}}})
-    codex_config = fake_home / ".codex" / "config.toml"
-    _write_codex_config(codex_config)
-
-    with patch.object(
-        sys,
-        "argv",
-        [
-            "cartograph", "uninstall",
-            "--platform", "claude", "--repo", str(fake_repo), "--yes",
-        ],
-    ):
-        cli.main()
-
-    out = capsys.readouterr().out.lower()
-    assert "unbind" in out
-    assert _read_jsonc(claude_config) == {"mcpServers": {"other": {}}}
-    assert "[mcp_servers.cartograph]" in codex_config.read_text(encoding="utf-8")
+    assert hook_file.exists()

@@ -109,7 +109,6 @@ packages = ["cartograph"]
 include = [
     "cartograph/",
     "docs/",
-    "hooks/",
     "LICENSE",
     "README.md",
     "pyproject.toml",

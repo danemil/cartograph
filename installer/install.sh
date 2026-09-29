@@ -5,8 +5,8 @@
 #   ./install.sh --payload ./payload --repo ~/work/app
 #
 # The VS Code extension is the primary delivery vehicle, and installing it
-# already serves Claude Code and Copilot CLI. This script is the same outcome
-# for a machine that has neither VS Code nor any wish for it.
+# already serves Copilot CLI. This script is the same outcome for a machine
+# that has no VS Code.
 #
 # **It downloads nothing.** `--payload` names a directory, a `.vsix` or a
 # tarball that is already on the machine, because the target machine is behind
@@ -120,7 +120,7 @@ echo "Installed $("$CARTO_HOME/bin/carto" --version)"
 
 if [ -n "$REPO" ]; then
     echo "Placing the skills pack in $REPO"
-    "$CARTO_HOME/bin/carto" install --platform claude --no-instructions -y --repo "$REPO"
+    "$CARTO_HOME/bin/carto" install --platform copilot --no-instructions -y --repo "$REPO"
 fi
 
 # PATH is the one thing an installer cannot do on the user's behalf without

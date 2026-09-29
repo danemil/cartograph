@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""Materialise the Cartograph skills pack into a project's discovery paths.
+"""Materialise the Cartograph skills pack where GitHub Copilot discovers it.
 
-The three tier-1 hosts look in three different places, and none of them look in
-`skills/`:
-
-    .claude/skills/     Claude Code
-    .github/skills/     GitHub Copilot (CLI and Chat)
-    .agents/skills/     the host-agnostic convention
-
-The skill bodies are identical in all three — this is a discovery problem, not
-a per-host content problem, and the whole point of the capability contract is
-that there is no per-host adapter on the query path.
+Copilot CLI and Copilot Chat both read project skills from `.github/skills/`,
+and neither reads `skills/`. They also read `.claude/skills/` and
+`.agents/skills/`; a copy there would only be a second copy of the same pack.
 
 **Copies, not symlinks.** Git on Windows checks a symlink out as a text file
 containing the target path, which a host then reads as a skill body and
@@ -29,7 +22,7 @@ import shutil
 import sys
 from pathlib import Path
 
-HOSTS = (".claude/skills", ".github/skills", ".agents/skills")
+HOSTS = (".github/skills",)
 
 #: The engine ships the pack as package data so `carto install` can write it on
 #: a machine that never cloned this repo. It is a build input, not a discovery
@@ -87,7 +80,7 @@ def main() -> int:
         print(f"\nskills install: {n - len(drift)}/{n} copies current")
         return 1 if drift else 0
 
-    print(f"installed {len(skills)} skills into {len(HOSTS)} discovery paths "
+    print(f"installed {len(skills)} skills into {', '.join(HOSTS)} "
           f"and the engine's package data, under {args.target}")
     for host in (*HOSTS, PACKAGE_DATA):
         print(f"  {host}/")

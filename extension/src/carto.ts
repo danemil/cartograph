@@ -77,23 +77,18 @@ export class Carto {
   /**
    * Place the skills pack and hooks in this workspace.
    *
-   * `--platform claude` is narrower than it sounds: it selects the three
-   * discovery directories all tier-1 hosts read (`.claude/skills`,
-   * `.github/skills`, `.agents/skills`) and skips the half-dozen user-level
-   * directories `--platform all` writes into for hosts nobody here is using.
+   * `--no-instructions` because the instruction file is a tracked project
+   * file. An extension that edits it on activation hands the user a dirty
+   * worktree they did not ask for; the skills pack is the mechanism both
+   * Copilot hosts actually read.
    *
-   * `--no-instructions` because the instruction files are tracked project
-   * files. An extension that edits CLAUDE.md on activation hands the user a
-   * dirty worktree they did not ask for; the skills pack is the mechanism all
-   * three hosts actually read.
-   *
-   * No `--with-mcp`. There is no MCP server, by design.
+   * There is no MCP server, by design.
    */
   async installIntoWorkspace(cwd: string): Promise<{ ok: boolean; output: string }> {
     const { stdout, stderr, code } = await this.run(
       // `copilot` covers both Copilot CLI and Copilot Chat: one hook file in
-      // `.github/hooks`, which both read. Skills still land in all three
-      // directories — that part does not depend on the platform named here.
+      // `.github/hooks` and one skills directory, `.github/skills`, which
+      // both read.
       ["install", "--platform", "copilot", "--no-instructions", "-y", "--repo", cwd],
       cwd,
     );

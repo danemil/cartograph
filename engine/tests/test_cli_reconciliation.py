@@ -8,7 +8,6 @@ carries ``carto build`` as a remediation the agent can act on.
 
 from __future__ import annotations
 
-import io
 import json
 import logging
 import sys
@@ -364,45 +363,6 @@ def test_status_default_data_dir_override_does_not_migrate_legacy_graph(
     assert "No graph found" in capsys.readouterr().err
     assert legacy_db.exists()
     assert not data_dir.exists()
-
-
-def test_enrich_command_reads_stdin_and_respects_external_data_dir(
-    tmp_path, monkeypatch, capsys,
-):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / ".git").mkdir()
-    data_dir = tmp_path / "external-data"
-    data_dir.mkdir()
-    (data_dir / "graph.db").touch()
-    monkeypatch.setenv("CRG_DATA_DIR", str(data_dir))
-    hook_input = {
-        "tool_name": "Grep",
-        "tool_input": {"pattern": "target_name"},
-        "cwd": str(repo),
-    }
-    argv = ["cartograph", "enrich"]
-
-    with patch.object(sys, "argv", argv):
-        with patch.object(sys, "stdin", io.StringIO(json.dumps(hook_input))):
-            with patch(
-                "cartograph.enrich.enrich_search",
-                return_value="graph context",
-            ) as enrich_search:
-                cli.main()
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["hookSpecificOutput"]["additionalContext"] == "graph context"
-    enrich_search.assert_called_once_with("target_name", str(repo))
-
-
-@pytest.mark.parametrize("stdin", ["", "{not-json"])
-def test_enrich_command_fails_open_for_invalid_stdin(stdin, capsys):
-    argv = ["cartograph", "enrich"]
-    with patch.object(sys, "argv", argv):
-        with patch.object(sys, "stdin", io.StringIO(stdin)):
-            cli.main()
-    assert capsys.readouterr().out == ""
 
 
 def _dead_items():

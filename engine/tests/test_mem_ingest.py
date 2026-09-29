@@ -23,12 +23,15 @@ from cartograph.mem import ingest
 from cartograph.mem import store as mem_store
 
 
-#: What Claude Code actually sends a UserPromptSubmit hook on stdin. Field
-#: names taken from live payloads, not from memory.
-def _claude_payload(prompt: str, session: str = "sess-1") -> dict:
+#: What Copilot sends a UserPromptSubmit hook on stdin. Field names taken from
+#: live payloads (docs/copilot-hooks.md), not from memory.
+def _copilot_payload(prompt: str, session: str = "sess-1") -> dict:
     return {
         "session_id": session,
-        "transcript_path": "/Users/someone/.claude/projects/x/abc.jsonl",
+        "transcript_path": (
+            "/Users/someone/Library/Application Support/Code/User/workspaceStorage/"
+            "x/GitHub.copilot-chat/transcripts/abc.jsonl"
+        ),
         "cwd": "/Users/someone/work/repo",
         "hook_event_name": "UserPromptSubmit",
         "prompt": prompt,
@@ -58,7 +61,7 @@ def _observations(repo_root: Path) -> list[dict]:
 
 def test_capture_exits_zero_and_emits_nothing(tmp_path, monkeypatch, capsys):
     """Whatever a UserPromptSubmit hook prints is prepended to the prompt."""
-    _feed(monkeypatch, _claude_payload("Wire hook ingestion into the memory store"))
+    _feed(monkeypatch, _copilot_payload("Wire hook ingestion into the memory store"))
 
     assert hook.run("UserPromptSubmit", repo=str(tmp_path)) == 0
 
@@ -98,7 +101,7 @@ def test_a_store_that_cannot_be_opened_is_not_an_error(tmp_path, monkeypatch, ca
         raise OSError("read-only file system")
 
     monkeypatch.setattr(mem_store, "db_path", _explode)
-    _feed(monkeypatch, _claude_payload("A prompt long enough to be recorded"))
+    _feed(monkeypatch, _copilot_payload("A prompt long enough to be recorded"))
 
     assert hook.run("UserPromptSubmit", repo=str(tmp_path)) == 0
     assert capsys.readouterr().out == ""
@@ -106,7 +109,7 @@ def test_a_store_that_cannot_be_opened_is_not_an_error(tmp_path, monkeypatch, ca
 
 def test_prompt_capture_resolves_like_every_host_spells_it():
     for spelling in ("UserPromptSubmit", "userPromptSubmit", "user_prompt_submit",
-                     "beforeSubmitPrompt", "prompt-capture"):
+                     "prompt-capture"):
         assert hook.resolve_event(spelling) == "prompt-capture"
 
 
@@ -115,9 +118,9 @@ def test_prompt_capture_resolves_like_every_host_spells_it():
 
 def test_a_prompt_becomes_one_observation(tmp_path, monkeypatch):
     prompt = "Wire hook ingestion so observations are captured automatically"
-    _feed(monkeypatch, _claude_payload(prompt))
+    _feed(monkeypatch, _copilot_payload(prompt))
 
-    hook.run("UserPromptSubmit", repo=str(tmp_path), host="claude-code")
+    hook.run("UserPromptSubmit", repo=str(tmp_path), host="copilot-cli")
 
     rows = _observations(tmp_path)
     assert len(rows) == 1
@@ -126,12 +129,12 @@ def test_a_prompt_becomes_one_observation(tmp_path, monkeypatch):
     assert rows[0]["kind"] == "prompt"
     assert rows[0]["doc_type"] == "prompts"
     assert rows[0]["session"] == "sess-1"
-    assert rows[0]["platform_source"] == "claude-code"
+    assert rows[0]["platform_source"] == "copilot-cli"
 
 
 def test_what_is_recorded_is_verbatim(tmp_path, monkeypatch):
     """The field exists to tell a copy from a summary. This path only copies."""
-    _feed(monkeypatch, _claude_payload("Record this prompt exactly as written"))
+    _feed(monkeypatch, _copilot_payload("Record this prompt exactly as written"))
 
     hook.run("UserPromptSubmit", repo=str(tmp_path))
 
@@ -140,7 +143,7 @@ def test_what_is_recorded_is_verbatim(tmp_path, monkeypatch):
 
 def test_the_store_is_created_on_first_capture(tmp_path, monkeypatch):
     assert not (tmp_path / ".cartograph").exists()
-    _feed(monkeypatch, _claude_payload("A first prompt in a fresh checkout"))
+    _feed(monkeypatch, _copilot_payload("A first prompt in a fresh checkout"))
 
     hook.run("UserPromptSubmit", repo=str(tmp_path))
 
@@ -148,7 +151,7 @@ def test_the_store_is_created_on_first_capture(tmp_path, monkeypatch):
 
 
 def test_a_captured_observation_comes_back_out_of_search(tmp_path, monkeypatch):
-    _feed(monkeypatch, _claude_payload("Investigate the flaky cursor pagination test"))
+    _feed(monkeypatch, _copilot_payload("Investigate the flaky cursor pagination test"))
     hook.run("UserPromptSubmit", repo=str(tmp_path))
 
     with mem_store.MemoryStore(mem_store.db_path(tmp_path)) as memory:
@@ -169,7 +172,7 @@ def test_a_refused_payload_creates_no_store(tmp_path, monkeypatch):
     Otherwise a repository where nothing was ever worth recording would still
     grow a `.cartograph` directory on the first prompt.
     """
-    _feed(monkeypatch, _claude_payload("ok"))
+    _feed(monkeypatch, _copilot_payload("ok"))
 
     hook.run("UserPromptSubmit", repo=str(tmp_path))
 
@@ -208,7 +211,7 @@ def test_the_title_is_the_first_line_bounded():
 
 def test_a_session_stops_recording_at_the_cap(tmp_path, monkeypatch):
     for index in range(ingest.SESSION_CAP + 5):
-        _feed(monkeypatch, _claude_payload(f"Prompt number {index} in this session"))
+        _feed(monkeypatch, _copilot_payload(f"Prompt number {index} in this session"))
         hook.run("UserPromptSubmit", repo=str(tmp_path))
 
     assert len(_observations(tmp_path)) == ingest.SESSION_CAP
@@ -216,9 +219,9 @@ def test_a_session_stops_recording_at_the_cap(tmp_path, monkeypatch):
 
 def test_the_cap_is_per_session_not_per_store(tmp_path, monkeypatch):
     for index in range(ingest.SESSION_CAP):
-        _feed(monkeypatch, _claude_payload(f"Prompt number {index}, first session"))
+        _feed(monkeypatch, _copilot_payload(f"Prompt number {index}, first session"))
         hook.run("UserPromptSubmit", repo=str(tmp_path))
-    _feed(monkeypatch, _claude_payload("A prompt from a brand new session", "sess-2"))
+    _feed(monkeypatch, _copilot_payload("A prompt from a brand new session", "sess-2"))
     hook.run("UserPromptSubmit", repo=str(tmp_path))
 
     assert len(_observations(tmp_path)) == ingest.SESSION_CAP + 1
@@ -244,7 +247,7 @@ def test_a_hook_inside_a_hook_records_nothing(tmp_path, monkeypatch):
     Cartograph's own activity as if a person had asked for it.
     """
     monkeypatch.setenv(hook.REENTRY_MARKER, "1")
-    _feed(monkeypatch, _claude_payload("This prompt must not be recorded"))
+    _feed(monkeypatch, _copilot_payload("This prompt must not be recorded"))
 
     assert hook.run("UserPromptSubmit", repo=str(tmp_path)) == 0
 
@@ -267,7 +270,7 @@ def test_capture_starts_no_process_that_could_fire_a_hook(tmp_path, monkeypatch)
     monkeypatch.setattr(
         subprocess, "run", lambda *a, **k: pytest.fail("capture spawned a process")
     )
-    _feed(monkeypatch, _claude_payload("A prompt recorded without a subprocess"))
+    _feed(monkeypatch, _copilot_payload("A prompt recorded without a subprocess"))
 
     assert hook.run("UserPromptSubmit", repo=str(tmp_path)) == 0
     assert len(_observations(tmp_path)) == 1
@@ -276,12 +279,12 @@ def test_capture_starts_no_process_that_could_fire_a_hook(tmp_path, monkeypatch)
 # --- The generated host config ---------------------------------------------
 
 
-def test_claude_config_wires_capture_through_the_shared_command():
-    config = skills.generate_hooks_config(Path("/repo"))
-    command = config["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+def test_copilot_config_wires_capture_through_the_shared_command():
+    config = skills.generate_copilot_hooks_config()
+    command = config["hooks"]["UserPromptSubmit"][0]["command"]
 
     assert command == skills.hook_command(
-        "prompt-capture", host="claude-code", reads_payload=True
+        "prompt-capture", host="copilot", reads_payload=True
     )
     assert "carto hook prompt-capture" in command
     assert command.index("git rev-parse --git-dir") < command.index("carto hook")
@@ -319,13 +322,13 @@ def test_the_generated_capture_command_runs_end_to_end(tmp_path):
     )
     shim.chmod(0o755)
 
-    command = skills.generate_hooks_config(repo)["hooks"]["UserPromptSubmit"][0][
-        "hooks"
-    ][0]["command"]
+    command = skills.generate_copilot_hooks_config()["hooks"]["UserPromptSubmit"][0][
+        "command"
+    ]
     result = subprocess.run(
         ["/bin/sh", "-c", command],
         cwd=repo,
-        input=json.dumps(_claude_payload("End to end through the generated shell line")),
+        input=json.dumps(_copilot_payload("End to end through the generated shell line")),
         capture_output=True,
         text=True,
         timeout=120,

@@ -2,8 +2,8 @@
 
 Why this file exists
 --------------------
-The project's core promise is that a graph tool call is cheap: CLAUDE.md
-documents "5 tool calls, 800 tokens total" for a task. Issue #849 found
+The project's core promise is that a graph tool call is cheap: upstream
+documented "5 tool calls, 800 tokens total" for a task. Issue #849 found
 ``get_affected_flows`` returning ~247k tokens inside that workflow, and
 PR #853 capped that one tool. A sweep of the other 29 found the same class
 of bug in ten more places -- ``list_communities`` returned 206k tokens with

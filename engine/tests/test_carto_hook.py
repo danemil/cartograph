@@ -23,7 +23,6 @@ import pytest
 
 from cartograph import capabilities, cli, hook, skills
 
-
 # --- The two protocols must not be conflated -------------------------------
 
 
@@ -183,12 +182,15 @@ def test_windows_detach_uses_creation_flags_not_an_ampersand():
     assert flags & 0x00000200, "CREATE_NEW_PROCESS_GROUP not set"
 
 
+def _copilot_commands() -> "dict[str, str]":
+    """The POSIX command line of each generated Copilot hook, by event."""
+    config = skills.generate_copilot_hooks_config()
+    return {event: entries[0]["command"] for event, entries in config["hooks"].items()}
+
+
 def test_generated_hook_commands_do_not_background_with_an_ampersand():
-    config = skills.generate_hooks_config(Path("/repo"))
-    for entries in config["hooks"].values():
-        for entry in entries:
-            for inner in entry["hooks"]:
-                assert not inner["command"].rstrip().endswith("&")
+    for command in _copilot_commands().values():
+        assert not command.rstrip().endswith("&")
 
 
 def test_spawn_detached_hands_the_child_no_stdio(monkeypatch):
@@ -360,12 +362,10 @@ def _build_parser():
         ("SessionStart", "session-status"),
         ("sessionStart", "session-status"),
         ("session_start", "session-status"),
-        ("startup", "session-status"),
-        ("resume", "session-status"),
         ("PostToolUse", "file-update"),
-        ("afterFileEdit", "file-update"),
-        ("AfterTool", "file-update"),
         ("file-changed", "file-update"),
+        ("SessionEnd", "session-summarise"),
+        ("sessionEnd", "session-summarise"),
     ],
 )
 def test_host_spellings_resolve(spelling, resolved):
@@ -375,13 +375,11 @@ def test_host_spellings_resolve(spelling, resolved):
 # --- The generated host configs call the Python, not a shell one-liner -----
 
 
-def test_generated_claude_hooks_call_carto_hook():
-    config = skills.generate_hooks_config(Path("/repo"))
+def test_generated_copilot_hooks_call_carto_hook():
+    commands = _copilot_commands()
 
-    session = config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    post = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
-    assert "carto hook session-status" in session
-    assert "carto hook file-update" in post
+    assert "carto hook session-catchup" in commands["SessionStart"]
+    assert "carto hook file-update" in commands["Stop"]
 
 
 def test_git_guard_still_precedes_the_work():
@@ -392,35 +390,29 @@ def test_git_guard_still_precedes_the_work():
     upstream test for this looks for the literal ``carto update`` / ``carto
     status`` the rewiring replaced; the property it protects is unchanged.
     """
-    config = skills.generate_hooks_config(Path("/repo"))
+    commands = _copilot_commands()
 
     for event, work in (
-        ("SessionStart", "carto hook session-status"),
-        ("PostToolUse", "carto hook file-update"),
+        ("SessionStart", "carto hook session-catchup"),
+        ("Stop", "carto hook file-update"),
     ):
-        cmd = config["hooks"][event][0]["hooks"][0]["command"]
+        cmd = commands[event]
         assert cmd.index("git rev-parse --git-dir") < cmd.index(work)
 
 
 def test_generated_hooks_keep_the_path_guard_and_runtime_repo():
     """Both properties predate this work and both are load-bearing (#549, #558)."""
-    config = skills.generate_hooks_config(Path("/home/someone/checkout"))
-
-    for entries in config["hooks"].values():
-        for entry in entries:
-            for inner in entry["hooks"]:
-                # The guard must name the binary the hook INVOKES. Guarding on the
-                # long alias while running `carto` made every hook a silent
-                # no-op wherever only `carto` was installed.
-                assert "command -v carto >/dev/null 2>&1 || exit 0" in inner["command"]
-                assert "git rev-parse --show-toplevel" in inner["command"]
-                assert "/home/someone/checkout" not in inner["command"]
+    for command in _copilot_commands().values():
+        # The guard must name the binary the hook INVOKES. Guarding on the
+        # long alias while running `carto` made every hook a silent no-op
+        # wherever only `carto` was installed.
+        assert "command -v carto >/dev/null 2>&1 || exit 0" in command
+        assert "git rev-parse --show-toplevel" in command
 
 
 def test_generated_hooks_are_silent_when_the_binary_is_absent(tmp_path):
     """Run the real command line with an empty PATH: no output, exit 0."""
-    config = skills.generate_hooks_config(tmp_path)
-    command = config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    command = _copilot_commands()["SessionStart"]
 
     result = subprocess.run(
         ["/bin/sh", "-c", command],
@@ -434,32 +426,3 @@ def test_generated_hooks_are_silent_when_the_binary_is_absent(tmp_path):
 
     assert result.returncode == 0
     assert result.stdout == ""
-
-
-def test_codebuddy_inherits_the_shared_command(tmp_path):
-    settings = json.loads(
-        skills.install_codebuddy_hooks(tmp_path).read_text(encoding="utf-8")
-    )
-    post = settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
-
-    assert "carto hook file-update" in post
-
-
-def test_gemini_scripts_call_carto_hook(tmp_path):
-    skills.install_gemini_cli_hooks(tmp_path)
-    hooks_dir = tmp_path / ".gemini" / "hooks"
-
-    session = (hooks_dir / "crg-session-start.sh").read_text(encoding="utf-8")
-    update = (hooks_dir / "crg-update.sh").read_text(encoding="utf-8")
-    assert "carto hook session-status" in session
-    assert "carto hook file-update" in update
-
-
-def test_uninstall_still_recognises_the_command_it_used_to_write():
-    """Ownership is matched by exact string, so a rewrite orphans the old one."""
-    from cartograph import uninstall
-
-    superseded = uninstall._superseded_repo_hook_commands()
-
-    assert any("carto update --skip-flows" in c for c in superseded)
-    assert any("carto status" in c for c in superseded)

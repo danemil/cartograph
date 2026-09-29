@@ -11,13 +11,10 @@ never asked for — worse than the hook not existing.
 So nothing here is routed through the envelope helpers, and nothing here exits
 non-zero. A hook that cannot do its job says nothing and gets out of the way.
 
-Hosts disagree about what to call the same moment — ``SessionStart``,
-``sessionStart``, ``startup|resume``, ``PostToolUse``, ``AfterTool``,
-``afterFileEdit``, ``UserPromptSubmit``, ``beforeSubmitPrompt``,
-``SessionEnd``, ``sessionEnd``. The events below are therefore named after the
-*job*, with the host spellings as aliases, so the mapping lives in Python where
-it can be tested rather than in a command string copied into one JSON file per
-host.
+Copilot's two schemas spell the same moment differently — ``SessionStart``
+and ``sessionStart``, ``SessionEnd`` and ``sessionEnd``. The events below are
+therefore named after the *job*, with the host spellings as aliases, so the
+mapping lives in Python where it can be tested rather than in a command string.
 
 Two events read the host's stdin payload: ``prompt-capture``, for the text, and
 ``session-summarise``, for the session id. Neither waits for what it starts —
@@ -339,24 +336,17 @@ _EVENTS: dict[str, Callable[[Path, Optional[str]], int]] = {
 _ALIASES = {
     "sessionstatus": "session-status",
     "sessionstart": "session-status",
-    "startup": "session-status",
-    "resume": "session-status",
     "fileupdate": "file-update",
     "filechanged": "file-update",
     "posttooluse": "file-update",
-    "aftertool": "file-update",
-    "afterfileedit": "file-update",
     "promptcapture": "prompt-capture",
     "userpromptsubmit": "prompt-capture",
     "promptsubmit": "prompt-capture",
-    "beforesubmitprompt": "prompt-capture",
     "userprompt": "prompt-capture",
-    # Read off real payloads from this machine, not recalled. Claude Code's
-    # SessionEnd carries session_id/transcript_path/cwd/reason and fires once;
-    # Copilot CLI's hook schema spells the same moment `sessionEnd`. `Stop` is
-    # deliberately NOT here: its payload carries `stop_hook_active` and
-    # `last_assistant_message`, so it is a turn boundary, and aliasing it would
-    # summarise the same session after every reply.
+    # Read off real payloads from this machine, not recalled. SessionEnd fires
+    # once per session, and Copilot CLI's own schema spells it `sessionEnd`.
+    # `Stop` is deliberately NOT here: it is a turn boundary, and aliasing it
+    # would summarise the same session after every reply.
     "sessionend": "session-summarise",
     "sessionsummarise": "session-summarise",
     "sessioncatchup": "session-catchup",

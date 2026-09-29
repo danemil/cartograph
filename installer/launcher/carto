@@ -3,8 +3,8 @@
 #
 # It resolves the engine payload through a pointer file rather than being
 # generated with an absolute path baked in. A VS Code extension lives in a
-# version-stamped directory, so baking the path would leave Claude Code and
-# Copilot CLI pointing at a directory the next extension update deleted —
+# version-stamped directory, so baking the path would leave Copilot CLI and
+# Copilot Chat pointing at a directory the next extension update deleted —
 # failing at the moment the user is least equipped to diagnose it.
 #
 # Written by both `installer/install.sh` and the extension. Keep the two

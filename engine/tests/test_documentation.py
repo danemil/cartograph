@@ -60,17 +60,3 @@ def test_github_action_references_use_current_supported_majors():
                     f"{path.relative_to(ROOT)} uses actions/{action}@v{actual}; "
                     f"expected v{expected}"
                 )
-
-
-def test_codebuddy_install_docs_cover_project_artifacts():
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    usage = (ROOT / "docs/USAGE.md").read_text(encoding="utf-8")
-
-    assert "install --platform codebuddy" in readme
-    for artifact in (
-        ".mcp.json",
-        "CODEBUDDY.md",
-        ".codebuddy/settings.json",
-        ".codebuddy/skills/<name>/SKILL.md",
-    ):
-        assert artifact in usage

@@ -59,7 +59,7 @@ try {
 
     if ($Repo) {
         Write-Host "Placing the skills pack in $Repo"
-        & (Join-Path $bin "carto.cmd") install --platform claude --no-instructions -y --repo $Repo
+        & (Join-Path $bin "carto.cmd") install --platform copilot --no-instructions -y --repo $Repo
     }
 
     if (($env:PATH -split ';') -notcontains $bin) {

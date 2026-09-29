@@ -3,7 +3,7 @@
 Usage:
     carto install
     carto init
-    carto uninstall [--platform NAME] [--dry-run] [--yes] [--repo PATH]
+    carto uninstall [--dry-run] [--yes] [--repo PATH]
     carto build [--base BASE]
     carto update [--base BASE]
     carto forget PATH [PATH ...] [--dry-run]
@@ -52,12 +52,10 @@ from .constants import GRAMMAR_PROBE_FLAG, QUERY_PATTERNS
 
 logger = logging.getLogger(__name__)
 
-# Shared platform choices for install and init commands
-_PLATFORM_CHOICES = [
-    "codex", "claude", "claude-code", "cursor", "windsurf", "zed",
-    "continue", "opencode", "antigravity", "gemini-cli", "qwen", "kiro", "qoder",
-    "copilot", "copilot-cli", "codebuddy", "hermes", "all",
-]
+# GitHub Copilot is the only host: one target covers Copilot CLI and Copilot
+# Chat, which read the same files. The flag stays because the extension and the
+# installers pass it.
+_PLATFORM_CHOICES = ["copilot"]
 
 
 class _EmbeddingRefreshKwargs(TypedDict, total=False):
@@ -135,7 +133,7 @@ def _print_banner() -> None:
 {c}  ●──●──●{r}       {d}smarter code reviews{r}
 
   {b}Commands:{r}
-    {g}install{r}     Place skills, hooks and instructions for AI coding platforms
+    {g}install{r}     Place skills, hooks and instructions for GitHub Copilot
     {g}init{r}        Alias for install
     {g}build{r}       Full graph build {d}(parse all files){r}
     {g}update{r}      Incremental update {d}(changed files only){r}
@@ -155,52 +153,29 @@ def _print_banner() -> None:
 """)
 
 
-def _instruction_files_to_modify(
-    repo_root: Path,
-    target: str,
-) -> list[str]:
-    """Return the list of instruction files that ``install`` would write
-    or modify, given the current state of the repo and the selected
-    platform target. Used for the dry-run / confirm preview (#173).
+def _instruction_files_to_modify(repo_root: Path) -> list[str]:
+    """Return the instruction file ``install`` would write or modify, if any.
 
-    A file holding a section from an older release is listed as ``(update)``:
-    install replaces that block in place rather than leaving it stale (#314).
+    Used for the dry-run / confirm preview (#173). A file holding a section
+    from an older release is listed as ``(update)``: install replaces that
+    block in place rather than leaving it stale (#314).
     """
     from .skills import (
-        _CLAUDE_MD_SECTION,
-        _CLAUDE_MD_SECTION_MARKER,
         _COPILOT_SECTION,
-        _PLATFORM_INSTRUCTION_CUSTOM_SECTIONS,
-        _PLATFORM_INSTRUCTION_FILES,
+        _SECTION_MARKER,
+        INSTRUCTION_FILE,
         _upgrade_managed_block,
     )
 
-    targets: list[str] = []
-
-    def _describe(filename: str, path: Path, section: str) -> None:
-        if not path.exists():
-            targets.append(f"{filename} (new)")
-            return
-        content = path.read_text(encoding="utf-8", errors="replace")
-        if _CLAUDE_MD_SECTION_MARKER not in content:
-            targets.append(f"{filename} (append)")
-        elif _upgrade_managed_block(content, section) is not None:
-            targets.append(f"{filename} (update)")
-
-    if target in ("claude", "all"):
-        _describe("CLAUDE.md", repo_root / "CLAUDE.md", _CLAUDE_MD_SECTION)
-
-    for filename, owners in _PLATFORM_INSTRUCTION_FILES.items():
-        if target != "all" and target not in owners:
-            continue
-        section = (
-            _COPILOT_SECTION
-            if filename in _PLATFORM_INSTRUCTION_CUSTOM_SECTIONS
-            else _CLAUDE_MD_SECTION
-        )
-        _describe(filename, repo_root / filename, section)
-
-    return targets
+    path = repo_root / INSTRUCTION_FILE
+    if not path.exists():
+        return [f"{INSTRUCTION_FILE} (new)"]
+    content = path.read_text(encoding="utf-8", errors="replace")
+    if _SECTION_MARKER not in content:
+        return [f"{INSTRUCTION_FILE} (append)"]
+    if _upgrade_managed_block(content, _COPILOT_SECTION) is not None:
+        return [f"{INSTRUCTION_FILE} (update)"]
+    return []
 
 
 def _confirm_yes_no(prompt: str, default_yes: bool = True) -> bool:
@@ -279,7 +254,7 @@ def _match_files_to_forget(
 
 
 def _handle_init(args: argparse.Namespace) -> None:
-    """Install skills, hooks and instructions for detected AI coding platforms."""
+    """Place the skills pack, hooks and instruction file for GitHub Copilot."""
     from .incremental import ensure_repo_gitignore_excludes_crg, find_repo_root
 
     repo_root = Path(args.repo) if args.repo else find_repo_root()
@@ -287,14 +262,11 @@ def _handle_init(args: argparse.Namespace) -> None:
         repo_root = Path.cwd()
 
     dry_run = getattr(args, "dry_run", False)
-    target = getattr(args, "platform", "all") or "all"
-    if target == "claude-code":
-        target = "claude"
     auto_yes = getattr(args, "yes", False)
     skip_instructions = getattr(args, "no_instructions", False)
 
     # Preview the instruction files that would be touched (#173).
-    instr_targets = _instruction_files_to_modify(repo_root, target)
+    instr_targets = _instruction_files_to_modify(repo_root)
     if instr_targets:
         print()
         print("Graph instructions will be injected into:")
@@ -314,52 +286,16 @@ def _handle_init(args: argparse.Namespace) -> None:
     else:
         print(".gitignore already contains .cartograph/.")
 
-    # Platform-native skills and hooks are installed by default where supported
-    # so the graph tools are used proactively. Use --no-skills / --no-hooks /
-    # --no-instructions to opt out.
+    # Skills and hooks are installed by default so the graph tools are used
+    # proactively. Use --no-skills / --no-hooks / --no-instructions to opt out.
     skip_skills = getattr(args, "no_skills", False)
     skip_hooks = getattr(args, "no_hooks", False)
     # Legacy: --skills/--hooks/--all still accepted (no-op, everything is default)
 
-    from .skills import (
-        PLATFORMS,
-        inject_instruction_files,
-        install_host_skills,
-        install_codebuddy_hooks,
-        install_codebuddy_skills,
-        install_codex_hooks,
-        install_cursor_hooks,
-        install_gemini_cli_hooks,
-        install_gemini_cli_skills,
-        install_git_hook,
-        install_hermes_skills,
-        install_hooks,
-        install_opencode_plugin,
-        install_qoder_skills,
-    )
+    from .skills import inject_instruction_files, install_copilot_hooks, install_host_skills
 
     if not skip_skills:
-        # Claude Code, Copilot CLI and Copilot Chat are the tier-1 hosts and
-        # share one pack; Copilot reads `.github/skills/`, which nothing wrote
-        # before, so a Copilot-only user installed and got no skills at all.
-        if target in ("claude", "copilot", "copilot-cli", "all"):
-            for skills_dir in install_host_skills(repo_root):
-                print(f"Installed skills in {skills_dir}")
-
-        # Gemini CLI skills are workspace-scoped under .gemini/.
-        if target in ("gemini-cli", "all"):
-            gemini_skills_dir = install_gemini_cli_skills(repo_root)
-            print(f"Installed Gemini CLI skills in {gemini_skills_dir}")
-
-        # CodeBuddy discovers project skills under .codebuddy/skills/.
-        if target in ("codebuddy", "all"):
-            codebuddy_skills_dir = install_codebuddy_skills(repo_root)
-            print(f"Installed CodeBuddy skills in {codebuddy_skills_dir}")
-
-        # Hermes Agent discovers skills under <HERMES_HOME>/skills/.
-        if target == "hermes" or (target == "all" and PLATFORMS["hermes"]["detect"]()):
-            hermes_skills_dir = install_hermes_skills(repo_root)
-            print(f"Installed Hermes Agent skills in {hermes_skills_dir}")
+        print(f"Installed skills in {install_host_skills(repo_root)}")
 
     # Confirm before writing instruction files (#173). --yes skips the
     # prompt; --no-instructions skips the whole block.
@@ -368,7 +304,7 @@ def _handle_init(args: argparse.Namespace) -> None:
             "Inject graph instructions into the files above?",
             default_yes=True,
         ):
-            outcomes = inject_instruction_files(repo_root, target=target)
+            outcomes = inject_instruction_files(repo_root)
             for label, wording in (
                 ("created", "Injected graph instructions into"),
                 ("updated", "Updated graph instructions in"),
@@ -391,59 +327,8 @@ def _handle_init(args: argparse.Namespace) -> None:
     elif skip_instructions:
         print("Skipped instruction injection (--no-instructions).")
 
-
-    # Install Qoder skills (global user-level skills directory)
-    if not skip_skills and target in ("qoder", "all"):
-        qoder_skills_dir = install_qoder_skills(repo_root)
-        if qoder_skills_dir:
-            print(f"Installed Qoder skills to {qoder_skills_dir}")
-    if not skip_hooks and target in ("codebuddy", "all"):
-        try:
-            codebuddy_settings = install_codebuddy_hooks(repo_root)
-            print(f"Installed CodeBuddy hooks in {codebuddy_settings}")
-        except Exception as exc:
-            logger.warning("Could not install CodeBuddy hooks: %s", exc)
-    if not skip_hooks and target in ("codex", "all"):
-        hooks_path = install_codex_hooks(repo_root)
-        print(f"Installed Codex hooks in {hooks_path}")
-        git_hook = install_git_hook(repo_root)
-        if git_hook:
-            print(f"Installed git pre-commit hook in {git_hook}")
-    if not skip_hooks and target in ("copilot", "copilot-cli", "all"):
-        from .skills import install_copilot_hooks
-
+    if not skip_hooks:
         print(f"Installed Copilot hooks in {install_copilot_hooks(repo_root)}")
-    if not skip_hooks and target in ("claude", "qoder", "all"):
-        platforms_to_install = [target] if target != "all" else ["claude", "qoder"]
-        for plat in platforms_to_install:
-            install_hooks(repo_root, platform=plat)
-            print(f"Installed hooks in {repo_root / f'.{plat}' / 'settings.json'}")
-        git_hook = install_git_hook(repo_root)
-        if git_hook:
-            print(f"Installed git pre-commit hook in {git_hook}")
-
-    # Cursor hooks (user-level, only if ~/.cursor exists — matching MCP detect)
-    if not skip_hooks and target in ("all", "cursor") and PLATFORMS["cursor"]["detect"]():
-        try:
-            hooks_path = install_cursor_hooks()
-            print(f"Installed Cursor hooks in {hooks_path}")
-        except Exception as exc:
-            logger.warning("Could not install Cursor hooks: %s", exc)
-
-    if not skip_hooks and target in ("gemini-cli", "all"):
-        try:
-            gemini_settings = install_gemini_cli_hooks(repo_root)
-            print(f"Installed Gemini CLI hooks in {gemini_settings}")
-        except Exception as exc:
-            logger.warning("Could not install Gemini CLI hooks: %s", exc)
-
-    # OpenCode plugin (user-level, gated by same detect() as MCP config)
-    if not skip_hooks and target in ("all", "opencode") and PLATFORMS["opencode"]["detect"]():
-        try:
-            plugin_path = install_opencode_plugin()
-            print(f"Installed OpenCode plugin in {plugin_path}")
-        except Exception as exc:
-            logger.warning("Could not install OpenCode plugin: %s", exc)
 
     print()
     print("Next steps:")
@@ -1078,17 +963,17 @@ def main() -> None:
     install_cmd.add_argument(
         "--no-skills",
         action="store_true",
-        help="Skip generating platform-native skill files",
+        help="Skip writing the skills pack to .github/skills/",
     )
     install_cmd.add_argument(
         "--no-hooks",
         action="store_true",
-        help="Skip installing platform-native hooks",
+        help="Skip writing .github/hooks/cartograph.json",
     )
     install_cmd.add_argument(
         "--no-instructions",
         action="store_true",
-        help="Skip injecting graph instructions into CLAUDE.md / AGENTS.md / etc.",
+        help="Skip writing .github/instructions/cartograph.instructions.md",
     )
     install_cmd.add_argument(
         "-y",
@@ -1105,8 +990,8 @@ def main() -> None:
     install_cmd.add_argument(
         "--platform",
         choices=_PLATFORM_CHOICES,
-        default="all",
-        help="Target platform for MCP config (default: all detected)",
+        default="copilot",
+        help="Target host: copilot, for both Copilot CLI and Copilot Chat (the default)",
     )
 
     init_cmd = sub.add_parser("init", help="Alias for install")
@@ -1119,17 +1004,17 @@ def main() -> None:
     init_cmd.add_argument(
         "--no-skills",
         action="store_true",
-        help="Skip generating platform-native skill files",
+        help="Skip writing the skills pack to .github/skills/",
     )
     init_cmd.add_argument(
         "--no-hooks",
         action="store_true",
-        help="Skip installing platform-native hooks",
+        help="Skip writing .github/hooks/cartograph.json",
     )
     init_cmd.add_argument(
         "--no-instructions",
         action="store_true",
-        help="Skip injecting graph instructions into CLAUDE.md / AGENTS.md / etc.",
+        help="Skip writing .github/instructions/cartograph.instructions.md",
     )
     init_cmd.add_argument(
         "-y",
@@ -1143,8 +1028,8 @@ def main() -> None:
     init_cmd.add_argument(
         "--platform",
         choices=_PLATFORM_CHOICES,
-        default="all",
-        help="Target platform for MCP config (default: all detected)",
+        default="copilot",
+        help="Target host: copilot, for both Copilot CLI and Copilot Chat (the default)",
     )
 
     uninstall_cmd = sub.add_parser(
@@ -1170,13 +1055,6 @@ def main() -> None:
         "--keep-user-configs",
         action="store_true",
         help="Clean repositories only; do not edit files under the user home",
-    )
-    uninstall_cmd.add_argument(
-        "--platform",
-        choices=_PLATFORM_CHOICES,
-        default="all",
-        help="Unbind only this platform's MCP registration and keep the graph "
-             "data and every other integration. Default: all (full uninstall).",
     )
     uninstall_cmd.add_argument(
         "--dry-run",
@@ -1501,9 +1379,6 @@ def main() -> None:
         help="Deprecated alias for --format json",
     )
 
-    # enrich (Claude Code PreToolUse hook; reads one JSON object from stdin)
-    sub.add_parser("enrich", help="Enrich hook input with graph context")
-
     hook_cmd = sub.add_parser(
         "hook",
         help="Host-invoked hook entry point (hosts call this; agents must not)",
@@ -1520,7 +1395,7 @@ def main() -> None:
         "--host",
         default=None,
         help=(
-            "Which host is calling, e.g. claude-code; 'copilot' is narrowed to "
+            "Which host is calling, e.g. copilot; 'copilot' is narrowed to "
             "copilot-cli or copilot-chat from the environment. Recorded as an "
             "observation's platform_source; only the generated host config "
             "knows it, so nothing downstream has to infer it."
@@ -1912,12 +1787,6 @@ def main() -> None:
     ):
         refactor_cmd.error("rename requires --old-name and --new-name")
 
-    if args.command == "enrich":
-        from .enrich import run_hook
-
-        run_hook()
-        return
-
     if args.command == "mem":
         # Ahead of the graph-tool block and independent of it: observations
         # outlive any particular build, so `carto mem` must answer on a
@@ -2031,14 +1900,11 @@ def main() -> None:
         from .uninstall import run as run_uninstall
 
         target_repo = Path(args.repo).expanduser() if args.repo else None
-        platform_target = getattr(args, "platform", "all") or "all"
-        scoped_platforms = None if platform_target == "all" else [platform_target]
         options = {
             "repo": target_repo,
             "all_repos": args.all_repos,
             "keep_data": args.keep_data,
             "keep_user_configs": args.keep_user_configs,
-            "platforms": scoped_platforms,
         }
 
         def _print_report(report: UninstallReport) -> None:
@@ -2052,30 +1918,20 @@ def main() -> None:
                 print(f"  error   {error}")
 
         preview = run_uninstall(**options, dry_run=True)
-        if scoped_platforms:
-            print(f"carto unbind ({platform_target}) — planned actions:")
-        else:
-            print("carto uninstall — planned actions:")
+        print("carto uninstall — planned actions:")
         _print_report(preview)
         if preview.total_actions == 0:
             if preview.errors:
                 raise SystemExit(1)
-            if scoped_platforms:
-                print(
-                    f"  (nothing to do — {platform_target} has no "
-                    "cartograph MCP registration)"
-                )
-            else:
-                print("  (nothing to do — no carto artifacts found)")
+            print("  (nothing to do — no carto artifacts found)")
             return
         if args.dry_run:
             print("\n[dry-run] No changes made.")
             if preview.errors:
                 raise SystemExit(1)
             return
-        action_word = "unbind" if scoped_platforms else "uninstall"
         if not args.yes and not _confirm_yes_no(
-            f"\nProceed with {action_word}?", default_yes=False
+            "\nProceed with uninstall?", default_yes=False
         ):
             print("Aborted.")
             return

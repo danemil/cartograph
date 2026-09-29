@@ -14,7 +14,7 @@ fix. The test now forbids what it used to require.
 import re
 from pathlib import Path
 
-from cartograph.skills import _SKILLS, generate_skills
+from cartograph.skills import _SKILLS, install_host_skills
 
 REPO_ROOT = Path(__file__).parents[1]
 #: Derived, not hand-listed: the pack is the source of truth, and a hand-kept
@@ -37,7 +37,7 @@ def _backticked_identifiers(markdown: str) -> list[str]:
 
 
 def _all_skill_files(tmp_path: Path) -> list[Path]:
-    generated = generate_skills(tmp_path)
+    generated = install_host_skills(tmp_path)
     files = []
     for name in SKILL_NAMES:
         files.append(generated / name / "SKILL.md")
@@ -51,7 +51,7 @@ def test_generated_and_bundled_skills_byte_identical(tmp_path):
     `check_skills.py` validates the canonical pack against the live CLI; this
     check is what makes that guarantee reach an installed machine.
     """
-    generated = generate_skills(tmp_path)
+    generated = install_host_skills(tmp_path)
     for name in SKILL_NAMES:
         gen = (generated / name / "SKILL.md").read_text(encoding="utf-8")
         bundled = (CANONICAL_SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
@@ -85,21 +85,21 @@ def test_no_skill_references_an_mcp_tool(tmp_path):
 # false positives.
 
 
-def test_generate_skills_unicode_and_space_path(tmp_path):
+def test_install_host_skills_unicode_and_space_path(tmp_path):
     target = tmp_path / "üñí code (v2)" / "deep" / "nested"
-    out = generate_skills(target)
-    assert out == target / ".claude" / "skills"
+    out = install_host_skills(target)
+    assert out == target / ".github" / "skills"
     for name in SKILL_NAMES:
         content = (out / name / "SKILL.md").read_text(encoding="utf-8")
         assert "carto " in content
         assert content.startswith("---\n")
 
 
-def test_generate_skills_overwrites_stale_content(tmp_path):
-    out = generate_skills(tmp_path)
+def test_install_host_skills_overwrites_stale_content(tmp_path):
+    out = install_host_skills(tmp_path)
     stale = out / "debug-issue" / "SKILL.md"
     stale.write_text("Use `get_flow` and `get_minimal_context`.\n", encoding="utf-8")
-    out2 = generate_skills(tmp_path)
+    out2 = install_host_skills(tmp_path)
     assert out2 == out
     refreshed = stale.read_text(encoding="utf-8")
     assert "`get_flow`" not in refreshed

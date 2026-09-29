@@ -1,10 +1,7 @@
 """Shared test fixtures.
 
 Keeps cartograph's own per-user state out of the developer's real
-home directory. Scoped deliberately: the editor-integration installers in
-``skills.py`` write to other user-level locations (``~/.codex``,
-``~/.cursor``, ``~/.config/opencode``) that are outside CRG state and are
-not covered here — those tests patch ``Path.home()`` themselves.
+home directory.
 """
 
 from __future__ import annotations
@@ -33,10 +30,4 @@ def isolated_crg_home(tmp_path_factory, monkeypatch):
     """
     home = tmp_path_factory.mktemp("crg-home")
     monkeypatch.setenv("CRG_HOME", str(home))
-    # The Hermes Agent installer resolves its config from ``HERMES_HOME``,
-    # falling back to ``~/.hermes``. That fallback reaches the real user
-    # config in any test that does not also patch ``Path.home()``, so pin
-    # the variable to a temp directory instead of merely clearing it:
-    # unset, a miss would be silently destructive; set, it cannot be.
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path_factory.mktemp("hermes-home")))
     return home

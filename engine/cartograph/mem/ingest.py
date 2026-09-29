@@ -33,12 +33,10 @@ from . import store as _store
 
 logger = logging.getLogger(__name__)
 
-#: Hosts spell the same fields differently, so each is looked up through a
-#: list rather than a constant. Taken from what the hosts actually send:
-#: Claude Code uses ``prompt``/``session_id``, Copilot-family payloads have
-#: been seen with ``query``/``input``/``message`` and
-#: ``conversation_id``/``generation_id``, and the editor hosts camel-case the
-#: same names. First non-empty wins.
+#: Each field is looked up through a list rather than a constant. Copilot CLI
+#: and Copilot Chat both send ``prompt``/``session_id``, read off both on
+#: 2026-09-29 (``docs/copilot-hooks.md``); the other spellings are tolerated
+#: rather than relied on. First non-empty wins.
 _PROMPT_KEYS = ("prompt", "query", "input", "message")
 _SESSION_KEYS = ("session_id", "sessionId", "conversation_id", "conversationId", "id")
 

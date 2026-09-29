@@ -51,7 +51,6 @@ _EXAMPLES = {
     "update": "carto update",
     "detect-changes": "carto detect-changes --base HEAD~1",
     "dead-code": "carto dead-code --format json",
-    "enrich": "carto enrich",
     "repos": "carto repos",
     "postprocess": "carto postprocess",
     "embed": "carto embed",

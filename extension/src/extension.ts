@@ -4,7 +4,7 @@
  * The acceptance test is a fresh machine carrying nothing but VS Code, behind
  * default-deny egress. Copilot ships inside VS Code, so the `.vsix` is the only
  * artifact that reaches such a machine — and installing it therefore has to
- * serve Claude Code and Copilot CLI too, neither of which VS Code knows about.
+ * serve Copilot CLI too, which VS Code knows nothing about.
  * That is the whole job here: place the engine where a shell can find it, place
  * the skills pack where the hosts look, and otherwise stay quiet.
  *
@@ -42,7 +42,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   // Every integrated terminal gets `carto` on PATH — which is where Copilot's
-  // terminal tool, Copilot CLI and Claude Code all run. Persistent and scoped
+  // terminal tool and Copilot CLI both run. Persistent and scoped
   // to this extension, so nothing edits the user's shell profile.
   context.environmentVariableCollection.description = "Adds carto to PATH";
   context.environmentVariableCollection.prepend("PATH", `${bin}${pathSeparator()}`);
@@ -128,9 +128,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
-  // The launchers and the skills pack are deliberately left in place: Claude
-  // Code and Copilot CLI keep working whether or not VS Code is running, which
-  // is the point of installing through it.
+  // The launchers and the skills pack are deliberately left in place: Copilot
+  // CLI keeps working whether or not VS Code is running, which is the point of
+  // installing through it.
 }
 
 function pathSeparator(): string {

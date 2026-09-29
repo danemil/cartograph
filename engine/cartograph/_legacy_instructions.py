@@ -439,9 +439,108 @@ This project uses **cartograph** for structural code analysis via MCP.
 4. Use `query_graph` pattern="tests_for" to check coverage.
 """
 
+# skills.py _COPILOT_SECTION as of 9a1ad15 (2341 chars)
+_SECTION_11 = """---
+applyTo: '**'
+description: >-
+  Use the carto CLI for token-efficient codebase
+  exploration and code review.
+---
+
+<!-- cartograph MCP tools -->
+## Code knowledge graph: cartograph
+
+**This project has a knowledge graph. Query it with the `carto` CLI to
+narrow scope, then read the source.** Cheaper than scanning files, and it gives you structural
+context (callers, dependents, test coverage) that file search cannot.
+
+There is no MCP server; `carto` is a plain command. If your tool reads Agent Skills
+(`.claude/skills/`, `.github/skills/`, `.agents/skills/`), prefer those — this is the fallback.
+
+### Verify in the source
+
+- Narrow scope with the graph, then read the source. Do not change code from graph output alone.
+- For any non-trivial change, read the implementation and the relevant tests before concluding.
+- Verify the exact source when touching behavior, database logic, migrations, retries, fallbacks,
+  recovery, or compatibility code.
+- When the graph and the source disagree, the source wins. The graph may be stale or may not
+  model that relationship.
+- An empty graph result can mean "not indexed" or "not statically visible", not "does not exist".
+
+### Commands
+
+Every one is checked against the live parser by the skills conformance suite,
+which is why this table can be trusted where the tool list it replaced could not.
+
+| Command | Use when |
+| --- | --- |
+| `carto review-summary --base <ref>` | First look at a change: risk, counts, test gaps |
+| `carto review-context --base <ref>` | Full review context, once the summary warrants it |
+| `carto impact --files <file>` | Blast radius of a change |
+| `carto query callers_of <symbol>` | Callers, callees, imports, tests (16 patterns) |
+| `carto search "<text>"` | Find code when you do not know the symbol name |
+| `carto architecture` | Shape of an unfamiliar codebase |
+| `carto refactor rename --old-name <a> --new-name <b>` | Plan a rename; preview only, never edits |
+| `carto build` / `carto update` | Create or refresh the graph |
+
+Pass `--format json` always, and `--max-tokens N` to bound a response (truncation is
+semantic, so the JSON stays valid). Exit `2` is a precondition: run `error.remediation`,
+then retry. Full reference: `carto capabilities --format json`.
+
+The graph auto-updates on file changes, via hooks.
+<!-- /cartograph MCP tools -->
+"""
+
+# skills.py _CLAUDE_MD_SECTION as of 9a1ad15 (2222 chars)
+_SECTION_12 = """<!-- cartograph MCP tools -->
+## Code knowledge graph: cartograph
+
+**This project has a knowledge graph. Query it with the `carto` CLI to
+narrow scope, then read the source.** Cheaper than scanning files, and it gives you structural
+context (callers, dependents, test coverage) that file search cannot.
+
+There is no MCP server; `carto` is a plain command. If your tool reads Agent Skills
+(`.claude/skills/`, `.github/skills/`, `.agents/skills/`), prefer those — this is the fallback.
+
+### Verify in the source
+
+- Narrow scope with the graph, then read the source. Do not change code from graph output alone.
+- For any non-trivial change, read the implementation and the relevant tests before concluding.
+- Verify the exact source when touching behavior, database logic, migrations, retries, fallbacks,
+  recovery, or compatibility code.
+- When the graph and the source disagree, the source wins. The graph may be stale or may not
+  model that relationship.
+- An empty graph result can mean "not indexed" or "not statically visible", not "does not exist".
+
+### Commands
+
+Every one is checked against the live parser by the skills conformance suite,
+which is why this table can be trusted where the tool list it replaced could not.
+
+| Command | Use when |
+| --- | --- |
+| `carto review-summary --base <ref>` | First look at a change: risk, counts, test gaps |
+| `carto review-context --base <ref>` | Full review context, once the summary warrants it |
+| `carto impact --files <file>` | Blast radius of a change |
+| `carto query callers_of <symbol>` | Callers, callees, imports, tests (16 patterns) |
+| `carto search "<text>"` | Find code when you do not know the symbol name |
+| `carto architecture` | Shape of an unfamiliar codebase |
+| `carto refactor rename --old-name <a> --new-name <b>` | Plan a rename; preview only, never edits |
+| `carto build` / `carto update` | Create or refresh the graph |
+
+Pass `--format json` always, and `--max-tokens N` to bound a response (truncation is
+semantic, so the JSON stays valid). Exit `2` is a precondition: run `error.remediation`,
+then retry. Full reference: `carto capabilities --format json`.
+
+The graph auto-updates on file changes, via hooks.
+<!-- /cartograph MCP tools -->
+"""
+
 # Longest first: a shorter variant must never shadow a longer one that
 # contains it. ``skills`` relies on this ordering when it picks a match.
 LEGACY_INSTRUCTION_SECTIONS: tuple[str, ...] = (
+    _SECTION_11,
+    _SECTION_12,
     _SECTION_01,
     _SECTION_02,
     _SECTION_03,

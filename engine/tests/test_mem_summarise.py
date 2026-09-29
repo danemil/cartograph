@@ -9,9 +9,9 @@ summary was derived from.
 
 No test here calls a real host agent. Every host interaction goes through a
 stub argv, so the suite is deterministic and spends nobody's quota; the real
-invocation was verified by hand against `copilot --help` and `claude --help` and
-then run. What the suite can hold is that the argv is *built* from those flags
-and that every failure mode lands on the fallback.
+invocation was verified by hand against `copilot --help` and then run. What the
+suite can hold is that the argv is *built* from those flags and that every
+failure mode lands on the fallback.
 """
 
 from __future__ import annotations
@@ -27,11 +27,10 @@ import pytest
 from cartograph import hook, skills
 from cartograph.mem import ingest, store, summarise
 
-
 # --- helpers ---------------------------------------------------------------
 
 
-def _capture(repo: Path, session: str, *texts: str, host: str = "claude-code") -> None:
+def _capture(repo: Path, session: str, *texts: str, host: str = "copilot-cli") -> None:
     """Record prompts the way the hook does, so the rows are the real shape."""
     for text in texts:
         assert ingest.capture(
@@ -309,21 +308,6 @@ def test_every_host_invocation_is_recorded_as_no_hooks_or_not_at_all():
             assert host.no_hooks_flag in argv
 
 
-def test_claude_is_invoked_with_safe_mode_and_no_tools():
-    """Pins the two flags that were checked against `claude --help` and run.
-
-    ``--bare`` also skips hooks and was rejected: it restricts auth to an API
-    key, which would break every subscription install.
-    """
-    claude = next(host for host in summarise.HOSTS if host.binary == "claude")
-    argv = claude.argv("brief")
-
-    assert argv[:3] == ["claude", "-p", "brief"]
-    assert "--safe-mode" in argv
-    assert "--bare" not in argv
-    assert argv[argv.index("--tools") + 1] == ""
-
-
 def test_copilot_is_invoked_non_interactively_and_offline_safe():
     copilot = next(host for host in summarise.HOSTS if host.binary == "copilot")
     argv = copilot.argv("brief")
@@ -336,13 +320,12 @@ def test_copilot_is_invoked_non_interactively_and_offline_safe():
     assert "--disable-builtin-mcps" in argv
 
 
-def test_the_session_host_is_preferred(monkeypatch):
+def test_session_text_only_ever_goes_to_copilot(monkeypatch):
+    """Decision 4: Copilot is the only AI tool the target environment allows."""
     monkeypatch.setattr(summarise.shutil, "which", lambda binary: f"/usr/bin/{binary}")
 
-    order = [host.name for host in summarise.available_hosts(prefer="claude-code")]
-
-    assert order[0] == "claude-code"
-    assert set(order) == {host.name for host in summarise.HOSTS}
+    assert [host.binary for host in summarise.HOSTS] == ["copilot"]
+    assert [host.binary for host in summarise.available_hosts()] == ["copilot"]
 
 
 def test_no_host_on_path_is_not_an_error(repo, monkeypatch):
@@ -356,7 +339,7 @@ def test_no_host_on_path_is_not_an_error(repo, monkeypatch):
     assert "no host agent CLI on PATH" in result["fallback_reason"]
 
 
-def test_a_failing_host_falls_through_to_the_next_then_to_structural(repo, monkeypatch):
+def test_a_failing_host_falls_through_to_structural(repo, monkeypatch):
     _capture(repo, "s1", "First real prompt here", "Second real prompt here")
     tried: list[str] = []
 
@@ -368,17 +351,15 @@ def test_a_failing_host_falls_through_to_the_next_then_to_structural(repo, monke
 
     result = summarise.summarise(repo, session="s1")
 
-    # Every installed host is tried once — claude first here, because that is
-    # the host that recorded the prompts.
-    assert tried == ["claude", "copilot"]
-    assert set(tried) == {host.binary for host in summarise.HOSTS}
+    # Every installed host is tried once, and only once.
+    assert tried == [host.binary for host in summarise.HOSTS]
     assert result["summary_source"] == "structural"
     assert "failed or timed out" in result["fallback_reason"]
 
 
 def test_a_host_timeout_is_a_fallback_not_an_exception(monkeypatch):
     def boom(*_args, **_kwargs):
-        raise subprocess.TimeoutExpired(cmd="claude", timeout=1)
+        raise subprocess.TimeoutExpired(cmd="copilot", timeout=1)
 
     monkeypatch.setattr(summarise.subprocess, "run", boom)
 
@@ -560,9 +541,9 @@ def test_the_event_exits_zero_even_when_everything_fails(repo, monkeypatch):
     assert hook.run("SessionEnd", repo=str(repo)) == 0
 
 
-def test_the_generated_claude_config_wires_session_end():
-    config = skills.generate_hooks_config(Path("/repo"))
-    command = config["hooks"]["SessionEnd"][0]["hooks"][0]["command"]
+def test_the_generated_copilot_config_wires_session_end():
+    config = skills.generate_copilot_hooks_config()
+    command = config["hooks"]["SessionEnd"][0]["command"]
 
     assert "carto hook session-summarise" in command
     # The payload carries the session id, so the drain must come after the

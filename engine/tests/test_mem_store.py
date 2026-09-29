@@ -113,7 +113,7 @@ class TestSearch:
         _add(store, "alpha one", "shared word", kind="decision", session="s1",
              platform_source="copilot")
         _add(store, "alpha two", "shared word", kind="note", session="s2",
-             platform_source="claude-code", doc_type="prompts")
+             platform_source="copilot-chat", doc_type="prompts")
         _add(store, "alpha three", "shared word", project="other", kind="note")
 
         def titles(**kwargs):

@@ -82,7 +82,7 @@ def test_without_the_cli_marker_it_is_chat(monkeypatch):
 
 def test_an_explicit_host_is_left_alone(monkeypatch):
     monkeypatch.setenv("COPILOT_CLI", "1")
-    assert hook.resolve_host("claude-code") == "claude-code"
+    assert hook.resolve_host("copilot-chat") == "copilot-chat"
     assert hook.resolve_host(None) is None
 
 

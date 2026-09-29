@@ -54,7 +54,7 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     )
     add_cmd.add_argument(
         "--platform-source", dest="platform_source", default=None,
-        help="Host that produced it, e.g. claude-code, copilot-cli",
+        help="Host that produced it, e.g. copilot-cli, copilot-chat",
     )
     add_cmd.add_argument(
         "--summary-source", dest="summary_source", choices=list(_store.SUMMARY_SOURCES),
@@ -143,7 +143,7 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
         "--no-host-agent", dest="no_host_agent", action="store_true",
         help=(
             "Write the deterministic structural summary without calling a host "
-            "agent, so no Copilot or Claude quota is spent"
+            "agent, so no Copilot quota is spent"
         ),
     )
 

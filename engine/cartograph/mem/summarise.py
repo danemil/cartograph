@@ -148,10 +148,8 @@ def summary_model() -> str:
     return os.environ.get("CARTO_SUMMARY_MODEL", "").strip() or "auto"
 
 
-#: In T07's order — Copilot is the acceptance test's guaranteed intelligence —
-#: with the host that recorded the session preferred over both when it is one
-#: of them. Preferring it is not a tie-break: it is the CLI already
-#: authenticated for this person, and the quota they are already spending.
+#: Copilot only: it is the one AI tool the target environment allows, and
+#: session text must never be sent anywhere else.
 HOSTS: tuple[Host, ...] = (
     Host(
         name="copilot-cli",
@@ -179,28 +177,6 @@ HOSTS: tuple[Host, ...] = (
         # rewrite a person's config to make its own call cheaper.
         no_hooks_flag="",
         model_flag="--model",
-    ),
-    Host(
-        name="claude-code",
-        binary="claude",
-        before=("-p",),
-        after=(
-            # --safe-mode disables hooks, plugins, MCP servers and CLAUDE.md
-            # while leaving auth working. --bare also skips hooks but restricts
-            # auth to an API key, which would break every subscription install.
-            "--safe-mode",
-            # No tools at all. The brief is built from captured prompt text,
-            # which is whatever a person typed; a summariser that cannot run
-            # commands or edit files cannot be talked into doing either.
-            "--tools",
-            "",
-            # A background summarisation should not leave a resumable session
-            # behind in the person's history.
-            "--no-session-persistence",
-            "--output-format",
-            "text",
-        ),
-        no_hooks_flag="--safe-mode",
     ),
 )
 
@@ -333,17 +309,14 @@ def split_title(text: str) -> "tuple[Optional[str], str]":
 # ---------------------------------------------------------------------------
 
 
-def available_hosts(prefer: Optional[str] = None) -> "list[Host]":
-    """The hosts installed on this machine, best candidate first.
+def available_hosts() -> "list[Host]":
+    """The hosts installed on this machine.
 
     Empty is the expected answer on the machines this targets, not a problem to
     report: the acceptance test is a box with only VS Code on it, and plenty of
     them will have no agent CLI on PATH at all.
     """
-    found = [host for host in HOSTS if shutil.which(host.binary)]
-    if prefer:
-        found.sort(key=lambda host: host.name != prefer)
-    return found
+    return [host for host in HOSTS if shutil.which(host.binary)]
 
 
 def _host_env() -> dict[str, str]:
@@ -599,7 +572,7 @@ def _compose(
             fallback_title, fallback_body, "structural", None,
             "a summarisation is already running in this process tree", 0,
         )
-    hosts = available_hosts(prefer=_prompt_host(prompts))
+    hosts = available_hosts()
     if not hosts:
         return (
             fallback_title, fallback_body, "structural", None,
@@ -628,9 +601,3 @@ def _compose(
         fallback_title, fallback_body, "structural", None,
         "every installed host agent failed or timed out", attempts,
     )
-
-
-def _prompt_host(prompts: "list[dict[str, Any]]") -> Optional[str]:
-    """The host that recorded these prompts, if they agree on one."""
-    sources = {row.get("platform_source") for row in prompts if row.get("platform_source")}
-    return sources.pop() if len(sources) == 1 else None

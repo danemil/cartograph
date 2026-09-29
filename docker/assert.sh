@@ -297,45 +297,50 @@ if assert_ok_envelope "mem search returns what was added"; then
 fi
 
 # --------------------------------------------------------------------------
-section "the skills pack reaches every host"
+section "the skills pack reaches Copilot"
 
 # The engine writes these from package data frozen into the binary. Comparing
 # them against skills/ therefore checks the payload, not this directory.
-for host in .claude/skills .github/skills .agents/skills; do
-    if [ ! -d "$REPO/$host" ]; then
-        fail "skills present in $host" "directory was not created"
-        continue
-    fi
-    if diff -r /opt/canonical-skills "$REPO/$host" >/dev/null 2>&1; then
-        n=$(find "$REPO/$host" -name SKILL.md | wc -l)
-        pass "skills present in $host" "$n skills, byte-identical to skills/"
-    else
-        fail "skills present in $host" "differs from skills/: $(diff -rq /opt/canonical-skills "$REPO/$host" 2>&1 | head -3 | tr '\n' ';')"
-    fi
-done
+host=.github/skills
+if [ ! -d "$REPO/$host" ]; then
+    fail "skills present in $host" "directory was not created"
+elif diff -r /opt/canonical-skills "$REPO/$host" >/dev/null 2>&1; then
+    n=$(find "$REPO/$host" -name SKILL.md | wc -l)
+    pass "skills present in $host" "$n skills, byte-identical to skills/"
+else
+    fail "skills present in $host" "differs from skills/: $(diff -rq /opt/canonical-skills "$REPO/$host" 2>&1 | head -3 | tr '\n' ';')"
+fi
 
 # --------------------------------------------------------------------------
 section "the hook a host will actually run"
 
-SETTINGS=$REPO/.claude/settings.json
-if [ ! -f "$SETTINGS" ]; then
-    fail "SessionStart hook prints its status line" "no .claude/settings.json"
+HOOKS=$REPO/.github/hooks/cartograph.json
+HOOK_PROMPT="Acceptance prompt captured through the Copilot hook"
+if [ ! -f "$HOOKS" ]; then
+    fail "UserPromptSubmit hook records the prompt" "no .github/hooks/cartograph.json"
 else
-    hook_cmd=$(jq -r '.hooks.SessionStart[0].hooks[0].command // empty' "$SETTINGS")
+    hook_cmd=$(jq -r '.hooks.UserPromptSubmit[0].command // empty' "$HOOKS")
     if [ -z "$hook_cmd" ]; then
-        fail "SessionStart hook prints its status line" "no SessionStart command in settings.json"
+        fail "UserPromptSubmit hook records the prompt" "no UserPromptSubmit command in the hook file"
     else
-        # Verbatim, from the repo, with stdin closed — the way the host runs it.
-        # A hook that cannot do its job says nothing and exits 0, so silence
-        # here is indistinguishable from the hook not existing.
-        hook_out=$(cd "$REPO" && printf '' | bash -c "$hook_cmd" 2>>"$LOG")
+        # Verbatim, from the repo, with the payload a Copilot host pipes in.
+        # A hook that cannot do its job says nothing and exits 0, so the store
+        # is the only place to see whether it worked.
+        payload=$(jq -cn --arg p "$HOOK_PROMPT" --arg cwd "$REPO" \
+            '{session_id: "acceptance-hook", prompt: $p, cwd: $cwd, hook_event_name: "UserPromptSubmit"}')
+        hook_out=$(cd "$REPO" && printf '%s' "$payload" | bash -c "$hook_cmd" 2>>"$LOG")
         hook_rc=$?
+        run_env carto mem search --repo "$REPO" --query "$HOOK_PROMPT" \
+            --session acceptance-hook --doc-type prompts --format json
         if [ "$hook_rc" -ne 0 ]; then
-            fail "SessionStart hook prints its status line" "exit $hook_rc; a hook must never exit non-zero"
-        elif printf '%s' "$hook_out" | grep -q '^\[carto\]'; then
-            pass "SessionStart hook prints its status line" "$hook_out"
+            fail "UserPromptSubmit hook records the prompt" "exit $hook_rc; a hook must never exit non-zero"
+        elif [ -n "$hook_out" ]; then
+            # Whatever this event prints is prepended to the person's prompt.
+            fail "UserPromptSubmit hook records the prompt" "printed '${hook_out}'; it must be silent"
+        elif jqok '.data.items | length == 1'; then
+            pass "UserPromptSubmit hook records the prompt" "one prompt row in session acceptance-hook"
         else
-            fail "SessionStart hook prints its status line" "printed nothing recognisable: '${hook_out}'"
+            fail "UserPromptSubmit hook records the prompt" "expected one prompt row, got $(jqv '.data.items | length')"
         fi
     fi
 fi
@@ -363,8 +368,8 @@ if [ "$failures" -eq 0 ]; then
         "${files:-?}" "${langs:-?}"
     printf '  - the graph is non-empty (%s nodes), so no grammar lookup silently missed\n' "${nodes:-?}"
     printf '  - every command answers with a contract-v1 envelope\n'
-    printf '  - the skills pack is byte-identical in all three discovery paths\n'
-    printf '  - the generated SessionStart hook line runs and reports\n'
+    printf '  - the skills pack is byte-identical in .github/skills\n'
+    printf '  - the generated UserPromptSubmit hook line runs and records the prompt\n'
     printf '  - no MCP configuration is written anywhere\n'
     exit 0
 fi

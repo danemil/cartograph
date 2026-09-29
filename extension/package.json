@@ -54,12 +54,12 @@
         "cartograph.home": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Directory holding the `carto` launcher that Claude Code and Copilot CLI find on PATH. Defaults to `~/.cartograph`, which is also where the engine keeps its per-user state."
+          "markdownDescription": "Directory holding the `carto` launcher that Copilot CLI and Copilot Chat find on PATH. Defaults to `~/.cartograph`, which is also where the engine keeps its per-user state."
         },
         "cartograph.installIntoWorkspace": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "On activation, run `carto install` so the skills pack is present in `.claude/skills`, `.github/skills` and `.agents/skills`. Turn off to manage those directories yourself."
+          "markdownDescription": "On activation, run `carto install` so the skills pack is present in `.github/skills` and the hooks in `.github/hooks`. Turn off to manage those files yourself."
         },
         "cartograph.statusBar": {
           "type": "boolean",

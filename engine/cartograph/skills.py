@@ -1,20 +1,14 @@
-"""Claude Code skills and hooks auto-install.
+"""What ``carto install`` places in a repository for GitHub Copilot.
 
-Generates Claude Code agent skill files, hooks configuration, and
-CLAUDE.md integration for seamless carto usage.
-Also supports multi-platform MCP server installation and
-Cursor hooks / OpenCode plugin generation.
+The skills pack in ``.github/skills/``, the hooks in
+``.github/hooks/cartograph.json`` and the instruction file in
+``.github/instructions/`` — each read by both Copilot CLI and Copilot Chat.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-import platform
-import shutil
-import stat
-import subprocess
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -23,389 +17,6 @@ from typing import Any
 from ._legacy_instructions import LEGACY_INSTRUCTION_SECTIONS
 
 logger = logging.getLogger(__name__)
-
-
-# --- Multi-platform MCP install ---
-
-
-def _zed_settings_path() -> Path:
-    """Return the Zed settings.json path for the current OS."""
-    if platform.system() == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "Zed" / "settings.json"
-    return Path.home() / ".config" / "zed" / "settings.json"
-
-
-def _copilot_vscode_detected() -> bool:
-    """Return whether a GitHub Copilot extension is installed for VS Code."""
-    home = Path.home()
-    extension_dirs = [
-        home / ".vscode" / "extensions",
-        home / ".vscode-insiders" / "extensions",
-    ]
-
-    system = platform.system()
-    if system == "Darwin":
-        for applications_dir in (Path("/Applications"), home / "Applications"):
-            for app_name in (
-                "Visual Studio Code.app",
-                "Visual Studio Code - Insiders.app",
-            ):
-                extension_dirs.append(
-                    applications_dir
-                    / app_name
-                    / "Contents"
-                    / "Resources"
-                    / "app"
-                    / "extensions"
-                )
-    elif system == "Windows":
-        for env_name in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"):
-            if install_root := os.environ.get(env_name):
-                for app_name in ("Microsoft VS Code", "Microsoft VS Code Insiders"):
-                    extension_dirs.append(
-                        Path(install_root)
-                        / app_name
-                        / "resources"
-                        / "app"
-                        / "extensions"
-                    )
-    elif system == "Linux":
-        extension_dirs.extend(
-            [
-                Path("/usr/share/code/resources/app/extensions"),
-                Path("/usr/share/code-insiders/resources/app/extensions"),
-                Path("/usr/lib/code/resources/app/extensions"),
-                Path("/opt/visual-studio-code/resources/app/extensions"),
-                Path("/snap/code/current/usr/share/code/resources/app/extensions"),
-            ]
-        )
-
-    for command in ("code", "code-insiders"):
-        if executable := shutil.which(command):
-            try:
-                parents = Path(executable).resolve().parents[:6]
-            except OSError:
-                continue
-            for parent in parents:
-                extension_dirs.extend(
-                    [
-                        parent / "extensions",
-                        parent / "resources" / "app" / "extensions",
-                        parent / "Resources" / "app" / "extensions",
-                    ]
-                )
-
-    for extensions_dir in dict.fromkeys(extension_dirs):
-        try:
-            extension_paths = list(extensions_dir.iterdir())
-        except OSError:
-            continue
-        for extension_path in extension_paths:
-            name = extension_path.name.lower()
-            if name.startswith("github.copilot-"):
-                return True
-            if "copilot" not in name:
-                continue
-            try:
-                manifest = json.loads(
-                    (extension_path / "package.json").read_text(encoding="utf-8")
-                )
-            except (OSError, json.JSONDecodeError):
-                continue
-            if (
-                str(manifest.get("publisher", "")).lower() == "github"
-                and str(manifest.get("name", "")).lower()
-                in {"copilot", "copilot-chat"}
-            ):
-                return True
-    return False
-
-
-def _hermes_home() -> Path:
-    """Return the Hermes Agent home directory.
-
-    Mirrors Hermes' own resolution order: the ``HERMES_HOME`` environment
-    variable wins, otherwise the platform-native default (``%LOCALAPPDATA%\\hermes``
-    on Windows, ``~/.hermes`` elsewhere).
-    """
-    override = os.environ.get("HERMES_HOME", "").strip()
-    if override:
-        return Path(override).expanduser()
-    if platform.system() == "Windows":
-        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
-        base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
-        return base / "hermes"
-    return Path.home() / ".hermes"
-
-
-def _hermes_config_path() -> Path:
-    """Return the Hermes Agent config file (``config.yaml``)."""
-    return _hermes_home() / "config.yaml"
-
-
-def _opencode_config_path(repo_root: Path) -> Path:
-    """Return OpenCode's existing project config, preferring JSONC."""
-    for name in ("opencode.jsonc", "opencode.json"):
-        path = repo_root / name
-        if path.exists():
-            return path
-    return repo_root / "opencode.jsonc"
-
-
-PLATFORMS: dict[str, dict[str, Any]] = {
-    "codex": {
-        "name": "Codex",
-        "config_path": lambda root: Path.home() / ".codex" / "config.toml",
-        "key": "mcp_servers",
-        "detect": lambda: (Path.home() / ".codex").exists(),
-        "format": "toml",
-        "needs_type": True,
-    },
-    "claude": {
-        "name": "Claude Code",
-        "config_path": lambda root: root / ".mcp.json",
-        "key": "mcpServers",
-        "detect": lambda: True,
-        "format": "object",
-        "needs_type": True,
-    },
-    "cursor": {
-        "name": "Cursor",
-        "config_path": lambda root: root / ".cursor" / "mcp.json",
-        "key": "mcpServers",
-        "detect": lambda: (Path.home() / ".cursor").exists(),
-        "format": "object",
-        "needs_type": True,
-    },
-    "windsurf": {
-        "name": "Windsurf",
-        "config_path": lambda root: Path.home() / ".codeium" / "windsurf" / "mcp_config.json",
-        "key": "mcpServers",
-        "detect": lambda: (Path.home() / ".codeium" / "windsurf").exists(),
-        "format": "object",
-        "needs_type": False,
-    },
-    "zed": {
-        "name": "Zed",
-        "config_path": lambda root: _zed_settings_path(),
-        "key": "context_servers",
-        "detect": lambda: _zed_settings_path().parent.exists(),
-        "format": "object",
-        "needs_type": False,
-    },
-    "continue": {
-        "name": "Continue",
-        "config_path": lambda root: Path.home() / ".continue" / "config.json",
-        "key": "mcpServers",
-        "detect": lambda: (Path.home() / ".continue").exists(),
-        "format": "array",
-        "needs_type": True,
-    },
-    "opencode": {
-        "name": "OpenCode",
-        "config_path": _opencode_config_path,
-        "key": "mcp",
-        "detect": lambda: True,
-        "format": "object",
-        "needs_type": False,
-    },
-    "antigravity": {
-        "name": "Antigravity",
-        "config_path": lambda root: Path.home() / ".gemini" / "antigravity" / "mcp_config.json",
-        "key": "mcpServers",
-        "detect": lambda: (Path.home() / ".gemini" / "antigravity").exists(),
-        "format": "object",
-        "needs_type": False,
-    },
-    "gemini-cli": {
-        "name": "Gemini CLI",
-        "config_path": lambda root: root / ".gemini" / "settings.json",
-        "key": "mcpServers",
-        "detect": lambda: bool(shutil.which("gemini")) or (Path.home() / ".gemini").exists(),
-        "format": "object",
-        "needs_type": False,
-    },
-    "qwen": {
-        "name": "Qwen Code",
-        "config_path": lambda root: Path.home() / ".qwen" / "settings.json",
-        "key": "mcpServers",
-        "detect": lambda: (Path.home() / ".qwen").exists(),
-        "format": "object",
-        "needs_type": True,
-    },
-    "kiro": {
-        "name": "Kiro",
-        "config_path": lambda root: root / ".kiro" / "settings" / "mcp.json",
-        "key": "mcpServers",
-        "detect": lambda: (Path.home() / ".kiro").exists(),
-        "format": "object",
-        "needs_type": True,
-    },
-    "qoder": {
-        "name": "Qoder",
-        "config_path": lambda root: root / ".qoder" / "mcp.json",
-        "key": "mcpServers",
-        "detect": lambda: True,
-        "format": "object",
-        "needs_type": True,
-    },
-    "copilot": {
-        "name": "GitHub Copilot",
-        "config_path": lambda root: root / ".vscode" / "mcp.json",
-        "key": "servers",
-        "detect": _copilot_vscode_detected,
-        "format": "object",
-        "needs_type": True,
-    },
-    "copilot-cli": {
-        "name": "GitHub Copilot CLI",
-        "config_path": lambda root: Path.home() / ".copilot" / "mcp-config.json",
-        # Copilot CLI reads "mcpServers"; releases before #616 wrote
-        # "servers", which the client silently ignores.
-        "key": "mcpServers",
-        "legacy_keys": ("servers",),
-        "detect": lambda: (Path.home() / ".copilot").exists(),
-        "format": "object",
-        "needs_type": True,
-        # Validated with the released Copilot CLI in #658.
-        "server_type": "local",
-        "entry_fields": {"tools": ["*"]},
-    },
-    "hermes": {
-        "name": "Hermes Agent",
-        "config_path": lambda root: _hermes_config_path(),
-        "key": "mcp_servers",
-        "detect": lambda: _hermes_home().exists(),
-        "format": "yaml",
-        "needs_type": False,
-    },
-    "codebuddy": {
-        "name": "CodeBuddy Code",
-        "config_path": lambda root: root / ".mcp.json",
-        "key": "mcpServers",
-        "detect": lambda: True,
-        "format": "object",
-        "needs_type": True,
-    },
-}
-
-
-def _yaml_section_bounds(lines: list[str], key: str) -> tuple[int, int] | None:
-    """Return ``(header_index, end_index)`` for a top-level block mapping ``key``.
-
-    ``end_index`` is the index just past the last line belonging to the block
-    (blank lines and comments trailing the block are excluded so an insertion
-    lands inside it). Returns ``None`` when the key is absent or is not a
-    block mapping (e.g. ``key: {}`` written in flow style).
-    """
-    header = None
-    for index, line in enumerate(lines):
-        if line.startswith((" ", "\t", "#")) or not line.strip():
-            continue
-        name, sep, value = line.partition(":")
-        if sep and name.strip() == key:
-            if value.strip() and not value.strip().startswith("#"):
-                return None  # inline/flow value — refuse to edit
-            header = index
-            break
-    if header is None:
-        return None
-    end = header + 1
-    last_content = header + 1
-    while end < len(lines):
-        line = lines[end]
-        if line.strip() and not line.startswith((" ", "\t")):
-            break
-        if line.strip() and not line.lstrip().startswith("#"):
-            last_content = end + 1
-        end += 1
-    return header, last_content
-
-
-def _yaml_block_indent(lines: list[str], start: int, end: int) -> int:
-    """Return the child indentation used inside a block, defaulting to 2."""
-    for line in lines[start:end]:
-        stripped = line.lstrip()
-        if stripped and not stripped.startswith("#"):
-            return len(line) - len(stripped)
-    return 2
-
-
-def _strip_jsonc(text: str) -> str:
-    """Strip JSONC comments and trailing commas without corrupting string values.
-
-    Editors like Zed accept non-standard JSON (``//`` and ``/* */`` comments,
-    trailing commas). To merge such a config we must reduce it to strict JSON
-    first. A naive regex pass cannot tell structure from data: it would delete a
-    comma inside ``"foo, bar"`` or truncate a ``"https://..."`` URL at the
-    ``//``. This walks the text character by character, tracking whether we are
-    inside a double-quoted string (respecting ``\\`` escapes), and only removes
-    comments and trailing commas that appear in structural position. Content
-    inside string values is preserved verbatim. (GH #553)
-    """
-
-    def _skip_comment(s: str, idx: int) -> int | None:
-        """If a comment starts at ``idx``, return the index just past it."""
-        if s[idx] != "/" or idx + 1 >= len(s):
-            return None
-        nxt = s[idx + 1]
-        if nxt == "/":
-            idx += 2
-            while idx < len(s) and s[idx] != "\n":
-                idx += 1
-            return idx
-        if nxt == "*":
-            idx += 2
-            while idx + 1 < len(s) and not (s[idx] == "*" and s[idx + 1] == "/"):
-                idx += 1
-            return idx + 2  # consume the closing */ (or run off the end if unterminated)
-        return None
-
-    out: list[str] = []
-    i = 0
-    n = len(text)
-    in_string = False
-    while i < n:
-        ch = text[i]
-        if in_string:
-            out.append(ch)
-            if ch == "\\" and i + 1 < n:
-                out.append(text[i + 1])  # escaped char is data, never a delimiter
-                i += 2
-                continue
-            if ch == '"':
-                in_string = False
-            i += 1
-            continue
-        # Outside a string.
-        if ch == '"':
-            in_string = True
-            out.append(ch)
-            i += 1
-            continue
-        past = _skip_comment(text, i)
-        if past is not None:
-            i = past
-            continue
-        if ch == ",":
-            # Trailing comma if the next significant char (skipping whitespace
-            # and comments) closes an object or array.
-            j = i + 1
-            while j < n:
-                if text[j] in " \t\r\n":
-                    j += 1
-                    continue
-                past = _skip_comment(text, j)
-                if past is not None:
-                    j = past
-                    continue
-                break
-            if j < n and text[j] in "}]":
-                i += 1  # drop the trailing comma
-                continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
 
 
 # --- Skill file contents ---
@@ -503,39 +114,16 @@ def _write_skills_pack(skills_dir: Path) -> Path:
     return skills_dir
 
 
-#: Where the tier-1 hosts look for Agent Skills. Same bodies in all three —
-#: this is a discovery problem, not a per-host content problem, which is the
-#: whole premise of having no per-host adapter on the query path.
-HOST_SKILL_DIRS = (".claude/skills", ".github/skills", ".agents/skills")
+#: Where the pack is installed: the one project skills directory both Copilot
+#: CLI (`copilot skill --help`, 1.0.82) and Copilot Chat (VS Code's agent
+#: skills documentation) name. Each also reads `.claude/skills/` and
+#: `.agents/skills/`, so nothing is gained by writing there too.
+HOST_SKILL_DIR = ".github/skills"
 
 
-def install_host_skills(repo_root: Path) -> list[Path]:
-    """Install the pack everywhere a tier-1 host will find it.
-
-    Claude Code reads `.claude/skills/`; GitHub Copilot (CLI and Chat) reads
-    `.github/skills/`; `.agents/skills/` is the host-agnostic convention. Only
-    the first was written before, so a Copilot user installed Cartograph and
-    got no skills at all — the one host combination the project has to reach.
-    """
-    return [_write_skills_pack(repo_root / d) for d in HOST_SKILL_DIRS]
-
-
-def generate_skills(repo_root: Path, skills_dir: Path | None = None) -> Path:
-    """Generate Claude Code skill files.
-
-    Creates `.claude/skills/` directory with 4 skill markdown files,
-    each containing frontmatter and instructions.
-
-    Args:
-        repo_root: Repository root directory.
-        skills_dir: Custom skills directory. Defaults to repo_root/.claude/skills.
-
-    Returns:
-        Path to the skills directory.
-    """
-    if skills_dir is None:
-        skills_dir = repo_root / ".claude" / "skills"
-    return _write_skills_pack(skills_dir)
+def install_host_skills(repo_root: Path) -> Path:
+    """Install the pack where Copilot CLI and Copilot Chat will find it."""
+    return _write_skills_pack(repo_root / HOST_SKILL_DIR)
 
 
 def hook_command(
@@ -545,13 +133,13 @@ def hook_command(
 
     The shell does three things and nothing more: consume the JSON the host
     pipes in, exit silently when the binary is not on ``$PATH`` (#549), and
-    resolve the checkout at hook runtime so a committed ``settings.json`` works
-    for every collaborator (#558). The git guard still precedes the work, so a
+    resolve the checkout at hook runtime so a committed hook file works for
+    every collaborator (#558). The git guard still precedes the work, so a
     workspace root without a ``.git`` no-ops instead of erroring (#312).
 
     Every decision past that is ``carto hook``'s, in Python. A shell one-liner
-    copied into one JSON file per host is the version of this that cannot be
-    tested and drifts between hosts, which is what it used to be.
+    carrying logic is the version of this that cannot be tested, which is what
+    it used to be.
 
     ``reads_payload`` is for an event whose entire input is that JSON. The
     drain moves to the end of the line, where it still runs if a guard
@@ -585,298 +173,6 @@ def hook_command(
         + (f" --host {host}" if host else "")
         + ' --repo "$(git rev-parse --show-toplevel 2>/dev/null)"'
         + (" || cat >/dev/null || true" if reads_payload else " || true")
-    )
-
-
-def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
-    """Generate Claude Code hooks configuration.
-
-    Hooks use the v1.x+ schema: each entry needs a ``matcher`` and a nested
-    ``hooks`` array. Timeouts are in seconds. ``PreCommit`` is not a valid
-    Claude Code event — pre-commit checks are handled by ``install_git_hook``.
-
-    The ``repo_root`` parameter is retained for backward compatibility but is
-    not embedded in hook commands; see :func:`hook_command`.
-
-    ``file-update`` returns as soon as it has launched the refresh, so its
-    timeout is a ceiling on starting a subprocess, not on building a graph.
-
-    ``prompt-capture`` and ``session-summarise`` are the entries that need what
-    the host pipes in. ``prompt-capture`` is also the only one that must stay
-    silent on stdout: whatever a ``UserPromptSubmit`` hook prints is prepended
-    to the user's prompt.
-
-    ``SessionEnd`` fires once per session and its payload carries the
-    ``session_id`` — both read off real payloads on this machine rather than
-    recalled. ``Stop`` would have been the wrong event: it fires at every turn
-    boundary, so the summary would be rewritten after every reply. The timeout
-    is a ceiling on starting a subprocess, not on an inference call: the event
-    spawns detached and returns.
-    """
-    return {
-        "hooks": {
-            "UserPromptSubmit": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": hook_command(
-                                "prompt-capture",
-                                host="claude-code",
-                                reads_payload=True,
-                            ),
-                            "timeout": 10,
-                        },
-                    ],
-                },
-            ],
-            "PostToolUse": [
-                {
-                    "matcher": "Edit|Write",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": hook_command("file-update"),
-                            "timeout": 30,
-                        },
-                    ],
-                },
-            ],
-            "SessionStart": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": hook_command("session-status"),
-                            "timeout": 10,
-                        },
-                    ],
-                },
-            ],
-            "SessionEnd": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": hook_command(
-                                "session-summarise",
-                                host="claude-code",
-                                reads_payload=True,
-                            ),
-                            "timeout": 10,
-                        },
-                    ],
-                },
-            ],
-        }
-    }
-
-
-def generate_codex_hooks_config(repo_root: Path) -> dict[str, Any]:
-    """Generate native Codex hooks configuration for ~/.codex/hooks.json."""
-    return {
-        "hooks": {
-            "PostToolUse": [
-                {
-                    "matcher": "Write|Edit|Bash",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": (
-                                "cat >/dev/null || true; "
-                                "git rev-parse --git-dir >/dev/null 2>&1"
-                                " && carto update --skip-flows"
-                                " || true"
-                            ),
-                            "timeout": 30,
-                            "statusMessage": "Updating cartograph",
-                        },
-                    ],
-                },
-            ],
-            "SessionStart": [
-                {
-                    "matcher": "startup|resume",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": (
-                                "cat >/dev/null || true; "
-                                "git rev-parse --git-dir >/dev/null 2>&1"
-                                " && carto status"
-                                " || echo 'Not a git repo, skipping'"
-                            ),
-                            "timeout": 10,
-                            "statusMessage": "Checking carto status",
-                        },
-                    ],
-                },
-            ],
-        }
-    }
-
-
-def install_git_hook(repo_root: Path) -> Path | None:
-    """Install a git pre-commit hook that prints a risk summary before each commit.
-
-    Called automatically by ``carto install``.
-    The hooks directory is resolved via ``git rev-parse --git-path hooks`` so
-    the hook lands where git actually runs it — including linked worktrees
-    and submodules (where ``.git`` is a file, not a directory) and repos with
-    ``core.hooksPath`` set (issue #313). ``core.hooksPath`` users with their
-    own hook manager (husky, pre-commit) may prefer integrating the
-    ``cartograph`` commands into that manager manually instead.
-
-    Creates ``pre-commit`` if it doesn't exist, or appends to an existing
-    one — the hook is appended, not overwritten, preserving any hooks
-    already there. Falls back to the legacy ``.git/hooks`` resolution when
-    git itself is unavailable. Returns None when no hooks directory can be
-    determined.
-    """
-    script = """\
-#!/bin/sh
-# Installed by cartograph. Remove this file to disable pre-commit graph checks.
-if command -v carto >/dev/null 2>&1; then
-    carto update || true
-    carto detect-changes --brief || true
-fi
-"""
-    marker = "carto detect-changes"
-
-    hooks_dir: Path | None = None
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--git-path", "hooks"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            cwd=str(repo_root),
-            timeout=10,
-            stdin=subprocess.DEVNULL,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            # Output is relative to repo_root (".git/hooks", a core.hooksPath
-            # value such as ".husky") or absolute (linked worktrees).
-            hooks_dir = repo_root / result.stdout.strip()
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("git unavailable (%s); falling back to .git/hooks resolution.", exc)
-
-    if hooks_dir is None:
-        git_dir = repo_root / ".git"
-        if not git_dir.is_dir():
-            logger.warning(
-                "No git hooks directory found at %s — skipping git hook install.", repo_root
-            )
-            return None
-        hooks_dir = git_dir / "hooks"
-
-    hook_path = hooks_dir / "pre-commit"
-    hook_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if hook_path.exists():
-        existing = hook_path.read_text(encoding="utf-8")
-        if marker in existing:
-            return hook_path
-        hook_path.write_text(existing.rstrip("\n") + "\n" + script, encoding="utf-8")
-    else:
-        hook_path.write_text(script, encoding="utf-8")
-
-    hook_path.chmod(0o755)
-    logger.info("Wrote git pre-commit hook: %s", hook_path)
-    return hook_path
-
-
-def _merge_hooks_into_settings(
-    settings_dir: Path,
-    hooks_config: dict[str, Any],
-) -> Path:
-    """Merge hook entries into a project settings file without clobbering users."""
-    settings_dir.mkdir(parents=True, exist_ok=True)
-    settings_path = settings_dir / "settings.json"
-
-    existing: dict[str, Any] = {}
-    if settings_path.exists():
-        try:
-            existing = json.loads(settings_path.read_text(encoding="utf-8", errors="replace"))
-            backup_path = settings_dir / "settings.json.bak"
-            shutil.copy2(settings_path, backup_path)
-            logger.info("Backed up existing settings to %s", backup_path)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Could not read existing %s: %s", settings_path, exc)
-
-    existing_hooks = existing.get("hooks", {})
-    if not isinstance(existing_hooks, dict):
-        logger.warning("Existing hooks config is not a dict; replacing with defaults")
-        existing_hooks = {}
-
-    merged_hooks = dict(existing_hooks)
-    for hook_name, hook_entries in hooks_config.get("hooks", {}).items():
-        if isinstance(merged_hooks.get(hook_name), list):
-            merged_list = list(merged_hooks[hook_name])
-            for entry in hook_entries:
-                if entry not in merged_list:
-                    merged_list.append(entry)
-            merged_hooks[hook_name] = merged_list
-        else:
-            merged_hooks[hook_name] = hook_entries
-
-    existing["hooks"] = merged_hooks
-
-    settings_path.write_text(
-        json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    logger.info("Wrote hooks config: %s", settings_path)
-    return settings_path
-
-
-def install_hooks(repo_root: Path, platform: str = "claude") -> None:
-    """Write hooks config to platform-specific settings.json.
-
-    Merges new hook entries into existing settings, preserving both
-    non-hook configuration and user-defined hooks.  A backup of the
-    original file is created before any modifications.
-
-    Args:
-        repo_root: Repository root directory.
-        platform: Target platform ("claude" or "qoder").
-    """
-    config = generate_hooks_config(repo_root)
-    if platform == "qoder":
-        settings_dir = repo_root / ".qoder"
-        # Same reservation as CodeBuddy: the prompt event and its payload were
-        # verified against Claude Code, and the `--host` it records says
-        # claude-code. Installing it here would put that name on another
-        # host's observations.
-        config["hooks"].pop("UserPromptSubmit", None)
-    else:
-        settings_dir = repo_root / ".claude"
-    _merge_hooks_into_settings(settings_dir, config)
-
-
-def install_codebuddy_hooks(repo_root: Path) -> Path:
-    """Install runtime-resolved POSIX hooks in .codebuddy/settings.json.
-
-    CodeBuddy uses the same nested hook schema and POSIX-shell execution
-    model as the existing project hooks. The shared generator deliberately
-    resolves the checkout at hook runtime instead of embedding the installer's
-    absolute path, so committed settings work for every collaborator.
-    """
-    hooks_config = generate_hooks_config(repo_root)
-    # CodeBuddy's Bash tool can create or rewrite files without going through
-    # Edit/Write, so its PostToolUse contract also observes Bash. The command
-    # itself still resolves the repository dynamically at hook runtime.
-    hooks_config["hooks"]["PostToolUse"][0]["matcher"] = "Edit|Write|Bash"
-    # Prompt capture is not carried over. Whether CodeBuddy emits a
-    # UserPromptSubmit event, and what it puts in the payload, has not been
-    # checked against the host — and an observation stamped with the wrong
-    # `platform_source` is worse than no observation.
-    hooks_config["hooks"].pop("UserPromptSubmit", None)
-    return _merge_hooks_into_settings(
-        repo_root / ".codebuddy",
-        hooks_config,
     )
 
 
@@ -963,82 +259,23 @@ def install_copilot_hooks(repo_root: Path) -> Path:
     return path
 
 
-def install_codex_hooks(repo_root: Path) -> Path:
-    """Write native Codex hooks config to ~/.codex/hooks.json.
-
-    Merges carto hook entries into any existing hooks.json,
-    preserving user-defined hook entries and other top-level settings.
-    A backup of the original file is created before modifications.
-    """
-    codex_dir = Path.home() / ".codex"
-    codex_dir.mkdir(parents=True, exist_ok=True)
-    hooks_path = codex_dir / "hooks.json"
-
-    existing: dict[str, Any] = {}
-    if hooks_path.exists():
-        try:
-            existing = json.loads(hooks_path.read_text(encoding="utf-8", errors="replace"))
-            backup_path = codex_dir / "hooks.json.bak"
-            shutil.copy2(hooks_path, backup_path)
-            logger.info("Backed up existing Codex hooks to %s", backup_path)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Could not read existing %s: %s", hooks_path, exc)
-
-    hooks_config = generate_codex_hooks_config(repo_root)
-    existing_hooks = existing.get("hooks", {})
-    if not isinstance(existing_hooks, dict):
-        logger.warning("Existing Codex hooks config is not a dict; replacing with defaults")
-        existing_hooks = {}
-
-    merged_hooks = dict(existing_hooks)
-    for hook_name, hook_entries in hooks_config.get("hooks", {}).items():
-        if isinstance(merged_hooks.get(hook_name), list):
-            merged_list = list(merged_hooks[hook_name])
-            existing_commands = {
-                hook.get("command", "")
-                for entry in merged_list
-                if isinstance(entry, dict)
-                for hook in entry.get("hooks", [])
-                if isinstance(hook, dict)
-            }
-            for entry in hook_entries:
-                entry_commands = [
-                    hook.get("command", "")
-                    for hook in entry.get("hooks", [])
-                    if isinstance(hook, dict)
-                ]
-                if not any(command in existing_commands for command in entry_commands):
-                    merged_list.append(entry)
-            merged_hooks[hook_name] = merged_list
-        else:
-            merged_hooks[hook_name] = hook_entries
-
-    existing["hooks"] = merged_hooks
-    hooks_path.write_text(
-        json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    logger.info("Wrote Codex hooks config: %s", hooks_path)
-    return hooks_path
-
-
 # NOTE: the marker still says "MCP tools" and must not change. It is how a
 # reinstall finds and replaces a block written by an earlier version — and the
 # blocks worth replacing most urgently are exactly the ones that described MCP
 # tools. Changing it would leave those in place and append a second section.
-_CLAUDE_MD_SECTION_MARKER = "<!-- cartograph MCP tools -->"
+_SECTION_MARKER = "<!-- cartograph MCP tools -->"
 
 # Closes the managed block so reinstall can replace it without guessing where it
 # ends. Releases before this shipped only the opening marker; those blocks are
 # matched by their full text instead, see _legacy_instructions.
-_CLAUDE_MD_SECTION_END_MARKER = "<!-- /cartograph MCP tools -->"
+_SECTION_END_MARKER = "<!-- /cartograph MCP tools -->"
 
-# Shared across every platform instruction file so the wording stays identical.
 _INSTRUCTION_INTRO = """**This project has a knowledge graph. Query it with the `carto` CLI to
 narrow scope, then read the source.** Cheaper than scanning files, and it gives you structural
 context (callers, dependents, test coverage) that file search cannot.
 
-There is no MCP server; `carto` is a plain command. If your tool reads Agent Skills
-(`.claude/skills/`, `.github/skills/`, `.agents/skills/`), prefer those — this is the fallback."""
+There is no MCP server; `carto` is a plain command. The skills in `.github/skills/` are more
+specific; prefer those — this is the fallback."""
 
 _INSTRUCTION_GUARDRAILS = """### Verify in the source
 
@@ -1074,22 +311,7 @@ semantic, so the JSON stays valid). Exit `2` is a precondition: run `error.remed
 then retry. Full reference: `carto capabilities --format json`."""
 
 
-_CLAUDE_MD_SECTION = f"""{_CLAUDE_MD_SECTION_MARKER}
-## Code knowledge graph: cartograph
-
-{_INSTRUCTION_INTRO}
-
-{_INSTRUCTION_GUARDRAILS}
-
-{_INSTRUCTION_COMMANDS}
-
-The graph auto-updates on file changes, via hooks.
-{_CLAUDE_MD_SECTION_END_MARKER}
-"""
-
-# Copilot-specific instruction file: adds YAML front matter so Copilot Chat
-# applies it across the workspace. The body is the same — there is no per-host
-# adapter, which is the point of the capability contract.
+# YAML front matter so Copilot applies it across the workspace.
 _COPILOT_SECTION = f"""---
 applyTo: '**'
 description: >-
@@ -1097,7 +319,7 @@ description: >-
   exploration and code review.
 ---
 
-{_CLAUDE_MD_SECTION_MARKER}
+{_SECTION_MARKER}
 ## Code knowledge graph: cartograph
 
 {_INSTRUCTION_INTRO}
@@ -1107,20 +329,16 @@ description: >-
 {_INSTRUCTION_COMMANDS}
 
 The graph auto-updates on file changes, via hooks.
-{_CLAUDE_MD_SECTION_END_MARKER}
+{_SECTION_END_MARKER}
 """
 
 
-# Maps instruction file path → (marker, section) for files that need content
-# different from the default _CLAUDE_MD_SECTION. Legacy paths remain here so
-# uninstall can identify sections written by older releases.
-_PLATFORM_INSTRUCTION_CUSTOM_SECTIONS: dict[str, tuple[str, str]] = {
-    ".github/instructions/cartograph.instructions.md": (
-        _CLAUDE_MD_SECTION_MARKER,
-        _COPILOT_SECTION,
-    ),
-    ".github/cartograph.instruction.md": (_CLAUDE_MD_SECTION_MARKER, _COPILOT_SECTION),
-}
+#: The instruction file Copilot CLI and Copilot Chat both read.
+INSTRUCTION_FILE = ".github/instructions/cartograph.instructions.md"
+
+#: Where an older release wrote it. Reinstall removes only the exact generated
+#: section and leaves any user-authored content intact.
+LEGACY_INSTRUCTION_FILE = ".github/cartograph.instruction.md"
 
 
 def _known_instruction_sections() -> tuple[str, ...]:
@@ -1129,8 +347,9 @@ def _known_instruction_sections() -> tuple[str, ...]:
     Longest first matters: a shorter variant that happens to be contained in a
     longer one must never win the match and leave the tail behind.
     """
-    current = (_CLAUDE_MD_SECTION, _COPILOT_SECTION)
-    return tuple(sorted({*current, *LEGACY_INSTRUCTION_SECTIONS}, key=len, reverse=True))
+    return tuple(
+        sorted({_COPILOT_SECTION, *LEGACY_INSTRUCTION_SECTIONS}, key=len, reverse=True)
+    )
 
 
 def _upgrade_managed_block(existing: str, section: str) -> str | None:
@@ -1173,7 +392,7 @@ def _upgrade_managed_block(existing: str, section: str) -> str | None:
     return before + section + after
 
 
-def _inject_instructions(file_path: Path, marker: str, section: str) -> str:
+def _inject_instructions(file_path: Path, section: str) -> str:
     """Create, or upgrade in place, the managed instruction block in a file.
 
     Returns one of:
@@ -1191,7 +410,7 @@ def _inject_instructions(file_path: Path, marker: str, section: str) -> str:
     if file_path.exists():
         existing = file_path.read_text(encoding="utf-8", errors="replace")
 
-    if marker in existing:
+    if _SECTION_MARKER in existing:
         upgraded = _upgrade_managed_block(existing, section)
         if upgraded is None:
             if section in existing:
@@ -1203,48 +422,15 @@ def _inject_instructions(file_path: Path, marker: str, section: str) -> str:
             )
             return "conflict"
         file_path.write_text(upgraded, encoding="utf-8")
-        logger.info("Updated the MCP tools section in %s", file_path)
+        logger.info("Updated the carto instructions in %s", file_path)
         return "updated"
 
     separator = "\n" if existing and not existing.endswith("\n") else ""
     extra_newline = "\n" if existing else ""
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(existing + separator + extra_newline + section, encoding="utf-8")
-    logger.info("Appended MCP tools section to %s", file_path)
+    logger.info("Appended the carto instructions to %s", file_path)
     return "created"
-
-
-def inject_claude_md(repo_root: Path) -> str:
-    """Create or upgrade the MCP tools section in CLAUDE.md.
-
-    Returns the outcome string documented on ``_inject_instructions``.
-    """
-    return _inject_instructions(
-        repo_root / "CLAUDE.md",
-        _CLAUDE_MD_SECTION_MARKER,
-        _CLAUDE_MD_SECTION,
-    )
-
-
-# Cross-platform instruction files and which platforms own each one.
-# Used to filter writes when the user passes --platform <X>: only files
-# whose owner set includes the target (or "all") are written.
-_PLATFORM_INSTRUCTION_FILES: dict[str, tuple[str, ...]] = {
-    "AGENTS.md": ("cursor", "opencode", "antigravity", "codex", "hermes"),
-    "GEMINI.md": ("antigravity", "gemini-cli"),
-    ".cursorrules": ("cursor",),
-    ".windsurfrules": ("windsurf",),
-    "QODER.md": ("qoder",),
-    ".kiro/steering/cartograph.md": ("kiro",),
-    ".github/instructions/cartograph.instructions.md": ("copilot", "copilot-cli"),
-    "CODEBUDDY.md": ("codebuddy",),
-}
-
-# Superseded paths written by older releases. Reinstall removes only the exact
-# generated section and leaves any user-authored content intact.
-_LEGACY_PLATFORM_INSTRUCTION_FILES: dict[str, tuple[str, ...]] = {
-    ".github/cartograph.instruction.md": ("copilot", "copilot-cli"),
-}
 
 
 def _remove_legacy_instruction_file(path: Path) -> None:
@@ -1252,13 +438,13 @@ def _remove_legacy_instruction_file(path: Path) -> None:
     if not path.exists():
         return
     content = path.read_text(encoding="utf-8", errors="replace")
-    if _CLAUDE_MD_SECTION_MARKER not in content:
+    if _SECTION_MARKER not in content:
         return
     # Longest first, so removing a long block cannot leave the tail of a shorter
     # variant it contains. Anything not generated by this project is left alone.
     for section in _known_instruction_sections():
         content = content.replace(section, "")
-    if _CLAUDE_MD_SECTION_MARKER in content:
+    if _SECTION_MARKER in content:
         return
     if content.strip():
         path.write_text(content.rstrip() + "\n", encoding="utf-8")
@@ -1268,552 +454,13 @@ def _remove_legacy_instruction_file(path: Path) -> None:
         logger.info("Removed legacy instruction file %s", path)
 
 
-# --- Gemini CLI hooks + skills (workspace-level: .gemini/) ---
+def inject_instruction_files(repo_root: Path) -> dict[str, str]:
+    """Write the instruction file and report what happened.
 
-_GEMINI_CLI_HOOK_FILENAMES = ("crg-session-start.sh", "crg-update.sh")
-
-
-def install_gemini_cli_hooks(repo_root: Path) -> Path:
-    """Install Gemini CLI hooks in .gemini/settings.json and write hook scripts.
-
-    Hooks schema reference:
-    - https://geminicli.com/docs/hooks/reference/
-
-    This is workspace-scoped (project) configuration: .gemini/settings.json
+    Maps the filename to ``"created"``, ``"updated"``, ``"unchanged"`` or
+    ``"conflict"``, as documented on ``_inject_instructions``, so the install
+    command can say whether it upgraded the file or it needs manual attention.
     """
-    settings_dir = repo_root / ".gemini"
-    settings_dir.mkdir(parents=True, exist_ok=True)
-    settings_path = settings_dir / "settings.json"
-
-    existing: dict[str, Any] = {}
-    if settings_path.exists():
-        try:
-            existing = json.loads(settings_path.read_text(encoding="utf-8", errors="replace"))
-            backup_path = settings_dir / "settings.json.bak"
-            shutil.copy2(settings_path, backup_path)
-            logger.info("Backed up existing Gemini CLI settings to %s", backup_path)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Could not read existing %s: %s", settings_path, exc)
-
-    hooks_dir = settings_dir / "hooks"
-    hooks_dir.mkdir(parents=True, exist_ok=True)
-
-    repo_arg = repo_root.resolve().as_posix()
-    session_start_script = """\
-#!/usr/bin/env bash
-# cartograph: session start status (Gemini CLI hook)
-# Must output ONLY JSON on stdout. Logs go to stderr. Never blocks the session.
-set -euo pipefail
-
-cat > /dev/null || true
-
-# One line by construction, so nothing here has to trim it. stderr is the
-# hook's diagnostic channel and must not reach the model.
-msg="$(carto hook session-status --repo "__CRG_REPO__" 2>/dev/null || true)"
-
-CRG_MSG="$msg" python3 -c '
-import json,os
-m=os.environ.get("CRG_MSG","")
-print(json.dumps({"systemMessage":m,"suppressOutput":True}))
-' 2>/dev/null || echo '{"suppressOutput": true}'
-exit 0
-"""
-    session_start_script = session_start_script.replace("__CRG_REPO__", repo_arg)
-
-    update_script = """\
-#!/usr/bin/env bash
-# cartograph: incremental update after write/replace (Gemini CLI hook)
-# Must output ONLY JSON on stdout. Low-noise: no systemMessage.
-set -euo pipefail
-
-cat > /dev/null || true
-
-carto hook file-update --repo "__CRG_REPO__" >/dev/null 2>&1 || true
-echo '{"suppressOutput": true}'
-exit 0
-"""
-    update_script = update_script.replace("__CRG_REPO__", repo_arg)
-
-    session_start_path = hooks_dir / _GEMINI_CLI_HOOK_FILENAMES[0]
-    session_start_path.write_text(session_start_script, encoding="utf-8")
-    session_start_path.chmod(0o755)
-
-    update_path = hooks_dir / _GEMINI_CLI_HOOK_FILENAMES[1]
-    update_path.write_text(update_script, encoding="utf-8")
-    update_path.chmod(0o755)
-
-    hooks_obj = existing.get("hooks", {})
-    if not isinstance(hooks_obj, dict):
-        hooks_obj = {}
-
-    def _ensure_group(
-        event_name: str, matcher: str, hook_command: str, name: str, timeout: int,
-    ) -> None:
-        arr = hooks_obj.get(event_name, [])
-        if not isinstance(arr, list):
-            arr = []
-
-        # De-duplicate by command (and type) inside nested hooks list.
-        def _group_has_command(group: Any) -> bool:
-            if not isinstance(group, dict):
-                return False
-            nested = group.get("hooks", [])
-            if not isinstance(nested, list):
-                return False
-            for h in nested:
-                if isinstance(h, dict) and h.get("type") == "command" \
-                        and h.get("command") == hook_command:
-                    return True
-            return False
-
-        if any(_group_has_command(g) for g in arr):
-            hooks_obj[event_name] = arr
-            return
-
-        arr.append(
-            {
-                "matcher": matcher,
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": hook_command,
-                        "name": name,
-                        "timeout": timeout,
-                    }
-                ],
-            }
-        )
-        hooks_obj[event_name] = arr
-
-    _ensure_group(
-        event_name="SessionStart",
-        matcher="",
-        hook_command=f"bash .gemini/hooks/{_GEMINI_CLI_HOOK_FILENAMES[0]}",
-        name="carto status",
-        timeout=10_000,
-    )
-    _ensure_group(
-        event_name="AfterTool",
-        matcher="write_file|replace",
-        hook_command=f"bash .gemini/hooks/{_GEMINI_CLI_HOOK_FILENAMES[1]}",
-        name="carto update",
-        timeout=30_000,
-    )
-
-    existing["hooks"] = hooks_obj
-    settings_path.write_text(
-        json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    logger.info("Wrote Gemini CLI hooks config: %s", settings_path)
-    return settings_path
-
-
-def install_gemini_cli_skills(repo_root: Path) -> Path:
-    """Install Gemini CLI Agent Skills in .gemini/skills/<skill>/SKILL.md."""
-    skills_root = repo_root / ".gemini" / "skills"
-    return _write_skills_pack(skills_root)
-
-
-def install_codebuddy_skills(repo_root: Path) -> Path:
-    """Install project skills in .codebuddy/skills/<name>/SKILL.md."""
-    skills_root = repo_root / ".codebuddy" / "skills"
-    return _write_skills_pack(skills_root)
-
-
-def inject_platform_instructions(repo_root: Path, target: str = "all") -> list[str]:
-    """Inject 'use graph first' instructions into platform rule files.
-
-    Writes AGENTS.md, GEMINI.md, .cursorrules, and/or .windsurfrules
-    depending on ``target``:
-
-    - ``"all"`` (default): writes every file — matches pre-filter behavior.
-    - ``"claude"``: writes nothing (CLAUDE.md is handled by ``inject_claude_md``).
-    - any other platform key (``cursor``, ``windsurf``, ``antigravity``,
-      ``opencode``, ``codex``): writes only the files associated with that platform.
-
-    Returns list of filenames that were created or updated. Use
-    ``inject_instruction_files`` when the caller also needs to know which files
-    were left alone because someone edited the block by hand.
-    """
-    outcomes = inject_instruction_files(repo_root, target=target, include_claude_md=False)
-    return [name for name, outcome in outcomes.items() if outcome in ("created", "updated")]
-
-
-def inject_instruction_files(
-    repo_root: Path,
-    target: str = "all",
-    *,
-    include_claude_md: bool = True,
-) -> dict[str, str]:
-    """Write every instruction file for ``target`` and report what happened.
-
-    Maps each filename to ``"created"``, ``"updated"``, ``"unchanged"`` or
-    ``"conflict"``, as documented on ``_inject_instructions``. This is the entry
-    point the install command uses so it can tell the user which files it
-    upgraded and which ones need manual attention.
-    """
-    outcomes: dict[str, str] = {}
-    if include_claude_md and target in ("claude", "all"):
-        outcomes["CLAUDE.md"] = inject_claude_md(repo_root)
-    for filename, owners in _PLATFORM_INSTRUCTION_FILES.items():
-        if target != "all" and target not in owners:
-            continue
-        path = repo_root / filename
-        if filename in _PLATFORM_INSTRUCTION_CUSTOM_SECTIONS:
-            marker, section = _PLATFORM_INSTRUCTION_CUSTOM_SECTIONS[filename]
-        else:
-            marker, section = _CLAUDE_MD_SECTION_MARKER, _CLAUDE_MD_SECTION
-        outcomes[filename] = _inject_instructions(path, marker, section)
-    for filename, owners in _LEGACY_PLATFORM_INSTRUCTION_FILES.items():
-        if target != "all" and target not in owners:
-            continue
-        _remove_legacy_instruction_file(repo_root / filename)
-    return outcomes
-
-
-# --- Cursor hooks ---
-
-
-def generate_cursor_hooks_config() -> dict[str, Any]:
-    """Generate Cursor hooks.json configuration.
-
-    Returns a dict conforming to the Cursor hooks schema (version 1) with
-    hooks for afterFileEdit, sessionStart, and beforeShellExecution.
-    Each hook points to a shell script in ~/.cursor/hooks/.
-
-    Returns:
-        Dict suitable for writing as ~/.cursor/hooks.json.
-    """
-    hooks_dir = str(Path.home() / ".cursor" / "hooks")
-    return {
-        "version": 1,
-        "hooks": {
-            "afterFileEdit": [
-                {
-                    "command": f"{hooks_dir}/crg-update.sh",
-                    "timeout": 5,
-                },
-            ],
-            "sessionStart": [
-                {
-                    "command": f"{hooks_dir}/crg-session-start.sh",
-                    "timeout": 5,
-                },
-            ],
-            "beforeShellExecution": [
-                {
-                    "matcher": "^git\\s+commit",
-                    "command": f"{hooks_dir}/crg-pre-commit.sh",
-                    "timeout": 10,
-                },
-            ],
-        },
-    }
-
-
-def _cursor_hook_scripts() -> dict[str, str]:
-    """Return a mapping of filename -> shell script content for Cursor hooks.
-
-    Three scripts are generated:
-    - crg-update.sh: runs ``carto update --skip-flows`` after file edits
-    - crg-session-start.sh: runs ``carto status`` on session start
-    - crg-pre-commit.sh: runs ``carto detect-changes --brief`` before
-      git commit commands
-
-    All scripts:
-    - Read stdin (Cursor passes JSON context) and discard it
-    - Fail gracefully (exit 0) so they never block the editor
-    - Emit valid JSON on stdout per the Cursor hooks protocol
-    """
-    update_script = """\
-#!/usr/bin/env bash
-# cartograph: auto-update graph after file edits (Cursor hook)
-# Fails gracefully — never blocks the editor.
-set -euo pipefail
-
-# Consume stdin (Cursor sends JSON context)
-cat > /dev/null
-
-# Run update; swallow errors so the hook always succeeds.
-output=$(carto update --skip-flows 2>&1) || true
-
-# Emit valid JSON on stdout per Cursor hooks protocol.
-python3 -c "
-import json, sys
-print(json.dumps({'message': 'graph updated', 'passed': True}))
-" 2>/dev/null || echo '{"passed":true}'
-
-exit 0
-"""
-
-    session_start_script = """\
-#!/usr/bin/env bash
-# cartograph: show graph status on session start (Cursor hook)
-# Fails gracefully — never blocks the editor.
-set -euo pipefail
-
-# Consume stdin
-cat > /dev/null
-
-# Capture status output
-output=$(carto status 2>&1) || output="graph not built yet"
-
-# Emit valid JSON on stdout
-python3 -c "
-import json, sys
-msg = sys.stdin.read()
-print(json.dumps({'message': msg, 'passed': True}))
-" <<< "$output" 2>/dev/null || echo '{"passed":true}'
-
-exit 0
-"""
-
-    pre_commit_script = """\
-#!/usr/bin/env bash
-# cartograph: detect changes before git commit (Cursor hook)
-# Fails gracefully — never blocks the editor.
-set -euo pipefail
-
-# Consume stdin
-cat > /dev/null
-
-# Run detect-changes; swallow errors
-output=$(carto detect-changes --brief 2>&1) || output=""
-
-# Emit valid JSON on stdout
-python3 -c "
-import json, sys
-msg = sys.stdin.read()
-print(json.dumps({'message': msg, 'passed': True}))
-" <<< "$output" 2>/dev/null || echo '{"passed":true}'
-
-exit 0
-"""
-
-    return {
-        "crg-update.sh": update_script,
-        "crg-session-start.sh": session_start_script,
-        "crg-pre-commit.sh": pre_commit_script,
-    }
-
-
-def install_cursor_hooks() -> Path:
-    """Install Cursor hooks configuration and scripts at user level.
-
-    Writes ``~/.cursor/hooks.json`` (merging carto hooks
-    into any existing configuration) and creates executable shell scripts
-    in ``~/.cursor/hooks/``.
-
-    Returns:
-        Path to the hooks.json file that was written.
-    """
-    cursor_dir = Path.home() / ".cursor"
-    hooks_json_path = cursor_dir / "hooks.json"
-    hooks_script_dir = cursor_dir / "hooks"
-
-    # --- Merge hooks.json ---
-    existing: dict[str, Any] = {}
-    if hooks_json_path.exists():
-        try:
-            existing = json.loads(hooks_json_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Could not read existing %s: %s", hooks_json_path, exc)
-
-    new_config = generate_cursor_hooks_config()
-
-    # Preserve version (use ours if absent)
-    existing.setdefault("version", new_config["version"])
-
-    # Merge hook arrays per event type
-    existing_hooks = existing.get("hooks", {})
-    if not isinstance(existing_hooks, dict):
-        existing_hooks = {}
-
-    for event, entries in new_config["hooks"].items():
-        event_hooks = existing_hooks.get(event, [])
-        if not isinstance(event_hooks, list):
-            event_hooks = []
-        # De-duplicate: skip if a hook with the same command already exists
-        existing_commands = {h.get("command", "") for h in event_hooks if isinstance(h, dict)}
-        for entry in entries:
-            if entry["command"] not in existing_commands:
-                event_hooks.append(entry)
-        existing_hooks[event] = event_hooks
-
-    existing["hooks"] = existing_hooks
-
-    cursor_dir.mkdir(parents=True, exist_ok=True)
-    hooks_json_path.write_text(
-        json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    logger.info("Wrote Cursor hooks config: %s", hooks_json_path)
-
-    # --- Write hook scripts ---
-    hooks_script_dir.mkdir(parents=True, exist_ok=True)
-    scripts = _cursor_hook_scripts()
-
-    for filename, content in scripts.items():
-        script_path = hooks_script_dir / filename
-        script_path.write_text(content, encoding="utf-8")
-        # Make executable (owner rwx, group rx, other rx)
-        script_path.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-        logger.info("Wrote Cursor hook script: %s", script_path)
-
-    return hooks_json_path
-
-
-def install_qoder_skills(repo_root: Path) -> Path | None:
-    """Install skills to Qoder's project-level skills directory.
-
-    Qoder expects skills in .qoder/skills/{skillName}/SKILL.md format within the project.
-    This function copies the project's skills/ directory contents to that location.
-
-    Args:
-        repo_root: Repository root directory (where the skills/ folder is located).
-
-    Returns:
-        Path to the Qoder skills directory, or None if installation failed.
-    """
-    # Qoder skills directory (project-level)
-    qoder_skills_dir = repo_root / ".qoder" / "skills"
-    qoder_skills_dir.mkdir(parents=True, exist_ok=True)
-
-    # Source skills directory in the project
-    source_skills_dir = repo_root / "skills"
-    if not source_skills_dir.exists():
-        logger.warning("No skills/ directory found in %s", repo_root)
-        return None
-
-    installed_count = 0
-    for skill_dir in source_skills_dir.iterdir():
-        if skill_dir.is_dir():
-            skill_file = skill_dir / "SKILL.md"
-            if skill_file.exists():
-                target_dir = qoder_skills_dir / skill_dir.name
-                target_dir.mkdir(parents=True, exist_ok=True)
-                target_file = target_dir / "SKILL.md"
-                target_file.write_text(skill_file.read_text(encoding="utf-8"), encoding="utf-8")
-                logger.info("Installed Qoder skill: %s", skill_dir.name)
-                installed_count += 1
-
-    if installed_count > 0:
-        logger.info("Installed %d skill(s) to %s", installed_count, qoder_skills_dir)
-        return qoder_skills_dir
-    return None
-
-
-def install_hermes_skills(repo_root: Path) -> Path:
-    """Install skills into Hermes Agent's user-level skills directory.
-
-    Hermes discovers skills at ``<HERMES_HOME>/skills/<category>/<name>/SKILL.md``
-    and uses the same ``name``/``description`` frontmatter as Claude Code, so
-    :func:`generate_skills` writes them directly under a ``cartograph``
-    category.
-    """
-    return generate_skills(repo_root, skills_dir=_hermes_home() / "skills" / "cartograph")
-
-
-# --- OpenCode plugin ---
-
-
-def _opencode_plugin_content() -> str:
-    """Return TypeScript source for the OpenCode user-level plugin.
-
-    The plugin hooks into three OpenCode events to mirror the Claude Code
-    hook behaviors:
-
-    1. ``file.edited`` — runs ``carto update --skip-flows``
-    2. ``session.created`` — runs ``carto status``
-    3. ``tool.execute.before`` — when the tool is a shell command starting
-       with ``git commit``, runs ``carto detect-changes --brief``
-
-    All handlers use try/catch so errors never break the editor session.
-    The plugin uses Bun's ``$`` shell API (provided by OpenCode's plugin
-    context) for subprocess execution.
-    """
-    return """\
-import type { Plugin } from "@opencode-ai/plugin"
-
-/**
- * carto plugin for OpenCode.
- *
- * Keeps the knowledge graph up-to-date and surfaces status
- * information automatically during coding sessions.
- *
- * Installed by: carto install --platform opencode
- */
-
-// Helper: run a shell command quietly, swallowing errors.
-async function run($: any, cmd: string): Promise<string> {
-  try {
-    const result = await $`${cmd}`.quiet()
-    return result.stdout?.toString().trim() ?? ""
-  } catch {
-    return ""
-  }
-}
-
-export default (app: any) => {
-  // 1. Auto-update graph after file edits
-  app.on("file.edited", async ({ $ }: { $: any }) => {
-    try {
-      await $`carto update --skip-flows`.quiet()
-    } catch {
-      // Swallow — graph may not be built yet for this project.
-    }
-  })
-
-  // 2. Show graph status when a new session starts
-  app.on("session.created", async ({ $ }: { $: any }) => {
-    try {
-      const result = await $`carto status`.quiet()
-      const output = result.stdout?.toString().trim()
-      if (output) {
-        console.log("[cartograph]", output)
-      }
-    } catch {
-      // Swallow — not every project has a graph.
-    }
-  })
-
-  // 3. Detect changes before git commit commands
-  app.on("tool.execute.before", async (ctx: any) => {
-    try {
-      const input = ctx?.input ?? ctx?.params ?? {}
-      const cmd =
-        input.command ?? input.cmd ?? input.content ?? ""
-      if (typeof cmd === "string" && /^git\\s+commit/i.test(cmd)) {
-        const result =
-          await ctx.$`carto detect-changes --brief`.quiet()
-        const output = result.stdout?.toString().trim()
-        if (output) {
-          console.log("[cartograph] Pre-commit analysis:\\n" + output)
-        }
-      }
-    } catch {
-      // Swallow — never block a commit.
-    }
-  })
-}
-"""
-
-
-def install_opencode_plugin() -> Path:
-    """Install the OpenCode user-level plugin for cartograph.
-
-    Writes ``~/.config/opencode/plugins/crg-plugin.ts``.  Creates the
-    directories if they don't exist.  If the file already exists it is
-    overwritten (the plugin is self-contained and idempotent).
-
-    Returns:
-        Path to the plugin file that was written.
-    """
-    plugins_dir = Path.home() / ".config" / "opencode" / "plugins"
-    plugin_path = plugins_dir / "crg-plugin.ts"
-
-    plugins_dir.mkdir(parents=True, exist_ok=True)
-    plugin_path.write_text(_opencode_plugin_content(), encoding="utf-8")
-    logger.info("Wrote OpenCode plugin: %s", plugin_path)
-
-    return plugin_path
+    outcome = _inject_instructions(repo_root / INSTRUCTION_FILE, _COPILOT_SECTION)
+    _remove_legacy_instruction_file(repo_root / LEGACY_INSTRUCTION_FILE)
+    return {INSTRUCTION_FILE: outcome}
