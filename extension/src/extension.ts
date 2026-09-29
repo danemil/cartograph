@@ -14,6 +14,7 @@
 
 import * as vscode from "vscode";
 import { Carto, GraphState } from "./carto";
+import { MemorySync, noticeHooksState } from "./memory";
 import { cartoHome, placeLaunchers, readPayload } from "./payload";
 
 /** Bumped whenever activation must redo work it would otherwise skip. */
@@ -57,6 +58,45 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("cartograph.status", () => showStatus(carto)),
     vscode.commands.registerCommand("cartograph.installSkills", () =>
       installIntoWorkspace(carto, context, { force: true })),
+    vscode.commands.registerCommand("cartograph.syncMemory", () => syncMemoryNow()),
+  );
+
+  // Memory from Copilot's own logs, for whatever the hooks did not record.
+  // Started and stopped with the setting, so turning it off takes effect now.
+  let memory: MemorySync | undefined;
+  const cwd = workspaceRoot();
+  const startMemory = () => {
+    if (!memory && cwd) {
+      memory = new MemorySync(carto, context, cwd, (text) => status.setMemory(text));
+      memory.start();
+    }
+  };
+  const stopMemory = () => {
+    memory?.dispose();
+    memory = undefined;
+    status.setMemory("memory: reading Copilot's logs is off");
+  };
+  const syncMemoryNow = async () => {
+    if (!memory) {
+      vscode.window.showWarningMessage(
+        "Cartograph: reading Copilot's logs is off (cartograph.readCopilotLogs).",
+      );
+      return;
+    }
+    const result = await memory.syncNow();
+    vscode.window.showInformationMessage(
+      `Cartograph: ${result?.summary ?? "sync did not complete"} ${memory.describe()}`,
+    );
+  };
+  const readLogs = () =>
+    vscode.workspace.getConfiguration("cartograph").get<boolean>("readCopilotLogs", true);
+  context.subscriptions.push(
+    { dispose: () => memory?.dispose() },
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("cartograph.readCopilotLogs")) {
+        readLogs() ? startMemory() : stopMemory();
+      }
+    }),
   );
 
   await checkVersionSkew(carto, payload.engineVersion, context);
@@ -64,6 +104,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await installIntoWorkspace(carto, context, { force: false });
   }
   await status.refresh(carto);
+  if (readLogs()) {
+    startMemory();
+  } else {
+    stopMemory();
+  }
+  await noticeHooksState(context, readLogs());
 }
 
 export function deactivate(): void {
@@ -199,6 +245,8 @@ function describe(state: GraphState): string {
  */
 class StatusBar implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
+  private graph = "";
+  private memory = "";
 
   constructor(private readonly enabled: boolean) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -220,9 +268,20 @@ class StatusBar implements vscode.Disposable {
       ready: "$(circle-filled) carto",
       broken: "$(error) carto",
     }[state.kind];
-    this.item.tooltip = describe(state);
+    this.graph = describe(state);
+    this.item.tooltip = this.tooltip();
     this.item.command = state.kind === "absent" ? "cartograph.build" : "cartograph.update";
     this.item.show();
+  }
+
+  /** The memory line, from the last `carto mem sync`. */
+  setMemory(text: string): void {
+    this.memory = text;
+    this.item.tooltip = this.tooltip();
+  }
+
+  private tooltip(): string {
+    return [this.graph, this.memory].filter(Boolean).join("\n");
   }
 
   dispose(): void {

@@ -2,7 +2,7 @@
   "name": "cartograph",
   "displayName": "Cartograph",
   "description": "A code knowledge graph for AI coding agents, as a CLI and a skills pack. No MCP server.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "cartograph",
   "license": "Apache-2.0",
   "engines": {
@@ -36,6 +36,11 @@
         "command": "cartograph.installSkills",
         "title": "Cartograph: Install Skills and Hooks into Workspace",
         "category": "Cartograph"
+      },
+      {
+        "command": "cartograph.syncMemory",
+        "title": "Cartograph: Sync Memory from Copilot Logs",
+        "category": "Cartograph"
       }
     ],
     "configuration": {
@@ -55,6 +60,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show graph state in the status bar."
+        },
+        "cartograph.readCopilotLogs": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Keep memory from Copilot's own conversation logs as well as its hooks. Copilot writes these logs on this machine whether or not hooks run; an organization can switch Chat hooks off by policy (`chat.useHooks`), and this is then the only way Chat sessions are remembered. Only prompts not already recorded by a hook are imported. Turn off to rely on hooks alone."
         }
       }
     }

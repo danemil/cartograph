@@ -24,6 +24,15 @@ the graph refreshes at the end of every agent turn. See
 `docs/copilot-hooks.md` in the monorepo for what each host does and what was
 verified.
 
+**When hooks are blocked, memory still works.** An organization can switch
+Copilot Chat hooks off by policy (`chat.useHooks`). Copilot writes its own
+conversation log either way, and the extension imports from it whatever the
+hooks did not record — on activation, after each chat, and every ten minutes.
+It says so once when it detects hooks are off, and the status bar tooltip
+shows, per host, whether memory is arriving via **hooks** or **logs**. Setting:
+`cartograph.readCopilotLogs` (on by default). Command: **Cartograph: Sync
+Memory from Copilot Logs**.
+
 **Copilot CLI only runs repository hooks in a folder you have trusted.** Start
 `copilot` interactively in the repository once and accept the trust prompt.
 
