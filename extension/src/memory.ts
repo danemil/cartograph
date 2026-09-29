@@ -161,7 +161,16 @@ export class MemorySync implements vscode.Disposable {
         this.rerun = false;
         try {
           const envelope = await this.carto.json<SyncData>(
-            ["mem", "sync", "--summarise", "--vscode-user-dir", this.userDir(), "--repo", this.cwd],
+            [
+              "mem", "sync", "--summarise",
+              "--vscode-user-dir", this.userDir(),
+              // Named, because on a remote this directory has Copilot's
+              // transcripts but no workspace.json for the engine to match on.
+              ...(this.workspaceStorageDir()
+                ? ["--vscode-workspace-dir", this.workspaceStorageDir() as string]
+                : []),
+              "--repo", this.cwd,
+            ],
             this.cwd,
           );
           if (envelope.ok) {
@@ -185,33 +194,35 @@ export class MemorySync implements vscode.Disposable {
 /**
  * Say once, plainly, that Chat hooks are off and what is happening instead.
  *
- * Shown again only if the situation changes — hooks back on, or the fallback
- * switched off — so it is information, not a recurring nag.
+ * In a remote window that is also where Cartograph Local is offered: one
+ * notice, not two. On the Remote SSH VM the offer was a second notification 90
+ * seconds after the first, and it was never seen. Shown again only when the
+ * situation changes, and the status bar keeps saying so in the meantime.
  */
 export async function noticeHooksState(
   context: vscode.ExtensionContext,
   readLogs: boolean,
+  companion: Companion,
 ): Promise<void> {
   const hooks = chatHooksState();
-  const situation = hooks.enabled ? "hooks-on" : readLogs ? "hooks-off-logs" : "hooks-off-nothing";
-  if (hooks.enabled || context.globalState.get<string>(NOTICE_KEY) === situation) {
+  if (hooks.enabled) {
     return;
   }
-  await context.globalState.update(NOTICE_KEY, situation);
+  const remote = Boolean(vscode.env.remoteName);
+  const needsCompanion = remote && readLogs && !(await companion.waitForHello(HELLO_WAIT_MS));
+  const situation = !readLogs ? "hooks-off-nothing"
+    : needsCompanion ? "hooks-off-needs-companion"
+    : "hooks-off-logs";
+  const version = context.extension.packageJSON.version as string;
+  if (context.globalState.get<string>(NOTICE_KEY) === `${situation}@${version}`) {
+    return;
+  }
+  await context.globalState.update(NOTICE_KEY, `${situation}@${version}`);
   const cause = hooks.setByPolicy
     ? "Copilot Chat hooks are turned off, and not by a user or workspace setting — most likely an organization policy."
     : "Copilot Chat hooks are turned off (chat.useHooks).";
-  if (readLogs) {
-    const choice = await vscode.window.showInformationMessage(
-      `Cartograph: ${cause} Memory is being kept from Copilot's own conversation log instead.`,
-      "Settings",
-    );
-    if (choice === "Settings") {
-      void vscode.commands.executeCommand(
-        "workbench.action.openSettings", "cartograph.readCopilotLogs",
-      );
-    }
-  } else {
+
+  if (!readLogs) {
     const choice = await vscode.window.showWarningMessage(
       `Cartograph: ${cause} Reading Copilot's conversation log is also off, so Chat sessions are not being remembered.`,
       "Turn on",
@@ -221,14 +232,39 @@ export async function noticeHooksState(
         .getConfiguration("cartograph")
         .update("readCopilotLogs", true, vscode.ConfigurationTarget.Global);
     }
+    return;
+  }
+  if (needsCompanion) {
+    const choice = await vscode.window.showWarningMessage(
+      `Cartograph: ${cause} This is a remote window, and VS Code keeps Chat history on ` +
+        "your local machine, where Cartograph cannot read it. Install Cartograph Local " +
+        "there so Chat sessions are remembered.",
+      "Install Cartograph Local",
+      "How",
+    );
+    if (choice === "Install Cartograph Local") {
+      await companion.install();
+    } else if (choice === "How") {
+      await companion.explain();
+    }
+    return;
+  }
+  const choice = await vscode.window.showInformationMessage(
+    `Cartograph: ${cause} Memory is being kept from Copilot's own conversation log instead.`,
+    "Settings",
+  );
+  if (choice === "Settings") {
+    void vscode.commands.executeCommand(
+      "workbench.action.openSettings", "cartograph.readCopilotLogs",
+    );
   }
 }
 
-/** The companion's install offer, once per machine per extension version. */
-const COMPANION_OFFER_KEY = "cartograph.companionOffered";
-
-/** How long a remote window waits to hear from a companion before offering one. */
-const COMPANION_GRACE_MS = 90_000;
+/**
+ * How long activation waits for an installed companion to say hello before
+ * treating it as missing. It polls every 15 s, and says hello first.
+ */
+const HELLO_WAIT_MS = 20_000;
 
 /**
  * The remote half of Cartograph Local.
@@ -238,88 +274,90 @@ const COMPANION_GRACE_MS = 90_000;
  * each changed chat file here through `cartograph.receiveChatSession`; this
  * writes it into `.cartograph/chatSessions/` in the repository — beside the
  * memory store, already out of git — where `carto mem sync` reads it with the
- * same parser as a local window's.
+ * same parser as a local window's. Measured working on the Remote SSH VM.
  */
-export function registerCompanion(
-  context: vscode.ExtensionContext,
-  cwd: string | undefined,
-  memory: () => MemorySync | undefined,
-): void {
-  let heard = false;
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "cartograph.receiveChatSession",
-      (message: { sessionId?: unknown; content?: unknown }) => {
-        const { sessionId, content } = message ?? {};
-        // The id becomes a file name, so it is held to the shape VS Code gives
-        // it; anything else is refused rather than cleaned up.
-        if (!cwd || typeof sessionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)
-          || typeof content !== "string") {
-          return false;
-        }
-        const dir = path.join(cwd, ".cartograph", "chatSessions");
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), content, "utf8");
-        memory()?.nudge();
+export class Companion {
+  private heard = false;
+  private waiters: Array<(heard: boolean) => void> = [];
+
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly cwd: string | undefined,
+    private readonly memory: () => MemorySync | undefined,
+    private readonly onChange: () => void,
+  ) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand("cartograph.receiveChatSession", (message) =>
+        this.receive(message)),
+      vscode.commands.registerCommand("cartograph.companionHello", () => {
+        this.heard = true;
+        this.waiters.splice(0).forEach((resolve) => resolve(true));
+        this.onChange();
         return true;
-      },
-    ),
-    vscode.commands.registerCommand("cartograph.companionHello", () => {
-      heard = true;
-      return true;
-    }),
-  );
-
-  if (!vscode.env.remoteName) {
-    return;
-  }
-  const timer = setTimeout(() => {
-    if (!heard && !chatHooksState().enabled) {
-      void offerCompanion(context);
-    }
-  }, COMPANION_GRACE_MS);
-  context.subscriptions.push({ dispose: () => clearTimeout(timer) });
-}
-
-/**
- * Ask once to install Cartograph Local, which this `.vsix` carries.
- *
- * Installing it from here is an attempt, not a promise: the file is on the
- * remote and the companion must land on the local machine, and whether VS Code
- * bridges that for an extension's install call is not something this code has
- * been able to observe. When it does not, the person is told exactly what to
- * install and from where.
- */
-async function offerCompanion(context: vscode.ExtensionContext): Promise<void> {
-  const version = context.extension.packageJSON.version as string;
-  if (context.globalState.get<string>(COMPANION_OFFER_KEY) === version) {
-    return;
-  }
-  await context.globalState.update(COMPANION_OFFER_KEY, version);
-  const choice = await vscode.window.showWarningMessage(
-    "Cartograph: this is a remote window, Copilot Chat hooks are off, and VS Code keeps " +
-      "Chat history on your local machine, where Cartograph cannot read it. Install the " +
-      "Cartograph Local companion so Chat sessions are remembered.",
-    "Install",
-    "How",
-  );
-  const manual = () =>
-    vscode.window.showInformationMessage(
-      `Cartograph: install cartograph-local-${version}.vsix from the same release as ` +
-        "this extension, with 'Extensions: Install from VSIX…' — it installs on your " +
-        "local machine. Then reload the window.",
+      }),
+      vscode.commands.registerCommand("cartograph.installCompanion", () => this.install()),
     );
-  if (choice === "Install") {
-    const vsix = vscode.Uri.file(path.join(context.extensionPath, "companion", "cartograph-local.vsix"));
+  }
+
+  /** A remote window with Chat hooks off, and no companion heard from. */
+  needed(): boolean {
+    return Boolean(vscode.env.remoteName) && !chatHooksState().enabled && !this.heard;
+  }
+
+  /** True as soon as a companion says hello, false if none does within *ms*. */
+  waitForHello(ms: number): Promise<boolean> {
+    if (this.heard) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+      setTimeout(() => resolve(this.heard), ms);
+    });
+  }
+
+  /**
+   * Install the companion this `.vsix` carries.
+   *
+   * An attempt, not a promise: the file is on the remote and the companion
+   * must land on the local machine, and whether VS Code bridges that for an
+   * extension's install call has not been observed yet. When it does not, the
+   * person is told exactly what to install and from where.
+   */
+  async install(): Promise<void> {
+    const vsix = vscode.Uri.file(
+      path.join(this.context.extensionPath, "companion", "cartograph-local.vsix"),
+    );
     try {
       await vscode.commands.executeCommand("workbench.extensions.installExtension", vsix);
       vscode.window.showInformationMessage(
         "Cartograph: Cartograph Local installed. Reload the window to start it.",
       );
     } catch {
-      await manual();
+      await this.explain();
     }
-  } else if (choice === "How") {
-    await manual();
+  }
+
+  async explain(): Promise<void> {
+    const version = this.context.extension.packageJSON.version as string;
+    await vscode.window.showInformationMessage(
+      `Cartograph: download cartograph-local-${version}.vsix from the same release as this ` +
+        "extension and install it on your LOCAL machine — in PowerShell or a local terminal: " +
+        `code --install-extension cartograph-local-${version}.vsix — then reload this window.`,
+    );
+  }
+
+  private receive(message: { sessionId?: unknown; content?: unknown } | undefined): boolean {
+    const { sessionId, content } = message ?? {};
+    // The id becomes a file name, so it is held to the shape VS Code gives it;
+    // anything else is refused rather than cleaned up.
+    if (!this.cwd || typeof sessionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)
+      || typeof content !== "string") {
+      return false;
+    }
+    const dir = path.join(this.cwd, ".cartograph", "chatSessions");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), content, "utf8");
+    this.memory()?.nudge();
+    return true;
   }
 }

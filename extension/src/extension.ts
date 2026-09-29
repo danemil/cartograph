@@ -14,7 +14,7 @@
 
 import * as vscode from "vscode";
 import { Carto, GraphState } from "./carto";
-import { MemorySync, noticeHooksState, registerCompanion } from "./memory";
+import { Companion, MemorySync, noticeHooksState } from "./memory";
 import { cartoHome, placeLaunchers, readPayload } from "./payload";
 
 /** Bumped whenever activation must redo work it would otherwise skip. */
@@ -67,14 +67,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const cwd = workspaceRoot();
   const startMemory = () => {
     if (!memory && cwd) {
-      memory = new MemorySync(carto, context, cwd, (text) => status.setMemory(text));
+      memory = new MemorySync(carto, context, cwd, showMemory);
       memory.start();
     }
   };
   const stopMemory = () => {
     memory?.dispose();
     memory = undefined;
-    status.setMemory("memory: reading Copilot's logs is off");
+    showMemory("memory: reading Copilot's logs is off");
   };
   const syncMemoryNow = async () => {
     if (!memory) {
@@ -88,7 +88,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       `Cartograph: ${result?.summary ?? "sync did not complete"} ${memory.describe()}`,
     );
   };
-  registerCompanion(context, cwd, () => memory);
+  // Declared before memory starts, so the status line can say when Chat in a
+  // remote window is waiting on Cartograph Local.
+  let lastMemoryLine = "";
+  const showMemory = (text: string) => {
+    lastMemoryLine = text;
+    status.setMemory(
+      companion.needed() ? `${text} · Chat: install Cartograph Local (see notification)` : text,
+      companion.needed(),
+    );
+  };
+  const companion: Companion = new Companion(
+    context, cwd, () => memory, () => showMemory(lastMemoryLine),
+  );
   const readLogs = () =>
     vscode.workspace.getConfiguration("cartograph").get<boolean>("readCopilotLogs", true);
   context.subscriptions.push(
@@ -110,7 +122,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   } else {
     stopMemory();
   }
-  await noticeHooksState(context, readLogs());
+  // Not awaited: the notice waits for a companion's hello and then for the
+  // person, and activation has nothing that should wait on either.
+  void noticeHooksState(context, readLogs(), companion);
 }
 
 export function deactivate(): void {
@@ -263,22 +277,34 @@ class StatusBar implements vscode.Disposable {
       return;
     }
     const state = await carto.graphState(cwd);
-    this.item.text = {
+    this.base = {
       absent: "$(circle-outline) carto",
       stale: "$(warning) carto stale",
       ready: "$(circle-filled) carto",
       broken: "$(error) carto",
     }[state.kind];
+    this.render();
     this.graph = describe(state);
     this.item.tooltip = this.tooltip();
     this.item.command = state.kind === "absent" ? "cartograph.build" : "cartograph.update";
     this.item.show();
   }
 
-  /** The memory line, from the last `carto mem sync`. */
-  setMemory(text: string): void {
+  private attention = false;
+  private base = "";
+
+  /** The memory line, from the last `carto mem sync`, and whether it needs acting on. */
+  setMemory(text: string, attention = false): void {
     this.memory = text;
+    this.attention = attention;
     this.item.tooltip = this.tooltip();
+    this.render();
+  }
+
+  private render(): void {
+    if (this.base) {
+      this.item.text = this.attention ? `${this.base} $(bell-dot)` : this.base;
+    }
   }
 
   private tooltip(): string {
