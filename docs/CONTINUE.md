@@ -110,6 +110,14 @@ The main `.vsix` embeds the companion and offers to install it. Unit-tested
 and built; **never run in a real remote window** — Dev Containers could not run
 x64 on this Mac. The README now opens with the constraints table.
 
+## Done — v0.5.0, memory design after the claude-mem comparison
+
+`docs/memory-design.md` holds the comparison (claude-mem `ade13f3`, cited) and
+the choices: one summary per session via `copilot -p --model auto`; the brief
+carries each turn's final reply from the logs (never stored); DECIDED vs
+PROPOSED; `mem show --id`; a counted cost line in `mem status` and the
+tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the

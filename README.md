@@ -53,7 +53,12 @@ host whether memory is arriving via **hooks** or **logs**.
 | **Hooks blocked, local window** | VS Code's `chatSessions/`, read directly | `~/.copilot/session-state/`, read directly |
 | **Hooks blocked, remote window** | VS Code's `chatSessions/` on the local machine, copied to the remote by **Cartograph Local** | `~/.copilot/session-state/` on the remote, read directly |
 
-The graph, the skills and session summaries work the same in every row.
+The graph, the skills and session summaries work the same in every row. One
+summary per session is written by `copilot -p --model auto` from each prompt
+and that turn's final reply, and separates what was **decided** from what was
+only **proposed**; nothing is pushed into new sessions, and `carto mem status`
+reports what memory cost against what it replaced. Why this differs from
+claude-mem: [docs/memory-design.md](docs/memory-design.md).
 Details and evidence: [docs/copilot-hooks.md](docs/copilot-hooks.md). Step-by-step
 check on a real machine: [docs/verify-memory.md](docs/verify-memory.md).
 
@@ -166,7 +171,7 @@ PROVENANCE.md.
 
 Working today: the capability envelope on ~25 commands, all 16 query patterns,
 `carto capabilities`, `carto review-context` / `review-summary`, `--max-tokens`
-with semantic truncation, the six-skill pack, `carto mem add|search|status|summarise|sync`,
+with semantic truncation, the six-skill pack, `carto mem add|search|show|status|summarise|sync`,
 hooks for Copilot CLI, Copilot Chat and Claude Code, memory from Copilot's own
 logs when hooks are blocked, and Cartograph Local for remote windows.
 
