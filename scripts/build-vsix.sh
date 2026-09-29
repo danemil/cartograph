@@ -27,6 +27,16 @@ if [ ! -f "$PAYLOAD/PAYLOAD.json" ]; then
     echo "    python3 scripts/build-payload.py --target $TARGET"
     exit 1
 fi
+# A payload older than the engine source would be packaged without a word, and
+# the .vsix would then ship an engine missing whatever changed since. That
+# happened: a local 0.2.0 build carried a payload from twelve days earlier.
+STALE=$(find "$ROOT/engine/cartograph" -name '*.py' -newer "$PAYLOAD/PAYLOAD.json" | head -1)
+if [ -n "$STALE" ]; then
+    echo "The $TARGET payload is older than the engine source (e.g. ${STALE#$ROOT/})."
+    echo "Rebuild it first:"
+    echo "    python3 scripts/build-payload.py --target $TARGET"
+    exit 1
+fi
 
 cd extension
 [ -d node_modules ] || npm install --silent
