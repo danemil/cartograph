@@ -22,7 +22,7 @@ from . import store as _store
 #: Named here so the dispatch, the catalogue and the pageable-collection table
 #: all spell the operation the same way. It is also the `tool` field an agent
 #: sees, which the envelope schema permits to carry a space.
-COMMANDS = ("mem add", "mem search", "mem status", "mem summarise", "mem sync")
+COMMANDS = ("mem add", "mem search", "mem show", "mem status", "mem summarise", "mem sync")
 
 
 def add_parser(sub: Any) -> argparse.ArgumentParser:
@@ -34,7 +34,7 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     """
     mem_cmd = sub.add_parser("mem", help="Recorded observations: add, search, inspect")
     mem_sub = mem_cmd.add_subparsers(
-        dest="mem_command", metavar="{add,search,status,summarise,sync}"
+        dest="mem_command", metavar="{add,search,show,status,summarise,sync}"
     )
     # Without this, `carto mem` alone parses cleanly and dispatches to nothing.
     # Required makes argparse route it through _ContractParser.error, which is
@@ -100,6 +100,14 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     search_cmd.add_argument(
         "--cursor", default=None,
         help="Continue from a previous page (opaque; pass page.next_cursor verbatim)",
+    )
+
+    show_cmd = mem_sub.add_parser(
+        "show", help="Whole observations by id, after a search has found them"
+    )
+    show_cmd.add_argument(
+        "--id", dest="ids", action="append", required=True,
+        help="Observation id from a search result (repeatable)",
     )
 
     status_cmd = mem_sub.add_parser(
@@ -169,7 +177,7 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
         help="With --summarise: write structural summaries without calling a host agent",
     )
 
-    for command in (add_cmd, search_cmd, status_cmd, summarise_cmd, sync_cmd):
+    for command in (add_cmd, search_cmd, show_cmd, status_cmd, summarise_cmd, sync_cmd):
         command.add_argument(
             "--project", default=None,
             help="Project name (defaults to the repository directory)",
@@ -305,6 +313,20 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
 
     with _store.MemoryStore(path) as memory:
         provenance = memory.provenance()
+        if args.mem_command == "show":
+            items = memory.get_by_ids(args.ids)
+            result = {
+                "summary": f"{len(items)} of {len(set(args.ids))} observation(s) found",
+                "items": items,
+                "missing": [i for i in dict.fromkeys(args.ids)
+                            if i not in {item["id"] for item in items}],
+            }
+            _count_served(memory, result)
+            _emit_tool_result(
+                args, result, command=command, provenance=provenance, repo_root=repo_root
+            )
+            return
+
         if args.mem_command == "status":
             _emit_tool_result(
                 args, _status_result(memory, repo_root, path),
@@ -327,11 +349,12 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
             order_by=args.order_by,
             limit=args.limit,
         )
+        result = {
+            "summary": f"Found {len(items)} observation(s) matching '{args.query}'",
+            "items": items,
+        }
+        _count_served(memory, result)
 
-    result = {
-        "summary": f"Found {len(items)} observation(s) matching '{args.query}'",
-        "items": items,
-    }
     if relaxed:
         # Said plainly, because it changes how far the rows should be trusted:
         # these share SOME of the query's words, not all of them.
@@ -350,6 +373,55 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
 
 def _split_types(value: Optional[str]) -> list[str]:
     return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+#: What recall has handed to agents: how many responses, and their size at the
+#: same chars/4 the envelope reports. Counted where the response is built, so
+#: the figure is what was served, not what could have been.
+_SERVED_COUNT = "cost:served_count"
+_SERVED_TOKENS = "cost:served_tokens"
+
+
+def _count_served(memory: _store.MemoryStore, result: dict[str, Any]) -> None:
+    import json
+
+    memory.add_to_counter(_SERVED_COUNT, 1)
+    memory.add_to_counter(_SERVED_TOKENS, len(json.dumps(result, default=str)) // 4)
+
+
+def _cost_lines(memory: _store.MemoryStore) -> dict[str, str]:
+    """What memory cost and what it replaced — only what can be counted.
+
+    Unlike claude-mem's Stats line, nothing here compares a model's own spend
+    with an estimate of what it wrote, and nothing is counted twice. Token
+    figures are chars/4 and say so; Copilot calls are counted exactly.
+    """
+    from . import summarise as _summarise
+
+    calls = int(memory.get_meta(_summarise.COST_HOST_CALLS) or 0)
+    served = int(memory.get_meta(_SERVED_COUNT) or 0)
+    served_tokens = int(memory.get_meta(_SERVED_TOKENS) or 0)
+    raw = memory.meta_with_prefix(_summarise.COST_RAW_CHARS)
+    lines: dict[str, str] = {}
+    if calls or served:
+        lines["memory_cost"] = (
+            f"{calls} summary call(s) to Copilot · {served} recall(s) served "
+            f"≈ {served_tokens:,} tokens (chars/4)"
+        )
+    if raw:
+        sessions = [key[len(_summarise.COST_RAW_CHARS):] for key in raw]
+        marks = ",".join("?" * len(sessions))
+        summary_chars = memory._conn.execute(  # noqa: SLF001 — one aggregate, here only
+            f"SELECT coalesce(sum(length(title) + length(body)), 0) FROM observations "
+            f"WHERE doc_type = 'sessions' AND session IN ({marks})",
+            sessions,
+        ).fetchone()[0]
+        raw_tokens = sum(int(v) for v in raw.values()) // 4
+        lines["vs_raw_logs"] = (
+            f"{len(raw)} summarised session(s): summaries ≈ {summary_chars // 4:,} tokens "
+            f"vs their prompts + replies ≈ {raw_tokens:,} tokens (chars/4)"
+        )
+    return lines
 
 
 def _status_result(
@@ -380,6 +452,7 @@ def _status_result(
     # some were not — hooks blocked or not firing, and the logs carried it.
     from . import sync as _sync
 
+    result.update(_cost_lines(memory))
     for host, stats in _sync.last_status(memory).items():
         result[f"capture_{host.replace('-', '_')}"] = (
             f"{stats.get('capture', 'unknown')} "

@@ -76,6 +76,18 @@ MAX_PROMPTS = 40
 #: Worst case, therefore: 40 × 500 ≈ 20k characters ≈ 5k tokens per session.
 MAX_PROMPT_CHARS = 500
 
+#: Characters of each turn's final assistant reply that reach the brief. The
+#: reply is where a turn's conclusion is; its opening is usually the answer and
+#: the rest the working. Worst case with :data:`MAX_PROMPTS`: 40 × (500 + 600)
+#: ≈ 44k characters ≈ 11k tokens per session summary.
+MAX_REPLY_CHARS = 600
+
+#: ``mem_meta`` keys for what memory cost. Host calls are counted when made,
+#: failed ones included — a failed call still spent quota. The raw size of a
+#: summarised session is what reading it back unsummarised would have cost.
+COST_HOST_CALLS = "cost:host_calls"
+COST_RAW_CHARS = "cost:raw_chars:"
+
 #: A host call measured 3–8 seconds on the machine this was built on, for a
 #: prompt of this size. Ten times that is headroom for a slow model or a cold
 #: start; past it the structural summary is worth more than the wait, and this
@@ -115,9 +127,25 @@ class Host:
     #: to be three things and this is the third; where it is empty, the env
     #: marker and the depth cap are carrying the whole load.
     no_hooks_flag: str
+    #: The host's flag for choosing a model, or "" when it has none worth
+    #: setting. Given :func:`summary_model`'s value at call time.
+    model_flag: str = ""
 
     def argv(self, brief: str) -> list[str]:
-        return [self.binary, *self.before, brief, *self.after]
+        model = [self.model_flag, summary_model()] if self.model_flag else []
+        return [self.binary, *self.before, brief, *self.after, *model]
+
+
+def summary_model() -> str:
+    """The model a summary is written with: ``auto`` unless pinned.
+
+    ``auto`` because Copilot chooses by task complexity — a light model for a
+    short brief (measured: ``gpt-6-luna``) — costs 10% less on paid plans, and
+    never chooses a model an administrator blocked. A pinned name that policy
+    blocks would fail every call and turn every summary structural without a
+    word. ``CARTO_SUMMARY_MODEL`` pins one for anyone who has measured better.
+    """
+    return os.environ.get("CARTO_SUMMARY_MODEL", "").strip() or "auto"
 
 
 #: In T07's order — Copilot is the acceptance test's guaranteed intelligence —
@@ -150,6 +178,7 @@ HOSTS: tuple[Host, ...] = (
         # persisted `disableAllHooks` config key, and Cartograph will not
         # rewrite a person's config to make its own call cheaper.
         no_hooks_flag="",
+        model_flag="--model",
     ),
     Host(
         name="claude-code",
@@ -183,21 +212,26 @@ HOSTS: tuple[Host, ...] = (
 _BRIEF = """\
 Summarise one coding session for a project memory that later sessions search.
 
-Below are the prompts a person typed, in order. You cannot see the replies or
-the code, so write only what the prompts themselves support. Where they do not
-say whether something worked, say that rather than guessing.
+Below is the session, turn by turn: what the person typed, and where the log
+has it, the assistant's final reply to that turn. You cannot see the code, so
+write only what the text supports. Where it does not say whether something
+worked, say that rather than guessing.
 
 Answer in exactly this shape. Plain text, no markdown, no preamble:
 
 TITLE: <one line under 100 characters naming what this session was about>
 WORKED ON: <one or two sentences>
-DECIDED: <what was settled, and why if the prompts say; "none" if nothing was>
+DECIDED: <only what the PERSON stated or accepted, and why if the text says;
+"none" if nothing was>
+PROPOSED: <what the assistant suggested that the person did not confirm;
+"none" if nothing was>
 DEAD ENDS: <what was tried and abandoned, and why; "none" if nothing was>
 
-DEAD ENDS is the most valuable line: nothing else in a repository records what
-was abandoned.
+DECIDED must never contain a suggestion the person did not take up — a later
+session will treat it as settled. DEAD ENDS is the most valuable line: nothing
+else in a repository records what was abandoned.
 
-PROMPTS:
+SESSION:
 {prompts}
 """
 
@@ -217,12 +251,27 @@ def _prompt_text(row: dict[str, Any]) -> str:
     return body[:MAX_PROMPT_CHARS].rstrip() + " […]"
 
 
-def brief(prompts: "list[dict[str, Any]]") -> str:
-    """The text sent to a host agent. Pure, so the budget is testable."""
-    numbered = "\n\n".join(
-        f"{index}. {_prompt_text(row)}" for index, row in enumerate(prompts, start=1)
-    )
-    return _BRIEF.format(prompts=numbered)
+def _clip(text: str, limit: int) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit].rstrip() + " […]"
+
+
+def brief(
+    prompts: "list[dict[str, Any]]", replies: "Optional[list[Optional[str]]]" = None
+) -> str:
+    """The text sent to a host agent. Pure, so the budget is testable.
+
+    *replies* aligns with *prompts*; a turn with no reply in any log shows the
+    prompt alone.
+    """
+    turns = []
+    for index, row in enumerate(prompts, start=1):
+        turn = f"{index}. PERSON: {_prompt_text(row)}"
+        reply = replies[index - 1] if replies and index - 1 < len(replies) else None
+        if reply:
+            turn += f"\n   ASSISTANT (final reply): {_clip(reply, MAX_REPLY_CHARS)}"
+        turns.append(turn)
+    return _BRIEF.format(prompts="\n\n".join(turns))
 
 
 def structural_summary(
@@ -361,6 +410,8 @@ def summarise(
     session: Optional[str] = None,
     project: Optional[str] = None,
     use_host: bool = True,
+    user_dirs: "Optional[Iterable[Path]]" = None,
+    workspace_dirs: "Iterable[Path]" = (),
 ) -> dict[str, Any]:
     """Summarise one session into one new observation. Never raises.
 
@@ -411,8 +462,17 @@ def summarise(
             "observation": None,
         }
 
-    title, body, source, host, reason = _compose(session, prompts, use_host=use_host)
+    replies, raw_chars = _replies_for(
+        repo_root, session, prompts, user_dirs=user_dirs, workspace_dirs=workspace_dirs
+    )
+    title, body, source, host, reason, attempts = _compose(
+        session, prompts, replies, use_host=use_host
+    )
     with _store.MemoryStore(path) as memory:
+        memory.set_meta(
+            COST_HOST_CALLS, str(int(memory.get_meta(COST_HOST_CALLS) or 0) + attempts)
+        )
+        memory.set_meta(COST_RAW_CHARS + session, str(raw_chars))
         observation = memory.add(
             project=project or repo_root.name,
             title=title,
@@ -455,6 +515,8 @@ def summarise_pending(
     exclude: "str | Iterable[str] | None" = None,
     project: Optional[str] = None,
     use_host: bool = True,
+    user_dirs: "Optional[Iterable[Path]]" = None,
+    workspace_dirs: "Iterable[Path]" = (),
 ) -> list[dict[str, Any]]:
     """Summarise the sessions that ended without anything saying so.
 
@@ -474,15 +536,55 @@ def summarise_pending(
             limit=MAX_PENDING,
         )
     return [
-        summarise(repo_root, session=session, project=project, use_host=use_host)
+        summarise(
+            repo_root, session=session, project=project, use_host=use_host,
+            user_dirs=user_dirs, workspace_dirs=workspace_dirs,
+        )
         for session in sessions
     ]
 
 
+def _replies_for(
+    repo_root: Path,
+    session: str,
+    prompts: "list[dict[str, Any]]",
+    *,
+    user_dirs: "Optional[Iterable[Path]]",
+    workspace_dirs: "Iterable[Path]",
+) -> "tuple[list[Optional[str]], int]":
+    """Each prompt's final reply from the logs, and the session's raw size.
+
+    Matched by the prompt as stored, because the stored body is the captured
+    text clipped the same way capture clips it. The raw size is every prompt
+    and every reply at full length — what reading the session back without a
+    summary would cost — and is measured whether or not any reply was found.
+    """
+    from . import sync as _sync
+
+    try:
+        turns = _sync.session_exchanges(
+            repo_root, session, user_dirs=user_dirs, workspace_dirs=workspace_dirs
+        )
+    except Exception as exc:  # noqa: BLE001 — a missing log must not cost the summary
+        logger.debug("no exchanges for %s: %s", session, exc)
+        turns = []
+    by_body = {_ingest.clip_body(prompt, by="capture"): reply for prompt, reply in turns}
+    replies = [by_body.get(row.get("body") or "") for row in prompts]
+    if turns:
+        raw = sum(len(prompt) + len(reply or "") for prompt, reply in turns)
+    else:
+        raw = sum(len(row.get("body") or "") for row in prompts)
+    return replies, raw
+
+
 def _compose(
-    session: str, prompts: "list[dict[str, Any]]", *, use_host: bool
-) -> "tuple[str, str, str, Optional[Host], Optional[str]]":
-    """``(title, body, summary_source, host, fallback_reason)``.
+    session: str,
+    prompts: "list[dict[str, Any]]",
+    replies: "Optional[list[Optional[str]]]" = None,
+    *,
+    use_host: bool,
+) -> "tuple[str, str, str, Optional[Host], Optional[str], int]":
+    """``(title, body, summary_source, host, fallback_reason, host_calls)``.
 
     Every path that does not produce host-agent prose lands on the structural
     summary and says why. There is no retry: T07 is explicit that a guard trip
@@ -491,11 +593,11 @@ def _compose(
     """
     fallback_title, fallback_body = structural_summary(session, prompts)
     if not use_host:
-        return fallback_title, fallback_body, "structural", None, "--no-host-agent"
+        return fallback_title, fallback_body, "structural", None, "--no-host-agent", 0
     if os.environ.get(SUMMARISE_MARKER):
         return (
             fallback_title, fallback_body, "structural", None,
-            "a summarisation is already running in this process tree",
+            "a summarisation is already running in this process tree", 0,
         )
     hosts = available_hosts(prefer=_prompt_host(prompts))
     if not hosts:
@@ -504,9 +606,12 @@ def _compose(
             "no host agent CLI on PATH ("
             + ", ".join(host.binary for host in HOSTS)
             + ")",
+            0,
         )
-    text = brief(prompts)
+    text = brief(prompts, replies)
+    attempts = 0
     for host in hosts:
+        attempts += 1
         answer = call_host(host, text)
         if answer is None:
             continue
@@ -517,10 +622,11 @@ def _compose(
             "host-agent",
             host,
             None,
+            attempts,
         )
     return (
         fallback_title, fallback_body, "structural", None,
-        "every installed host agent failed or timed out",
+        "every installed host agent failed or timed out", attempts,
     )
 
 

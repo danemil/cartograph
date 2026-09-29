@@ -532,6 +532,37 @@ class MemoryStore:
         )
         self._conn.commit()
 
+    def add_to_counter(self, key: str, amount: int) -> None:
+        """Add *amount* to an integer kept in ``mem_meta``."""
+        self.set_meta(key, str(int(self.get_meta(key) or 0) + int(amount)))
+
+    def meta_with_prefix(self, prefix: str) -> dict[str, str]:
+        rows = self._conn.execute(
+            "SELECT key, value FROM mem_meta WHERE key >= ? AND key < ?",
+            (prefix, prefix + "\uffff"),
+        ).fetchall()
+        return {key: value for key, value in rows}
+
+    def get_by_ids(self, ids: Sequence[str]) -> list[dict[str, Any]]:
+        """Whole observations by id, in the order asked, bodies untruncated.
+
+        The second step after search: search returns a snippet per row so a
+        list stays cheap, and this returns the full text of only the rows the
+        caller chose — the same index-then-detail split claude-mem uses.
+        """
+        found: dict[str, dict[str, Any]] = {}
+        for obs_id in dict.fromkeys(ids):
+            row = self._conn.execute(
+                "SELECT id, project, session, doc_type, kind, title, body, file_paths, "
+                "platform_source, summary_source, created_at FROM observations WHERE id = ?",
+                (obs_id,),
+            ).fetchone()
+            if row is not None:
+                item = dict(row)
+                item["file_paths"] = json.loads(item.get("file_paths") or "[]")
+                found[obs_id] = item
+        return [found[obs_id] for obs_id in dict.fromkeys(ids) if obs_id in found]
+
     def has_document(self, session: str, body: str, *, doc_type: str) -> bool:
         """Whether this session already recorded exactly this body.
 

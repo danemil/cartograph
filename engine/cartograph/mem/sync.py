@@ -233,28 +233,47 @@ def _replay(path: Path) -> dict[str, Any]:
     return state
 
 
-def _read(path: Path) -> tuple[Optional[str], list[str], bool]:
-    """``(session, prompts, hooks_fired)`` from one log."""
+#: One turn of a conversation: what the person asked, and the assistant's final
+#: reply to it, or None when the log holds no reply (yet).
+Exchange = tuple[str, Optional[str]]
+
+
+def _exchanges(path: Path) -> tuple[Optional[str], list[Exchange], bool]:
+    """``(session, exchanges, hooks_fired)`` from one log.
+
+    The reply is the turn's *final* assistant text — what the turn concluded —
+    not every intermediate message. claude-mem makes the same cut: its Stop
+    hook reads only the last assistant message of a turn.
+    """
     if path.parent.name == "chatSessions":
         state = _replay(path)
-        prompts = [
-            request["message"]["text"]
-            for request in state.get("requests") or []
-            if isinstance(request, dict)
-            and not request.get("hiddenFromTranscript")
-            and isinstance((request.get("message") or {}).get("text"), str)
-        ]
-        return state.get("sessionId") or path.stem, prompts, False
+        turns: list[Exchange] = []
+        for request in state.get("requests") or []:
+            if not isinstance(request, dict) or request.get("hiddenFromTranscript"):
+                continue
+            text = (request.get("message") or {}).get("text")
+            if not isinstance(text, str):
+                continue
+            # A response is a list of parts; the prose ones carry `value`.
+            reply = "".join(
+                part["value"] for part in request.get("response") or []
+                if isinstance(part, dict) and isinstance(part.get("value"), str)
+            ).strip()
+            turns.append((text, reply or None))
+        return state.get("sessionId") or path.stem, turns, False
 
     session: Optional[str] = None
-    prompts: list[str] = []
+    turns = []
     hooks_fired = False
     for event in _events(path):
         kind, data = event.get("type"), event.get("data") or {}
         if kind == "session.start":
             session = data.get("sessionId") or session
         elif kind == "user.message" and isinstance(data.get("content"), str):
-            prompts.append(data["content"])
+            turns.append((data["content"], None))
+        elif kind == "assistant.message" and turns and isinstance(data.get("content"), str):
+            if data["content"].strip():
+                turns[-1] = (turns[-1][0], data["content"].strip())
         elif kind == "hook.start" and data.get("hookType") in {
             "userPromptSubmitted", "UserPromptSubmit",
         }:
@@ -262,7 +281,44 @@ def _read(path: Path) -> tuple[Optional[str], list[str], bool]:
     if session is None:
         # A Chat transcript is named for its session; a CLI log's directory is.
         session = path.parent.name if path.name == "events.jsonl" else path.stem
-    return session, prompts, hooks_fired
+    return session, turns, hooks_fired
+
+
+def _read(path: Path) -> tuple[Optional[str], list[str], bool]:
+    """``(session, prompts, hooks_fired)`` from one log."""
+    session, turns, hooks_fired = _exchanges(path)
+    return session, [prompt for prompt, _ in turns], hooks_fired
+
+
+def session_exchanges(
+    repo_root: Path,
+    session: str,
+    *,
+    user_dirs: Optional[Iterable[Path]] = None,
+    workspace_dirs: Iterable[Path] = (),
+    copilot_dir: Optional[Path] = None,
+) -> list[Exchange]:
+    """One session's turns, from the most complete log that has them.
+
+    VS Code's ``chatSessions`` held every prompt and reply with hooks off; its
+    transcript did not; the CLI has one log. So the log with the most replies
+    wins, and an empty list means no log for this session is reachable here.
+    """
+    chat = chat_logs(repo_root, vscode_user_dirs() if user_dirs is None else user_dirs)
+    for workspace in workspace_dirs:
+        chat += workspace_chat_logs(workspace)
+    candidates = [log for log in chat if log.stem == session] + [
+        log for log in cli_logs(repo_root, copilot_dir or Path.home() / ".copilot")
+        if log.parent.name == session
+    ]
+    best: list[Exchange] = []
+    for log in candidates:
+        _, turns, _ = _exchanges(log)
+        if sum(1 for _, reply in turns if reply) > sum(1 for _, reply in best if reply) or (
+            not best and turns
+        ):
+            best = turns
+    return best
 
 
 def _stamp(path: Path) -> str:
@@ -376,7 +432,8 @@ def sync(
             result["summarised"] = [
                 outcome
                 for outcome in _summarise.summarise_pending(
-                    repo_root, exclude=changing, project=project, use_host=use_host
+                    repo_root, exclude=changing, project=project, use_host=use_host,
+                    user_dirs=user_dirs, workspace_dirs=workspace_dirs,
                 )
                 if outcome.get("observation")
             ]

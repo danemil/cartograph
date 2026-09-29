@@ -40,13 +40,22 @@ the code, which the graph answers better and always knows more currently.
    when recency matters more than relevance.
 
    Earlier sessions are recorded for you: every prompt verbatim, and one
-   summary per session with WORKED ON / DECIDED / DEAD ENDS lines. To read
-   only the summaries, which is usually what "did we already try this" wants:
+   summary per session with WORKED ON / DECIDED / PROPOSED / DEAD ENDS lines.
+   DECIDED holds only what a person stated or accepted; PROPOSED is what an
+   assistant suggested that nobody confirmed — do not treat it as settled.
+   To read only the summaries, which is usually what "did we already try
+   this" wants:
    ```
    carto mem search --query "<topic>" --doc-type sessions --format json
    ```
-   `summary_source: host-agent` means a model wrote it from the prompts;
+   `summary_source: host-agent` means a model wrote it from the session;
    `structural` means it is only a list of what was asked, not a synthesis.
+
+   Search returns a short snippet per row. Read the whole of only the rows
+   that matter, by id:
+   ```
+   carto mem show --id <id> --format json
+   ```
 
 3. **Read `search_mode` before you trust a near miss.** `semantic` and `hybrid`
    mean embeddings participated. `keyword` means lexical matching only — so a
