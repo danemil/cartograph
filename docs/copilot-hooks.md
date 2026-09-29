@@ -123,7 +123,10 @@ remote, it says which file to install by hand.
 installed by hand on the Windows host, the 30,045-byte chat file arrived in
 `.cartograph/chatSessions/` on the VM and both of its prompts were recorded as
 `copilot-chat` — including the first, which the VM's own transcript lacked.
-**Not yet run:** the in-window install from the embedded `.vsix`. Dev Containers could not be tried on
+**Also verified (0.4.1, same VM):** after removing both extensions, the *hooks
+are off* notice offered **Install Cartograph Local** and installing from the
+embedded `.vsix` worked — VS Code does place a UI-side extension on the local
+machine from a file on the remote. The whole remote flow has now run. Dev Containers could not be tried on
 the Apple Silicon build machine (x64 emulation off in Docker Desktop). The
 user's Remote SSH VM is the first real run — see `docs/verify-memory.md`.
 

@@ -114,8 +114,7 @@ x64 on this Mac. The README now opens with the constraints table.
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
    companion carries Chat history across; 0.4.1 fixes what that run found.
-   Still unobserved: installing the companion from the embedded `.vsix` via
-   the notice.
+   The in-notice install of the companion has since worked on the VM (0.4.1).
 2. **Transcript-aware summaries.** Both hosts send `transcript_path`, which
    holds the agent's replies. Summaries built only from prompts can only say
    what a person typed; the replies say what was concluded.

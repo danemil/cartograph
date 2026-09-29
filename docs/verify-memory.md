@@ -231,6 +231,7 @@ prompts rather than a synthesis.
 | 7 | Readable, and holds the replies — but the first `user.message` of the session was **missing**, and the log ended at `turn_start` before the second reply. Not yet known whether that is delayed writing or the chat's *Checkpoint Restored* state |
 | CLI | Not yet run |
 | 0.4.0 + Cartograph Local | Installed by hand on Windows (an old local Cartograph 0.1.0 was removed first). The chat file reached `.cartograph/chatSessions/` on the VM; **both Chat prompts recorded as `copilot-chat`**, including the one missing from the VM transcript. The CLI prompt was recorded by its hook (`capture copilot cli: hooks`). Found: the install offer was a separate notification nobody saw; `mem status` said `hooks` for prompts the log had supplied; the VM's own transcript was never read — all fixed in 0.4.1 |
+| 0.4.1 | Both extensions removed and reinstalled. The *hooks are off* notice offered **Install Cartograph Local**, and installing from it worked |
 | Remote split | On the **Windows host**: `%APPDATA%\Code\User\workspaceStorage\21bfca…\chatSessions\079499f9….jsonl` (30 KB, today); on the VM: none. Same session id, same workspace id both sides |
 
 **Consequence:** where an organisation disables Chat hooks by policy, hooks
