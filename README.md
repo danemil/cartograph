@@ -99,23 +99,27 @@ Some decisions worth knowing before changing things:
 
 ## Status
 
-**The engine's contract is complete. The memory capability has not been
-started** — the build order was engine-first, and that debt is now paid: the
-precompiled parser exists, so memory needs no toolchain of its own.
+**The engine's contract is complete, and memory works on the hosts the target
+environment allows — Copilot CLI and Copilot Chat.** Every prompt is captured
+by a hook, each session is summarised into WORKED ON / DECIDED / DEAD ENDS by
+the host's own Copilot CLI (or a structural fallback, labelled as such), and
+the graph refreshes at the end of every agent turn. All of it was proven live
+against both hosts; see [docs/copilot-hooks.md](docs/copilot-hooks.md).
 
-It is being built in Python inside the engine rather than as a TypeScript fork.
-Almost nothing of the upstream implementation survives this architecture, and a
+Memory is Python inside the engine rather than a TypeScript fork. Almost
+nothing of the upstream implementation survives this architecture, and a
 second runtime would have to be installed on every target machine, carry a
 second envelope implementation, and be held to the contract separately. See
 PROVENANCE.md.
 
 Working today: the capability envelope on ~25 commands, all 16 query patterns,
 `carto capabilities`, `carto review-context` / `review-summary`, `--max-tokens`
-with semantic truncation, the five-skill pack, `carto hook` with a
-cross-platform detached launcher, and a `.vsix` that carries the engine and its
-grammars and installs with no network at all.
+with semantic truncation, the six-skill pack, `carto mem add|search|status|summarise`,
+and hooks for Copilot CLI, Copilot Chat and Claude Code.
 
-Not yet: cursors (`next_cursor` is honestly `null`) and `carto mem` anything.
+Not yet: cursors (`next_cursor` is honestly `null`), semantic search
+(everything reports `search_mode: keyword`), and summaries that read the
+agent's replies rather than only the prompts.
 
 The `.vsix` is built and verified **on darwin-arm64 only**. PyInstaller freezes
 the interpreter it runs on, so every other target has to be built on its own

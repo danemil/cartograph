@@ -1,7 +1,7 @@
 ---
 tags: [handoff, cartograph]
-updated: 2026-09-16
-next-task: rename pass, then carto-hook
+updated: 2026-09-29
+next-task: Linux .vsix acceptance on the user's machine, then transcript-aware summaries
 ---
 
 # CONTINUE HERE
@@ -14,7 +14,7 @@ below, then pick up **Next task**.
 ```bash
 cd /Users/emidan/work/cartograph
 ./scripts/verify.sh
-# expect: 214 envelope checks, 224 skills checks, 20/20 copies, "all green"
+# expect: 340 envelope checks, 251 skills checks, 24/24 copies, "all green"
 ```
 
 If that passes, everything described here is true. If it does not, trust the
@@ -61,43 +61,39 @@ built into VS Code 1.135.0), installing from a private repo, default-deny egress
 The contract is honoured, the capability is reachable by an agent, and it now
 fires on its own.
 
-## NEXT TASK — host-agent summarisation
+## Scope, restated by the user on 2026-09-29
 
-Started and abandoned mid-flight when the session closed; **nothing was
-written**, so begin from scratch. The brief, in full:
+**The only AI tool allowed in the target environment is GitHub Copilot — Chat
+and CLI, inside VS Code.** No MCP, no Claude Code. Claude Code support stays in
+the code because it costs nothing, but nothing may depend on it: the extension
+now installs with `--platform copilot`, and the summariser tries `copilot`
+first.
 
-The vault ticket is `docs/decisions/T07-intelligence-resolution.md` §1 — design
-intent only, verify every command against `carto capabilities --format json`.
+## Done on 2026-09-29
 
-**Summarise a SESSION, not each prompt.** A captured prompt is already short and
-its verbatim text is fine; rewording one buys nothing and costs an inference
-call. The value is synthesis across a session: what was worked on, what was
-decided, what was a dead end. Dead ends most of all — nothing else in a
-repository records them. Output is ONE observation with `doc_type: "sessions"`
-and `summary_source: "host-agent"`, alongside the verbatim `prompts` rows, which
-stay as the evidence.
+- `carto mem summarise` committed (`cb78033`): one `sessions` row per session,
+  `host-agent` or `structural`, never mislabelled.
+- **Frozen-binary re-entry fixed** (`41a83d4`). Detached work was launched as
+  `carto -m cartograph …`; the PyInstaller binary has no `-m`, so every
+  file-edit refresh in the v0.1.0 `.vsix` was a silent no-op.
+- **Copilot hooks.** `.github/hooks/cartograph.json`, one file both hosts read;
+  host named from `COPILOT_CLI`; duplicate-prompt refusal; summaries of
+  sessions that never ended, run at the next `SessionStart`; graph refresh on
+  `Stop`; the launcher directory appended to PATH inside every hook line,
+  because Chat hooks do not see a terminal's PATH. The evidence, and what is
+  still unverified, is in **`docs/copilot-hooks.md`** — read it before touching
+  hooks.
+- Proven live on macOS against Copilot CLI 1.0.82 and VS Code 1.139.1, both
+  host-agent summary paths included. Nothing proven on Linux or Windows yet.
 
-Both `copilot` and `claude` are on PATH on the dev machine. Fall back to a
-deterministic structural summary when the call fails or a guard trips, recorded
-as `summary_source: "structural"` — T07 is explicit that a structural summary
-must not be dressed up as a host-agent one.
+## NEXT TASK
 
-Three things that will bite:
-
-- **Recursion.** Shelling out to `copilot -p` starts an agent session, which
-  fires that host's hooks, which capture and could summarise, which shells out
-  again. `CARTO_HOOK_ACTIVE` exists; verify it covers the spawned tree, and pass
-  whatever "no hooks" flag the CLI exposes — read `--help`, do not assume.
-- **Latency.** A spawn plus inference is seconds. Capture is 1.1ms and must stay
-  there, so this cannot sit in a hook's critical path. `spawn_detached` exists.
-- **Honest degradation.** Prove BOTH paths end to end and show `summary_source`
-  differing. Say plainly whether a real host-agent call was made and what it
-  returned; a code path that was never executed is not a working one.
-
-An explicit `carto mem summarise` is the minimum, because it is testable
-without a host. Whether a session-end hook also drives it depends on what the
-hosts actually emit — read payloads rather than recalling them, the way
-`mem/ingest.py` established the capture shapes.
+1. **Linux acceptance of the 0.2.0 `.vsix`** on the user's test machine — the
+   checklist is the one given to them in conversation on 2026-09-29, and the
+   first results decide what is next.
+2. **Transcript-aware summaries.** Both hosts send `transcript_path`, which
+   holds the agent's replies. Summaries built only from prompts can only say
+   what a person typed; the replies say what was concluded.
 
 ## Then, in rough order
 
