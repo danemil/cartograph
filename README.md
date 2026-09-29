@@ -81,6 +81,20 @@ the extension offers it.
 code --install-extension carto-linux-x64-<version>.vsix
 ```
 
+### What it writes into a repository
+
+`carto install` (run by the extension in each workspace) writes the skills
+pack to `.github/skills/<skill>/`, the hooks to `.github/hooks/cartograph.json`
+and, when run without `--no-instructions`, `.github/instructions/cartograph.instructions.md`;
+the graph and memory live in `.cartograph/`. It lists exactly those paths in a
+marked block (`# cartograph (managed)` … `# end cartograph`) in the
+repository's own `info/exclude`, so `git status` stays clean and nothing is
+committed by accident. That file is local and never committed; the tracked
+`.gitignore` is not touched. A path the repository already tracks is left out
+of the block and named in install's output — exclusion has no effect on a
+tracked file. Outside a git repository the step is skipped with a note.
+`carto uninstall` removes the block and nothing else in that file.
+
 ## Layout
 
 | Path | What |

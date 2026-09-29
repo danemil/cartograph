@@ -14,7 +14,10 @@ On activation, in order:
    on the PATH of every VS Code terminal.
 3. Runs `carto install --platform copilot`, which writes the skills pack into
    `.github/skills` and one hook file, `.github/hooks/cartograph.json`, both
-   read by Copilot Chat and Copilot CLI.
+   read by Copilot Chat and Copilot CLI. It lists those files and
+   `.cartograph/` in the repository's local `.git/info/exclude`, so they do
+   not appear in `git status`; the tracked `.gitignore` is not edited, and
+   files the repository already tracks are left as they are.
 4. Reads `carto status` and shows the graph state in the status bar.
 
 The hooks are what make memory automatic: every prompt is recorded, each

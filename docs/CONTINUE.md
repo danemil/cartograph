@@ -1,6 +1,6 @@
 ---
 tags: [handoff, cartograph]
-updated: 2026-09-29
+updated: 2026-09-30
 next-task: Linux .vsix acceptance on the user's machine, then transcript-aware summaries
 ---
 
@@ -134,8 +134,8 @@ tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
 | 1 | Removals — decisions 4 and 4b | **done** (`9a1ad15`, `353e57b`) |
 | 1b | Narrow-lookup fix — `large-functions` answers with functions, compact rows, one-line summaries, skills say when `wc`/`find`/`grep` are cheaper | **done** (below) |
 | 1c | `impact` default: top 20, ranked direct-first, every file and exact totals always present | **done** (below) |
-| 2 | Exclude repo files locally — decision 3 | next |
-| 3 | VS Code language models as the summary fallback — decision 1 | |
+| 2 | Exclude repo files locally — decision 3 | **done** (below) |
+| 3 | VS Code language models as the summary fallback — decision 1 | next |
 | 4 | Bundle the embedding model — decision 2 | |
 
 ## Done — decisions 4 and 4b
@@ -204,6 +204,28 @@ claude-mem, default invocation: SessionStore.ts 506,392 → 10,967 chars
 (126,598 → 2,742 tokens); TelegramWrapupNotifier.ts 78,826 → 7,038;
 CorpusBuilder.ts 8,619 → 3,052. Hub files pay for the file list: logger.ts
 (463 files) is 34,386.
+
+## Done — step 2, Cartograph's files excluded locally (decision 3)
+
+- `7447759` — `carto install` writes a `# cartograph (managed)` …
+  `# end cartograph` block into the file `git rev-parse --git-path
+  info/exclude` names (so a linked worktree writes the shared one). It lists
+  `/.cartograph/` and exactly what that run wrote: each
+  `/.github/skills/<skill>/`, `/.github/hooks/cartograph.json`, and the
+  instruction file when written. The block is replaced whole, so a re-run
+  changes nothing. Paths git already tracks are named in the output and left
+  out. Not a git work tree: one line, nothing written. `.gitignore` is no
+  longer edited — `ensure_repo_gitignore_excludes_crg` is gone — and a block an
+  earlier release put there stays. `carto uninstall` removes the block only.
+- Tests: `engine/tests/test_git_exclude.py` (13, real `git init` repos, one
+  end to end through `python -m cartograph install` checking `git status
+  --porcelain` is empty); each seen failing with its behaviour removed.
+- The extension needed no change: it runs `carto install`.
+- This repository tracks `.github/skills/` but not `.github/hooks/`; install
+  here reports the skills as tracked and excludes the hook file.
+- Not changed: `carto uninstall` still deletes the skill files even where git
+  tracks them, and still removes the `# Added by cartograph` block from
+  `.gitignore` that earlier releases wrote.
 
 ## NEXT TASK
 
