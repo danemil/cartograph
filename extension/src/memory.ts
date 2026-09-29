@@ -66,6 +66,7 @@ export class MemorySync implements vscode.Disposable {
   private running: Promise<void> | undefined;
   private rerun = false;
   private last: SyncData | undefined;
+  private cost: string[] = [];
 
   constructor(
     private readonly carto: Carto,
@@ -112,7 +113,30 @@ export class MemorySync implements vscode.Disposable {
     const parts = Object.entries(this.last.hosts)
       .filter(([, host]) => host.capture !== "unknown")
       .map(([name, host]) => `${name} via ${host.capture}`);
-    return parts.length ? `memory: ${parts.join(", ")}` : "memory: no Copilot sessions yet";
+    const line = parts.length ? `memory: ${parts.join(", ")}` : "memory: no Copilot sessions yet";
+    return [line, ...this.cost].join("\n");
+  }
+
+  /**
+   * What memory cost and what it replaced, from `carto mem status`: counted
+   * Copilot calls, served recall at chars/4, and summaries against the raw
+   * sessions they stand for. In the tooltip only — a line added to every
+   * session would cost tokens on every session to report on tokens.
+   */
+  private async costLines(): Promise<string[]> {
+    try {
+      const status = await this.carto.json<Record<string, unknown>>(
+        ["mem", "status", "--repo", this.cwd], this.cwd,
+      );
+      if (!status.ok) {
+        return [];
+      }
+      return ["memory_cost", "vs_raw_logs"]
+        .map((key) => status.data[key])
+        .filter((value): value is string => typeof value === "string");
+    } catch {
+      return [];
+    }
   }
 
   dispose(): void {
@@ -175,6 +199,7 @@ export class MemorySync implements vscode.Disposable {
           );
           if (envelope.ok) {
             this.last = envelope.data;
+            this.cost = await this.costLines();
             this.onResult(this.describe());
           }
         } catch {
