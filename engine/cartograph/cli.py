@@ -882,6 +882,18 @@ def _emit_tool_result(
     # shortening for the commands that have no shaper of their own. Before
     # paging, so the rows a cursor is minted from are the rows emitted.
     _paths.relativise_result(result, repo_root)
+    # The tool reports its own truncation and search mode; surface them rather
+    # than inventing either. Read before compacting, which drops the copies in
+    # `data` because the envelope carries both.
+    truncated = bool(result.get("truncated")) if isinstance(result, dict) else False
+    if search_mode is None and isinstance(result, dict):
+        search_mode = result.get("search_mode")
+    if getattr(args, "detail", None) == "compact":
+        # After relativising, so rows are written from the short paths; before
+        # paging, so a cursor counts the rows that are emitted.
+        from . import compact as _compact
+
+        _compact.compact(command, result)
 
     page = _page_for(args, command, result, offset=offset, page_limit=page_limit)
     if page is not None and query is not None:
@@ -890,9 +902,6 @@ def _emit_tool_result(
         # see docs/design/token-budget.md.
         _cursor.reserve(page)
 
-    # The tool reports its own truncation; surface it rather than inventing one.
-    truncated = bool(result.get("truncated")) if isinstance(result, dict) else False
-
     env = _env.ok(
         command,
         data=result,
@@ -900,11 +909,7 @@ def _emit_tool_result(
         page=page,
         truncated=truncated,
         truncated_reason="page_limit" if truncated else None,
-        search_mode=(
-            search_mode
-            if search_mode is not None
-            else (result.get("search_mode") if isinstance(result, dict) else None)
-        ),
+        search_mode=search_mode,
     )
     env = _env.fit(env, getattr(args, "max_tokens", None))
     if page is not None and query is not None:
@@ -1658,6 +1663,18 @@ def main() -> None:
             help="Token budget for the response",
         )
 
+    # One flag, attached from the list compact.py owns, so the commands that
+    # take it and the commands it does something for cannot drift apart.
+    from . import compact as _compact
+
+    for _name in sorted(_compact.COMMANDS):
+        sub.choices[_name].add_argument(
+            "--detail",
+            choices=_compact.DETAIL_CHOICES,
+            default=_compact.DEFAULT_DETAIL,
+            help="Row shape: compact (one line per row) or full (every field)",
+        )
+
     # daemon
     daemon_cmd = sub.add_parser(
         "daemon",
@@ -2150,13 +2167,12 @@ def main() -> None:
                     "truncated": len(shown) < total,
                 }, repo_root=repo_root)
             else:
+                from . import compact as _compact
+                from . import repo_paths as _paths
+
                 print(f"Dead code: {total} item(s); showing {len(shown)}")
-                for item in shown:
-                    kind = item.get("kind", "?")
-                    name = item.get("name", "?")
-                    file_path = item.get("relative_path") or item.get("file", "?")
-                    line = item.get("line", "?")
-                    print(f"  [{kind}] {name}  ({file_path}:{line})")
+                for item in _paths.relativise_result(shown, repo_root):
+                    print(f"  {_compact.node_row(item)}")
 
         elif args.command == "build":
             pp = (

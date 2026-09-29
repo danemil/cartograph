@@ -546,8 +546,8 @@ def test_explicit_monorepo_subproject_runs_a_real_graph_search(
     # lexical fallback can never be mistaken for a semantic hit.
     assert envelope["search_mode"] == "keyword"
     result = envelope["data"]
-    assert result["status"] == "ok"
-    assert any(row["name"] == "raw_stream_lookup" for row in result["results"])
+    # Compact rows by default: "<kind> | <name> | <path>:<line>".
+    assert any(row.split(" | ")[1] == "raw_stream_lookup" for row in result["results"])
 
 
 class TestGraphToolExplicitRepoResolution:

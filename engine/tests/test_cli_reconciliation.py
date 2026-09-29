@@ -434,6 +434,10 @@ def test_dead_code_json_limit_is_machine_readable(tmp_path, monkeypatch, capsys)
         "--json",
         "--limit",
         "1",
+        # The whole row, so the items can be compared field for field; the
+        # compact default is covered in test_compact_output.py.
+        "--detail",
+        "full",
     ]
 
     with patch.object(sys, "argv", argv):

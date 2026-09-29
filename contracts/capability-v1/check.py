@@ -120,9 +120,19 @@ def _absolute_leaks(value, root: str) -> list[str]:
     """Every string under `data` that still begins with the checkout's path.
 
     Anchored at the start, because quoted file content legitimately mentions
-    absolute paths mid-line and rewriting a source line would be a lie.
+    absolute paths mid-line and rewriting a source line would be a lie. A
+    compact row (``kind | name | path:line``) is several values in one string,
+    so each of its fields is anchored separately — otherwise a row carrying an
+    absolute path after its first ``|`` would pass unseen.
     """
     found: list[str] = []
+
+    def fields(text: str) -> list[str]:
+        return [
+            part
+            for field in text.split(" | ")
+            for part in field.split(" -> ")
+        ]
 
     def walk(node) -> None:
         if isinstance(node, dict):
@@ -133,7 +143,7 @@ def _absolute_leaks(value, root: str) -> list[str]:
         elif isinstance(node, list):
             for item in node:
                 walk(item)
-        elif isinstance(node, str) and node.startswith(root):
+        elif isinstance(node, str) and any(f.startswith(root) for f in fields(node)):
             found.append(node)
 
     walk(value)

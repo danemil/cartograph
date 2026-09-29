@@ -274,6 +274,22 @@
         "10"
       ],
       "expect": "ok",
+      "budget": 250,
+      "expect_truncated": true
+    },
+    "query-budget-full": {
+      "args": [
+        "query",
+        "callers_of",
+        "attach_context_savings",
+        "--repo",
+        ".",
+        "--limit",
+        "10",
+        "--detail",
+        "full"
+      ],
+      "expect": "ok",
       "budget": 500,
       "expect_truncated": true
     },

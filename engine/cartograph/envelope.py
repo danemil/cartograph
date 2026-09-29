@@ -503,8 +503,15 @@ def _print_text(env: dict[str, Any]) -> None:
     if isinstance(data, dict):
         width = max((len(k) for k in data), default=0)
         for key, value in data.items():
+            if isinstance(value, (list, tuple)) and value:
+                # A compact row is already a line; joining rows with commas
+                # runs them together into one unreadable one.
+                print(key.replace("_", " "))
+                for item in value:
+                    print(f"  {item}")
+                continue
             if isinstance(value, (list, tuple)):
-                value = ", ".join(str(v) for v in value) or "-"
+                value = "-"
             print(f"{key.replace('_', ' '):<{width}}  {value}")
     elif data is not None:
         print(data)

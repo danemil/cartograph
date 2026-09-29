@@ -233,6 +233,12 @@ def build_catalogue(
                 "3": "internal error",
             },
             "paging": "List results carry a page block. At most one collection per response pages.",
+            "rows": (
+                "List commands return one line per row: '<number> <unit> | <kind> | "
+                "<name> | <path>:<line>' (the number only where the command ranks by "
+                "one). A node's qualified name, which query accepts as a target, is "
+                "<path>::<name>. --detail full returns every field."
+            ),
         },
     }
     if subparsers is None:
