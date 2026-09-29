@@ -474,33 +474,6 @@ def get_db_path(repo_root: Path, *, read_only: bool = False) -> Path:
     return new_db
 
 
-def ensure_repo_gitignore_excludes_crg(repo_root: Path) -> str:
-    """Ensure repo-level .gitignore excludes ``.cartograph/``.
-
-    Returns one of:
-    - ``created``: .gitignore was created with the entry
-    - ``updated``: entry was appended to existing .gitignore
-    - ``already-present``: no changes were needed
-    """
-    gitignore_path = repo_root / ".gitignore"
-    existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
-
-    for raw_line in existing.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line == ".cartograph" or line.startswith(".cartograph/"):
-            return "already-present"
-
-    block = "# Added by cartograph\n.cartograph/\n"
-    prefix = "\n" if existing and not existing.endswith("\n") else ""
-    gitignore_path.write_text(existing + prefix + block, encoding="utf-8")
-
-    if existing:
-        return "updated"
-    return "created"
-
-
 def _load_ignore_patterns(repo_root: Path) -> list[str]:
     """Load ignore patterns from .cartographignore file.
 

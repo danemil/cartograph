@@ -348,6 +348,46 @@ def _remove_gitignore(
         )
 
 
+def _remove_exclude_block(
+    repo_root: Path,
+    report: UninstallReport,
+    *,
+    dry_run: bool,
+) -> None:
+    """Take the block install added out of ``info/exclude``, and nothing else.
+
+    The file is git's own and usually outside ``repo_root`` in a worktree, so
+    it is edited in place rather than removed even when the block was all it
+    held.
+    """
+    from .git_exclude import NotAGitRepository, exclude_file, read_exclude, without_block
+
+    try:
+        path = exclude_file(repo_root)
+    except NotAGitRepository:
+        return
+    try:
+        raw = read_exclude(path)
+    except (OSError, UnicodeError) as exc:
+        report.errors.append(f"{path}: read failed ({exc})")
+        return
+    rewritten = without_block(raw)
+    if rewritten is None:
+        return
+    if rewritten is False:
+        report.skipped_paths.append(
+            f"{path} (cartograph block has no end marker; left unchanged)"
+        )
+        return
+    _write_text(
+        path,
+        rewritten,
+        report,
+        detail="removed cartograph exclude block",
+        dry_run=dry_run,
+    )
+
+
 def _generated_skill_slugs() -> list[str]:
     return [filename.rsplit(".", 1)[0] for filename in skills._SKILLS]
 
@@ -409,6 +449,7 @@ def _process_repo(
         )
 
     _remove_gitignore(repo_root, report, dry_run=dry_run)
+    _remove_exclude_block(repo_root, report, dry_run=dry_run)
 
 
 def _process_user(

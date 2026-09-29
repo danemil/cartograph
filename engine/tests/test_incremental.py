@@ -18,7 +18,6 @@ from cartograph.incremental import (
     _parse_single_file,
     _should_ignore,
     _single_hop_dependents,
-    ensure_repo_gitignore_excludes_crg,
     find_dependents,
     find_project_root,
     find_repo_root,
@@ -192,46 +191,6 @@ class TestGetDbPath:
         assert not db_path.parent.exists()
         assert legacy.read_text() == "legacy data"
         assert all(side_file.read_text() == "side" for side_file in side_files)
-
-
-class TestEnsureRepoGitignoreExcludesCrg:
-    def test_creates_gitignore_when_missing(self, tmp_path):
-        state = ensure_repo_gitignore_excludes_crg(tmp_path)
-        assert state == "created"
-
-        gitignore = tmp_path / ".gitignore"
-        assert gitignore.exists()
-        assert gitignore.read_text() == (
-            "# Added by cartograph\n"
-            ".cartograph/\n"
-        )
-
-    def test_appends_rule_when_missing(self, tmp_path):
-        gitignore = tmp_path / ".gitignore"
-        gitignore.write_text("node_modules/\n")
-
-        state = ensure_repo_gitignore_excludes_crg(tmp_path)
-        assert state == "updated"
-        assert gitignore.read_text() == (
-            "node_modules/\n"
-            "# Added by cartograph\n"
-            ".cartograph/\n"
-        )
-
-    def test_idempotent_when_present(self, tmp_path):
-        gitignore = tmp_path / ".gitignore"
-        gitignore.write_text(".cartograph/\n")
-
-        state = ensure_repo_gitignore_excludes_crg(tmp_path)
-        assert state == "already-present"
-        assert gitignore.read_text() == ".cartograph/\n"
-
-    def test_treats_wildcard_ignore_as_present(self, tmp_path):
-        gitignore = tmp_path / ".gitignore"
-        gitignore.write_text(".cartograph/**\n")
-
-        state = ensure_repo_gitignore_excludes_crg(tmp_path)
-        assert state == "already-present"
 
 
 class TestIgnorePatterns:

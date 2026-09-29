@@ -253,9 +253,40 @@ def _match_files_to_forget(
     return sorted(matched)
 
 
+def _report_local_exclude(repo_root: Path, written: list[str]) -> None:
+    """Add what install wrote to info/exclude, and say what happened."""
+    from .git_exclude import BLOCK_BEGIN, BLOCK_END, NotAGitRepository, exclude_locally
+
+    try:
+        result = exclude_locally(repo_root, written)
+    except NotAGitRepository:
+        print("Not a git repository; nothing added to info/exclude.")
+        return
+    try:
+        shown = str(result.path.resolve().relative_to(repo_root.resolve()))
+    except ValueError:
+        shown = str(result.path)
+    if result.malformed:
+        print(
+            f"{shown} has '{BLOCK_BEGIN}' without '{BLOCK_END}'; left unchanged. "
+            "Remove the partial block and reinstall."
+        )
+    elif result.changed:
+        print(f"Excluded locally in {shown}: {', '.join(result.excluded)}")
+    elif result.excluded:
+        print(f"{shown} already excludes Cartograph's files.")
+    if result.tracked:
+        # Exclusion has no effect on a tracked file; saying so beats implying
+        # these are hidden from git status when they are not.
+        print(
+            "Already tracked by git, so not excluded (changes to them show in "
+            f"git status as usual): {', '.join(result.tracked)}"
+        )
+
+
 def _handle_init(args: argparse.Namespace) -> None:
     """Place the skills pack, hooks and instruction file for GitHub Copilot."""
-    from .incremental import ensure_repo_gitignore_excludes_crg, find_repo_root
+    from .incremental import find_repo_root
 
     repo_root = Path(args.repo) if args.repo else find_repo_root()
     if not repo_root:
@@ -274,17 +305,12 @@ def _handle_init(args: argparse.Namespace) -> None:
             print(f"  {t}")
 
     if dry_run:
-        print("\n[dry-run] Would ensure .gitignore ignores .cartograph/.")
+        print("\n[dry-run] Would add the files written to the repository's info/exclude.")
         print("[dry-run] No files were modified.")
         return
 
-    gitignore_state = ensure_repo_gitignore_excludes_crg(repo_root)
-    if gitignore_state == "created":
-        print("Created .gitignore and added .cartograph/.")
-    elif gitignore_state == "updated":
-        print("Updated .gitignore with .cartograph/.")
-    else:
-        print(".gitignore already contains .cartograph/.")
+    # Repo-relative paths this run wrote, for info/exclude.
+    written: list[str] = []
 
     # Skills and hooks are installed by default so the graph tools are used
     # proactively. Use --no-skills / --no-hooks / --no-instructions to opt out.
@@ -292,10 +318,20 @@ def _handle_init(args: argparse.Namespace) -> None:
     skip_hooks = getattr(args, "no_hooks", False)
     # Legacy: --skills/--hooks/--all still accepted (no-op, everything is default)
 
-    from .skills import inject_instruction_files, install_copilot_hooks, install_host_skills
+    from .skills import (
+        HOST_SKILL_DIR,
+        INSTRUCTION_FILE,
+        inject_instruction_files,
+        install_copilot_hooks,
+        install_host_skills,
+        skill_documents,
+    )
 
     if not skip_skills:
         print(f"Installed skills in {install_host_skills(repo_root)}")
+        # One line per skill rather than the whole directory: a team's own
+        # skills in .github/skills must stay visible to git.
+        written.extend(f"{HOST_SKILL_DIR}/{slug}/" for slug in skill_documents())
 
     # Confirm before writing instruction files (#173). --yes skips the
     # prompt; --no-instructions skips the whole block.
@@ -305,6 +341,8 @@ def _handle_init(args: argparse.Namespace) -> None:
             default_yes=True,
         ):
             outcomes = inject_instruction_files(repo_root)
+            if outcomes.get(INSTRUCTION_FILE) != "conflict":
+                written.append(INSTRUCTION_FILE)
             for label, wording in (
                 ("created", "Injected graph instructions into"),
                 ("updated", "Updated graph instructions in"),
@@ -328,7 +366,11 @@ def _handle_init(args: argparse.Namespace) -> None:
         print("Skipped instruction injection (--no-instructions).")
 
     if not skip_hooks:
-        print(f"Installed Copilot hooks in {install_copilot_hooks(repo_root)}")
+        hooks_file = install_copilot_hooks(repo_root)
+        print(f"Installed Copilot hooks in {hooks_file}")
+        written.append(hooks_file.relative_to(repo_root).as_posix())
+
+    _report_local_exclude(repo_root, written)
 
     print()
     print("Next steps:")
