@@ -1,6 +1,6 @@
 ---
 tags: [packaging, cartograph]
-updated: 2026-09-17
+updated: 2026-09-30
 ---
 
 # Packaging
@@ -26,6 +26,9 @@ payload/
   runtime/_internal/…            its libraries
   grammars/tree-sitter-language-pack/v<x.y.z>/libs/…
   grammars/tree-sitter-language-pack/v<x.y.z>/manifest.json
+  model/MODEL.json               the embedding model: name, source, revision, licence, sha256s
+  model/model.onnx               all-MiniLM-L6-v2, int8 (23 MB)
+  model/tokenizer.json
 ```
 
 `grammars/` is the part nobody expected to need.
@@ -46,6 +49,18 @@ appear as a failed download on a machine that cannot download.
 
 A user-defined language in `languages.toml` is the one remaining case that needs
 egress. The pack's warn-and-skip path handles its absence.
+
+`model/` is the same arrangement for memory search (decision 2). The model is
+fetched at build time from a pinned revision and checked by sha256
+(`MODEL` in `build-payload.py`), and the launchers and the extension point
+`CARTO_EMBEDDING_MODEL_DIR` at it exactly as they point
+`TREE_SITTER_LANGUAGE_PACK_CACHE_DIR` at the grammars; an operator's own value
+wins. Unset, or pointing at nothing, and `mem search` answers `keyword` and
+says which. The runtime — ONNX Runtime, Hugging Face `tokenizers`, NumPy,
+sqlite-vec — is frozen into `runtime/` with the engine; no PyTorch. The
+standalone ONNX Runtime C library (18–33 MB by platform) is pruned, because
+the Python module does not link it on any of the three platforms. Measured
+cost: `docs/memory-design.md`.
 
 ## Installed layout
 
@@ -84,8 +99,14 @@ python3 scripts/build-payload.py          # needs network; the result needs none
 ./scripts/build-vsix.sh                   # → dist/carto-<target>-<version>.vsix
 ```
 
-Two things that bite:
+Three things that bite:
 
+- **The build interpreter must be able to load SQLite extensions.** The frozen
+  engine uses that interpreter's `sqlite3`, and the python.org macOS build has
+  no `enable_load_extension`: a payload frozen from it carries sqlite-vec and
+  can never load it. `build-payload.py` checks, falls back to uv's CPython 3.12
+  when the running interpreter fails, and stops if neither will do. CI's macOS
+  job installs uv for this; the Linux image and Windows' python.org build pass.
 - **PyInstaller does not cross-compile.** It freezes the interpreter it is
   running on, so each target is built on its own machine or CI runner. The
   script refuses a `--target` that is not the host rather than emitting a

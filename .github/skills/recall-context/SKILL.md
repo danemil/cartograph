@@ -57,10 +57,13 @@ the code, which the graph answers better and always knows more currently.
    carto mem show --id <id> --format json
    ```
 
-3. **Read `search_mode` before you trust a near miss.** `semantic` and `hybrid`
-   mean embeddings participated. `keyword` means lexical matching only — so a
-   query phrased differently from what was recorded will miss, and you should
-   retry with the words someone would actually have written.
+3. **Read `search_mode` before you trust a near miss.** `hybrid` (the normal
+   answer where Cartograph is installed) means a small embedding model ranked
+   rows by meaning as well as by words, so asking in your own words is fine.
+   Rows it judges unrelated are left out, so an empty `items` is a real miss,
+   not a failure. `keyword` means lexical matching only — `data.semantic_unavailable`
+   says why — and a query phrased differently from what was recorded will
+   miss: retry with the words someone would actually have written.
 
 4. **Record what is worth keeping**, once you have settled something:
    ```

@@ -136,7 +136,7 @@ tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
 | 1c | `impact` default: top 20, ranked direct-first, every file and exact totals always present | **done** (below) |
 | 2 | Exclude repo files locally — decision 3 | **done** (below) |
 | 3 | VS Code language models as the summary fallback — decision 1 | **done** (below); needs a live window test |
-| 4 | Bundle the embedding model — decision 2 | |
+| 4 | Bundle the embedding model — decision 2 | **done** (below); linux-x64 / win32-x64 proven only once CI runs |
 
 ## Done — decisions 4 and 4b
 
@@ -282,6 +282,45 @@ then structural.
    on the user's Copilot plan and VS Code version; if not, the tooltip will
    say the model is not offered — set `cartograph.summaryModel` to a family.
 
+## Done — step 4, the bundled embedding model (decision 2)
+
+`mem search` is hybrid (FTS5 + vectors, merged by rank) wherever the payload's
+model is found, and `keyword` with `data.semantic_unavailable` where it is not.
+Design, choices and the measured table: **`docs/memory-design.md`,
+"Meaning-based search"**.
+
+- **Model**: all-MiniLM-L6-v2, upstream's int8 ONNX export, Apache-2.0,
+  revision `1110a243`, sha256-checked; fetched by `build-payload.py` (`MODEL`)
+  into `payload/model/`; `--model-only` fetches it into `build/model` for the
+  tests. Recorded in NOTICE and PROVENANCE.
+- **Runtime**: onnxruntime 1.30.0 + tokenizers 0.23.2 (no hub client) + numpy
+  2.5.3 + sqlite-vec 0.1.9, frozen with the engine; ORT's unused C library pruned.
+  `OnnxEmbeddingProvider` in `embeddings.py`; `get_provider()` picks it first,
+  so the graph's `carto embed`/`search` use it too.
+- **Found by** `CARTO_EMBEDDING_MODEL_DIR`, set by both launchers and the
+  extension like the grammar variable.
+- **Embedded** by `mem sync` (all), `mem add`/summaries and `mem search` (≤256
+  missing rows each) through `MemoryStore.embed_missing`; never by the capture
+  hook. Old stores backfill by use; a foreign-model index is rebuilt.
+- **The build interpreter** must load SQLite extensions; python.org's macOS
+  build cannot, so `build-payload.py` falls back to uv's CPython 3.12 and CI's
+  macOS job installs uv.
+- **Measured on this Mac, frozen**: `.vsix` 32.8 → 62.1 MB; `mem search` keyword
+  0.19 s / 67 MB, hybrid 0.27 s / 163 MB (median of 5, warm file cache);
+  6.4 ms per embedded row.
+- **Offline proof**: `scripts/ci_smoke.py` now runs the frozen binary under an
+  OS network block (sandbox-exec / `unshare --net` / a Windows firewall rule),
+  asserts hybrid finds a reworded memory keyword misses, and prints the cost
+  table; every CI platform job runs it. `docker/assert.sh` asserts the same
+  with `--network none`. Tests: `engine/tests/test_mem_embeddings.py` (12).
+
+**Unproven until CI runs:** everything on linux-x64 and win32-x64 — that
+PyInstaller collects ORT there, that pruning `libonnxruntime.so`/`onnxruntime.dll`
+is safe, that `unshare --net` works in the container with the added
+capabilities, that the firewall rule applies, the Windows need for
+`MSVCP140.dll` (ORT imports it; the runner has it, a bare machine may not), and
+all their timings.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
@@ -293,10 +332,8 @@ then structural.
 
 ## Then, in rough order
 
-1. **Semantic search / the ONNX tier**, decided for the base install. Everything
-   reports `search_mode: keyword` today. The relaxed-OR fallback in
-   `mem/store.py` papers over the gap; embeddings are the real answer to "find
-   the thing I am describing differently".
+1. **Read the CI numbers** for linux-x64 and win32-x64 from the job summaries
+   into `docs/memory-design.md`, and act on any failure of the offline step.
 2. **`carto mem timeline` and `mem show`** — specified in T10, cheap, and
    `timeline` answers "what happened in this session", which search cannot.
 3. `detect-changes` and `dead-code` exit via `SystemExit(0)` rather than

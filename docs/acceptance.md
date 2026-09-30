@@ -1,6 +1,6 @@
 ---
 tags: [packaging, acceptance, cartograph]
-updated: 2026-09-17
+updated: 2026-09-30
 ---
 
 # The acceptance test
@@ -81,6 +81,8 @@ rephrased one.
 | Search never over-claims | `search_mode` present on the search envelope |
 | The catalogue is reachable | `capabilities.data.commands` non-empty |
 | Memory round-trips | `mem add` → id; `mem search` returns **that id**, not merely a similar title |
+| The embedding model ships | `model/MODEL.json` and `model/model.onnx` in the payload |
+| Memory search is meaning-based with no network | `mem add` reports `embedded: true`; a question sharing no searchable word with a recorded decision returns `search_mode: "hybrid"` with that decision first |
 | Copilot finds the skills | `.github/skills` is `diff -r` clean against `skills/` |
 | The hook fires | the `UserPromptSubmit` command from the generated `.github/hooks/cartograph.json`, run verbatim from the repo with a Copilot payload, exits 0, prints nothing, and the prompt is then in `carto mem search` |
 | No MCP is registered | zero files matching `*mcp*` under `$HOME` or the repo |
@@ -219,11 +221,9 @@ nothing.
   `skills/`. Whether each host then reads them is a property of the host.
 - **Windows.** `installer/install.ps1` has still never been run, and no
   win32-x64 payload exists. A Linux container says nothing about either.
-- **Semantic search.** Every `search` in the run comes back
-  `search_mode: "keyword"`, which the harness asserts is *declared* but cannot
-  make untrue: no embedding index is built, so the ONNX path and `carto embed`
-  are untested here. The contract's one guarantee — that a lexical fallback
-  never claims to be semantic — does hold.
+- **The graph's semantic search.** `mem search` is proven hybrid with no
+  network (above); the graph's own `search` stays `keyword` in the run, because
+  no `carto embed` is run, so that path is untested here.
 - **Two of the 39 languages.** The build seeds 37 grammars; the pack has none
   for `notebook` or `vbnet`, and the seeding step skips them by design. A
   repository containing `.ipynb` or `.vb` files would still reach for the

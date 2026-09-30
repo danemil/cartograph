@@ -34,7 +34,7 @@ environment's rules, not preferences.
 |---|---|---|
 | **No MCP servers** | Both upstream tools delivered their value through MCP | A CLI (`carto`), a skills pack and hooks — what every host already runs |
 | **The only AI tool is GitHub Copilot** — Chat and CLI, in VS Code | Anything that assumes Claude Code or another agent | Copilot is the only host: `carto install` writes only what Copilot reads, and session summaries are written by `copilot -p` or a labelled structural fallback — never another agent |
-| **Nothing preinstalled, default-deny egress** | Runtimes, package managers, grammar downloads | One `.vsix` per platform carries the frozen engine and all grammars; nothing is fetched |
+| **Nothing preinstalled, default-deny egress** | Runtimes, package managers, grammar and model downloads | One `.vsix` per platform carries the frozen engine, all grammars, and the embedding model memory search runs on the CPU; nothing is fetched |
 | **Chat hooks can be disabled by organisation policy** (`chat.useHooks`) | Automatic capture from Chat — the hook never runs, silently | Memory is also imported from the conversation logs that exist regardless ([below](#where-memory-comes-from)); the extension says once when hooks are off |
 | **Copilot CLI runs repository hooks only in a trusted folder** | CLI capture in an untrusted folder, silently | Trust the folder once; otherwise the CLI's own session log is imported |
 | **Development happens in a VM or container** — Remote SSH, Dev Containers, WSL | VS Code keeps Chat history on the *local* machine, the engine runs on the *remote* | **Cartograph Local**, a small companion extension on the local side, passes Chat history to the remote |
@@ -57,7 +57,10 @@ summary per session is written by `copilot -p --model auto` from each prompt
 and that turn's final reply — or, where `copilot` is not on PATH, by Copilot's
 Auto model through VS Code's language-model API, after one consent prompt — and
 separates what was **decided** from what was only **proposed**; nothing is pushed into new sessions, and `carto mem status`
-reports what memory cost against what it replaced. Why this differs from
+reports what memory cost against what it replaced. `carto mem search` finds a
+memory by meaning as well as by words (`search_mode: hybrid`): a small
+embedding model ships in the `.vsix` and runs locally, with no network and no
+Copilot quota. Why this differs from
 claude-mem: [docs/memory-design.md](docs/memory-design.md).
 Details and evidence: [docs/copilot-hooks.md](docs/copilot-hooks.md). Step-by-step
 check on a real machine: [docs/verify-memory.md](docs/verify-memory.md).
@@ -166,7 +169,8 @@ Some decisions worth knowing before changing things:
   is the reflex and it backgrounds nothing on Windows.
 - **Degradation is always visible.** `search_mode`, `summary_source`, the
   community algorithm name. An agent must never mistake keyword results for
-  semantic ones.
+  semantic ones; a keyword answer from `mem search` carries
+  `semantic_unavailable`, the reason.
 
 ## Status
 
@@ -189,9 +193,11 @@ with semantic truncation, the six-skill pack, `carto mem add|search|show|status|
 hooks for Copilot CLI and Copilot Chat, memory from Copilot's own
 logs when hooks are blocked, and Cartograph Local for remote windows.
 
-Not yet: cursors (`next_cursor` is honestly `null`), semantic search
-(everything reports `search_mode: keyword`), and summaries that read the
-agent's replies rather than only the prompts.
+Not yet: cursors (`next_cursor` is honestly `null`), and summaries that read
+the agent's replies rather than only the prompts. Memory search is hybrid
+(keyword + a bundled all-MiniLM-L6-v2) wherever the payload's model is found,
+and says `keyword`, with the reason, where it is not; the graph's own `search`
+uses the same model only after `carto embed` has been run.
 
 The `.vsix` is built and verified **on darwin-arm64 only**. PyInstaller freezes
 the interpreter it runs on, so every other target has to be built on its own
