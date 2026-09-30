@@ -28,7 +28,12 @@ jobs:
     # with a message nobody can act on. bookworm is 2.36 and runs on all of
     # them. docker/acceptance.sh caught exactly this defect once already — do
     # not "modernise" this line.
-    container: python:3.12-slim-bookworm
+    container:
+      image: python:3.12-slim-bookworm
+      # For `unshare --net` in scripts/ci_smoke.py: the offline proof runs the
+      # frozen engine in a network namespace with no interfaces, and creating
+      # one needs CAP_SYS_ADMIN and a seccomp profile that allows unshare(2).
+      options: --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     steps:
       # binutils is the one that is easy to miss and fails late: PyInstaller
       # shells out to objdump to find each shared library's dependencies, so
@@ -48,8 +53,13 @@ jobs:
         run: python scripts/build-payload.py --target linux-x64
       - name: Package the .vsix
         run: ./scripts/build-vsix.sh linux-x64
-      - name: The frozen engine must build a non-empty graph
-        run: python scripts/ci_smoke.py linux-x64
+      # Also: memory search embeds and finds a reworded memory with no
+      # network, and the measured cost (cold search, RSS, per-row, sizes).
+      - name: The frozen engine parses, and searches memory offline
+        # Named explicitly: only an explicit bash gets -o pipefail, and without
+        # it the tee would pass a failed smoke.
+        shell: bash
+        run: python scripts/ci_smoke.py linux-x64 | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: carto-linux-x64
@@ -73,17 +83,32 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # The frozen engine inherits the build interpreter's sqlite3, and the
+      # python.org macOS build cannot load extensions, so sqlite-vec would ship
+      # and never load. uv's CPython can; build-payload.py refuses one that
+      # cannot, so a wrong choice here fails loudly rather than shipping.
+      - if: runner.os == 'macOS'
+        uses: astral-sh/setup-uv@v6
       # Needs the network, and that is the point: it is spent HERE so the
-      # artifact needs none. The payload carries its own tree-sitter grammars.
+      # artifact needs none. The payload carries its own tree-sitter grammars
+      # and embedding model.
       - name: Build the payload
         shell: bash
-        run: python scripts/build-payload.py --target ${{ matrix.target }}
+        run: |
+          args=()
+          if [ "$RUNNER_OS" = macOS ]; then
+            uv python install 3.12
+            args=(--python "$(uv python find --system --managed-python 3.12)")
+          fi
+          python scripts/build-payload.py --target ${{ matrix.target }} "${args[@]}"
       - name: Package the .vsix
         shell: bash
         run: ./scripts/build-vsix.sh ${{ matrix.target }}
-      - name: The frozen engine must build a non-empty graph
+      # On Windows the network block is an outbound firewall rule for the
+      # binary, which needs the runner's administrator rights.
+      - name: The frozen engine parses, and searches memory offline
         shell: bash
-        run: python scripts/ci_smoke.py ${{ matrix.target }}
+        run: python scripts/ci_smoke.py ${{ matrix.target }} | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: carto-${{ matrix.target }}

@@ -138,6 +138,12 @@ else
     fail "grammars are seeded in the payload" "no .so files under grammars/"
 fi
 
+if [ -f "$PAYLOAD/model/MODEL.json" ] && [ -f "$PAYLOAD/model/model.onnx" ]; then
+    pass "the embedding model is in the payload" "$(jq -r '.name' "$PAYLOAD/model/MODEL.json")"
+else
+    fail "the embedding model is in the payload" "no model/MODEL.json or model.onnx"
+fi
+
 # --------------------------------------------------------------------------
 section "install"
 
@@ -296,6 +302,32 @@ if assert_ok_envelope "mem search returns what was added"; then
     fi
 fi
 
+# A memory, and a question about it sharing no searchable word — the same
+# fixture as engine/tests/test_mem_embeddings.py and scripts/ci_smoke.py.
+# Keyword search cannot find it; only the payload's model, loaded through the
+# launcher's CARTO_EMBEDDING_MODEL_DIR with no network, can.
+run_env carto mem add --repo "$REPO" --title "Rejected FalkorDB for the graph store" \
+    --body "Its SSPLv1 licence is not something the client's legal team will sign off, and it needs a daemon running. Staying on SQLite." \
+    --format json
+if assert_ok_envelope "mem add embeds with no network"; then
+    if jqok '.data.observation.embedded == true'; then
+        pass "mem add embeds with no network" "vector written by the bundled model"
+    else
+        fail "mem add embeds with no network" "embedded is $(jqv '.data.observation.embedded')"
+    fi
+fi
+
+run_env carto mem search --repo "$REPO" --limit 5 --format json \
+    --query "which storage option did we turn down over the licensing terms"
+if assert_ok_envelope "hybrid search finds a reworded memory"; then
+    if jqok '.search_mode == "hybrid" and .data.items[0].title == "Rejected FalkorDB for the graph store"'; then
+        pass "hybrid search finds a reworded memory" "search_mode=hybrid, top hit is the FalkorDB decision"
+    else
+        fail "hybrid search finds a reworded memory" \
+            "search_mode=$(jqv '.search_mode'), top=$(jqv '.data.items[0].title'), $(jqv '.data.semantic_unavailable')"
+    fi
+fi
+
 # --------------------------------------------------------------------------
 section "the skills pack reaches Copilot"
 
@@ -368,6 +400,7 @@ if [ "$failures" -eq 0 ]; then
         "${files:-?}" "${langs:-?}"
     printf '  - the graph is non-empty (%s nodes), so no grammar lookup silently missed\n' "${nodes:-?}"
     printf '  - every command answers with a contract-v1 envelope\n'
+    printf '  - the bundled model embeds, and hybrid search finds a reworded memory\n'
     printf '  - the skills pack is byte-identical in .github/skills\n'
     printf '  - the generated UserPromptSubmit hook line runs and records the prompt\n'
     printf '  - no MCP configuration is written anywhere\n'
