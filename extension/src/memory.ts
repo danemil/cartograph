@@ -22,6 +22,7 @@ import * as vscode from "vscode";
 import { Carto } from "./carto";
 import * as log from "./log";
 import { Awaiting, describeLatest, summariseArgs, SummaryHost, VsCodeSummaries } from "./summaries";
+import { describeWaiting, Waiting } from "./waiting";
 
 /** Once per machine, and again only if the situation it describes changes. */
 const NOTICE_KEY = "cartograph.hooksNoticeShown";
@@ -48,6 +49,8 @@ export interface SyncData {
   awaiting_summary?: Awaiting[];
   /** Present with --summarise when the engine wrote summaries itself. */
   summarised?: unknown[];
+  /** With --summarise: sessions not summarised only because their last message is recent. */
+  waiting?: Waiting[];
 }
 
 /** What the store holds, from `mem status`, rather than what one sync read. */
@@ -102,8 +105,9 @@ export function describeSync(data: SyncData, args: string[], userInitiated: bool
     .join(", ");
   const summarised = data.summarised?.length ? ` · ${data.summarised.length} summarised by the engine` : "";
   const awaiting = data.awaiting_summary ? ` · ${data.awaiting_summary.length} handed over` : "";
+  const waiting = data.waiting?.length ? ` · ${describeWaiting(data.waiting)}` : "";
   return `sync (${userInitiated ? "user-initiated" : "background"}; ${args.join(" ")}): ` +
-    `${hosts || "no logs"}${summarised}${awaiting}`;
+    `${hosts || "no logs"}${summarised}${awaiting}${waiting}`;
 }
 
 /** What `chat.useHooks` says, and whether anyone in reach of this UI set it. */

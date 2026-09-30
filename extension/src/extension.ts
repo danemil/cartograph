@@ -17,6 +17,7 @@ import { Carto, GraphState } from "./carto";
 import * as log from "./log";
 import { Companion, MemorySync, noticeHooksState } from "./memory";
 import { cartoHome, placeLaunchers, readPayload } from "./payload";
+import { waitingNotice } from "./waiting";
 
 /** Bumped whenever activation must redo work it would otherwise skip. */
 const PLACEMENT_KEY = "cartograph.placedFor";
@@ -87,8 +88,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return;
     }
     const result = await memory.syncNow();
+    const waiting = waitingNotice(result);
     const choice = await vscode.window.showInformationMessage(
-      `Cartograph: ${result?.summary ?? "sync did not complete"} ${memory.describe()}`,
+      `Cartograph: ${result?.summary ?? "sync did not complete"} ` +
+        `${waiting ? `${waiting} ` : ""}${memory.describe()}`,
       "Show Log",
     );
     if (choice === "Show Log") {
