@@ -300,9 +300,13 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
         import onnxruntime
         from tokenizers import Tokenizer
 
-        options = onnxruntime.SessionOptions()
         # ORT's own warnings go to stderr, which a hook or an agent reads as
-        # output. Errors still raise.
+        # output. Errors still raise. The session option below is not enough on
+        # its own: device discovery logs through the process-wide default logger
+        # before any session exists — measured on a Hyper-V Ubuntu VM, one
+        # "Skipping pci_bus_id" warning per search.
+        onnxruntime.set_default_logger_severity(3)
+        options = onnxruntime.SessionOptions()
         options.log_severity_level = 3
         session = onnxruntime.InferenceSession(
             str(self._dir / self._manifest["model"]),
