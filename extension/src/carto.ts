@@ -43,15 +43,19 @@ export class Carto {
   /**
    * The environment the engine needs, on top of the caller's.
    *
-   * One variable, and it is the difference between working and not on a
+   * The grammar variable is the difference between working and not on a
    * default-deny machine: the grammar pack downloads parser libraries on first
-   * use unless pointed at a seeded cache, and the `.vsix` carries one.
+   * use unless pointed at a seeded cache, and the `.vsix` carries one. The
+   * model variable is what makes memory search meaning-based rather than
+   * keyword-only. Both match what the launchers set.
    */
   private env(): NodeJS.ProcessEnv {
     return {
       ...process.env,
       TREE_SITTER_LANGUAGE_PACK_CACHE_DIR:
         process.env.TREE_SITTER_LANGUAGE_PACK_CACHE_DIR ?? this.payload.grammars,
+      CARTO_EMBEDDING_MODEL_DIR:
+        process.env.CARTO_EMBEDDING_MODEL_DIR ?? this.payload.model,
     };
   }
 

@@ -29,8 +29,9 @@ FROM python:3.12-slim-bookworm AS payload-builder
 # PyInstaller reads ELF headers to find the shared libraries it must bundle,
 # and shells out to objdump to do it. Without binutils it produces a binary
 # that is missing its dependencies and fails only when run.
+# curl fetches the embedding model (build-payload.py), as in the CI job.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends binutils ca-certificates \
+    && apt-get install -y --no-install-recommends binutils ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work

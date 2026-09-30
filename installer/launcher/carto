@@ -29,4 +29,12 @@ if [ -z "${TREE_SITTER_LANGUAGE_PACK_CACHE_DIR:-}" ]; then
     export TREE_SITTER_LANGUAGE_PACK_CACHE_DIR
 fi
 
+# The same for memory search's embedding model, which exists only inside the
+# payload. A payload built before the model shipped has no model/ directory;
+# the engine then reports keyword search and says why.
+if [ -z "${CARTO_EMBEDDING_MODEL_DIR:-}" ]; then
+    CARTO_EMBEDDING_MODEL_DIR="$payload/model"
+    export CARTO_EMBEDDING_MODEL_DIR
+fi
+
 exec "$payload/runtime/carto" "$@"

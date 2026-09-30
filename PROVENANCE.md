@@ -33,6 +33,24 @@ Read `thedotmack/claude-mem` upstream if you want the original; the plugin
 release distributed through the marketplace is a built artifact (no TypeScript
 sources, no licence file) and is not a substitute for the repository.
 
+## Third-party material in the payload
+
+Not in this repository: fetched by `scripts/build-payload.py` at build time and
+shipped inside each platform's `.vsix`. Pinned there, verified by sha256 where
+it is data rather than a package.
+
+| What | Source | Licence | Pinned at | Where in the payload |
+|---|---|---|---|---|
+| all-MiniLM-L6-v2, int8 ONNX export + tokenizer | [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | Apache-2.0 | `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`; `onnx/model_qint8_arm64.onnx` sha256 `4278337f…1902474`, `tokenizer.json` sha256 `be50c362…2572037` | `model/` (with `MODEL.json` recording all of it) |
+| ONNX Runtime | PyPI `onnxruntime` | MIT | `1.30.0` | `runtime/_internal/onnxruntime/` (standalone C-API library pruned) |
+| tokenizers | PyPI `tokenizers` | Apache-2.0 | `0.23.2`, installed without `huggingface_hub` | `runtime/_internal/tokenizers/` |
+| NumPy | PyPI `numpy` | BSD-3-Clause | `2.5.3` | `runtime/_internal/numpy/` |
+| sqlite-vec | PyPI `sqlite-vec` | MIT or Apache-2.0 | `0.1.9` | `runtime/_internal/sqlite_vec/` |
+
+Unmodified. The model is the upstream repository's own quantised export; its
+file name says arm64 but its bytes are identical to the `qint8_avx512` and
+`qint8_avx512_vnni` variants, and it runs on any CPU.
+
 ## Significant changes
 
 Applied to both forks:

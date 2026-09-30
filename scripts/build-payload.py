@@ -20,6 +20,8 @@ this shape, so it is defined once, here.
       runtime/_internal/…                its libraries
       grammars/tree-sitter-language-pack/v<x.y.z>/libs/…
       grammars/tree-sitter-language-pack/v<x.y.z>/manifest.json
+      model/MODEL.json                   what the model is, where it came from
+      model/model.onnx, tokenizer.json   the embedding model memory search runs
 
 `grammars/` is the surprise, and it is load-bearing.
 `tree_sitter_language_pack` 1.x is a Rust extension that **downloads** its
@@ -28,6 +30,22 @@ engine does not freeze those: a fresh machine would reach for
 github.com on the first `carto build` and, behind default-deny, fail. Pointing
 `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR` at a directory seeded here removes that
 call entirely. The launcher written by either consumer sets that variable.
+
+`model/` is the same idea for memory search: a sentence-embedding model,
+fetched here at a pinned revision and checked by sha256, run at query time by
+ONNX Runtime on the CPU. The launcher points ``CARTO_EMBEDDING_MODEL_DIR`` at
+it the way it points the grammar variable. ``--model-only`` fetches just the
+model into ``build/model`` — what the engine's tests use.
+
+## The build interpreter
+
+The frozen engine inherits the build interpreter's ``sqlite3``. sqlite-vec is a
+loadable extension, and an interpreter built without
+``enable_load_extension`` — the python.org macOS installer is one — freezes
+into a payload that carries sqlite-vec and can never load it. So the
+interpreter is checked before anything is built: the running one if it can,
+else uv's CPython 3.12 if uv is installed, else ``--python``, else the build
+stops.
 
 ## Why the build venv is assembled by hand
 
@@ -43,6 +61,7 @@ added here too.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -63,10 +82,56 @@ RUNTIME_DEPS = [
     "pyyaml>=6.0,<7",
     "networkx>=3.2,<4",
     "watchdog>=4.0.0,<7",
+    # Memory search's vector path. Pinned exactly: these are native code whose
+    # size and platform coverage were measured (docs/memory-design.md), and a
+    # silent minor bump is how a payload grows by 30 MB or loses a platform.
+    "sqlite-vec==0.1.9",
+    "onnxruntime==1.30.0",
+    "numpy==2.5.3",
 ]
+
+#: Installed without its dependencies: tokenizers declares huggingface_hub,
+#: the hub *client*, which the engine never imports (it builds the tokenizer
+#: from a file) and which would carry an HTTP stack into an artifact that must
+#: not reach the network.
+NO_DEPS = ["tokenizers==0.23.2"]
 
 #: Pinned so a rebuild months from now produces the same artifact shape.
 PYINSTALLER = "pyinstaller==6.16.0"
+
+#: The embedding model the payload carries (decision 2): all-MiniLM-L6-v2,
+#: Apache-2.0, dynamically quantised to int8. Pinned to a commit of the model
+#: repository and checked by sha256, so a rebuild ships the same bytes or
+#: fails. The file is named for arm64 upstream, but its bytes are identical to
+#: the repository's `qint8_avx512` and `qint8_avx512_vnni` variants (same
+#: sha256): one signed-int8 model that ONNX Runtime runs on any CPU. Against
+#: the fp32 model its vectors measured cosine >= 0.993 on the same sentences.
+MODEL = {
+    "name": "all-MiniLM-L6-v2-qint8",
+    "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "license": "Apache-2.0",
+    "dimension": 384,
+    "max_seq_length": 256,
+    "model": "model.onnx",
+    "tokenizer": "tokenizer.json",
+    "files": {
+        "model.onnx": {
+            "from": "onnx/model_qint8_arm64.onnx",
+            "sha256": "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474",
+        },
+        "tokenizer.json": {
+            "from": "tokenizer.json",
+            "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+        },
+    },
+}
+
+#: ONNX Runtime's standalone C-API library. The Python module is linked
+#: without it on all three platforms (checked with otool, the ELF dynamic
+#: section, and the PE import table of the 1.30.0 wheels), so it is 18-33 MB of
+#: payload nothing loads. The frozen smoke test embeds without it.
+_ORT_UNUSED = ("libonnxruntime.*.dylib", "libonnxruntime.so.*", "onnxruntime.dll")
 
 #: vsce's `--target` vocabulary, which the `.vsix` filenames and the Release
 #: asset names both inherit. Keyed by (sys.platform, machine).
@@ -91,16 +156,64 @@ def run(argv: list[str], **kw) -> None:
     subprocess.run(argv, check=True, **kw)
 
 
-def build_venv() -> Path:
+def _loads_extensions(base: str) -> bool:
+    probe = subprocess.run(
+        [base, "-c", "import sqlite3; sqlite3.connect(':memory:').enable_load_extension(True)"],
+        capture_output=True, text=True,
+    )
+    return probe.returncode == 0
+
+
+def choose_interpreter(requested: "str | None") -> str:
+    """The interpreter to freeze: one whose sqlite3 can load extensions.
+
+    See the module docstring. Checked on the interpreter itself because the
+    venv built from it shares its ``_sqlite3``, and so will the frozen engine.
+    Named with ``--python``, it must pass or the build stops. Otherwise the
+    running interpreter is used when it passes, and a uv-managed CPython 3.12
+    when it does not — said out loud, because it changes what gets frozen.
+    """
+    if requested:
+        if not _loads_extensions(requested):
+            raise SystemExit(
+                f"{requested}: its sqlite3 cannot load extensions, so the payload's "
+                "sqlite-vec could never load and memory search would stay keyword-only."
+            )
+        return requested
+    if _loads_extensions(sys.executable):
+        return sys.executable
+    uv = shutil.which("uv")
+    if uv:
+        found = subprocess.run(
+            [uv, "python", "find", "--system", "--managed-python", "3.12"], capture_output=True, text=True,
+        ).stdout.strip()
+        if found and _loads_extensions(found):
+            print(f"{sys.executable} cannot load SQLite extensions; freezing {found} instead")
+            return found
+    raise SystemExit(
+        f"{sys.executable}: its sqlite3 cannot load extensions, so the payload's sqlite-vec "
+        "could never load and memory search would stay keyword-only. Install one that "
+        "can (`uv python install 3.12`) or name it with --python."
+    )
+
+
+def build_venv(base: str) -> Path:
     """A venv holding the engine's runtime deps and PyInstaller, nothing else."""
     venv = BUILD / "payload-venv"
     python = venv / ("Scripts" if os.name == "nt" else "bin") / (
         "python.exe" if os.name == "nt" else "python"
     )
+    marker = venv / "base-interpreter"
+    if python.exists() and (not marker.exists() or marker.read_text() != base):
+        # A venv made from another interpreter keeps that one's sqlite3; reusing
+        # it would quietly undo the check above.
+        shutil.rmtree(venv)
     if not python.exists():
-        run([sys.executable, "-m", "venv", str(venv)])
+        run([base, "-m", "venv", str(venv)])
+        marker.write_text(base)
     run([str(python), "-m", "pip", "install", "--upgrade", "pip", "--quiet"])
     run([str(python), "-m", "pip", "install", "--quiet", *RUNTIME_DEPS, PYINSTALLER])
+    run([str(python), "-m", "pip", "install", "--quiet", "--no-deps", *NO_DEPS])
     return python
 
 
@@ -128,6 +241,21 @@ def freeze(python: Path, out: Path) -> None:
             "--collect-all", "cartograph",
             "--collect-all", "tree_sitter_language_pack",
             "--collect-all", "tree_sitter",
+            # sqlite-vec is a shared library the package loads by path, which
+            # import analysis cannot see. The embedding stack is imported only
+            # inside functions, so it is named rather than left to be found.
+            "--collect-all", "sqlite_vec",
+            "--hidden-import", "onnxruntime",
+            "--hidden-import", "tokenizers",
+            "--hidden-import", "numpy",
+            # Reachable from onnxruntime's optional tooling, never from the
+            # inference path: model conversion, quantisation and training.
+            "--exclude-module", "onnxruntime.transformers",
+            "--exclude-module", "onnxruntime.quantization",
+            "--exclude-module", "onnxruntime.tools",
+            "--exclude-module", "onnxruntime.training",
+            "--exclude-module", "sympy",
+            "--exclude-module", "huggingface_hub",
             str(ROOT / "scripts" / "carto_entry.py"),
         ],
         env={**os.environ, "PYTHONPATH": str(ROOT / "engine")},
@@ -135,6 +263,50 @@ def freeze(python: Path, out: Path) -> None:
     shutil.move(str(out.parent / "_pyinstaller" / "carto"), str(out))
     shutil.rmtree(out.parent / "_pyinstaller", ignore_errors=True)
     _dereference_symlinks(out)
+    for pattern in _ORT_UNUSED:
+        for unused in out.rglob(pattern):
+            print(f"  pruned {unused.relative_to(out)} ({unused.stat().st_size / 1e6:.0f} MB)")
+            unused.unlink()
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def fetch_model(dest: Path) -> Path:
+    """Download the embedding model into *dest*, verified; reuse it if already there.
+
+    A file whose hash does not match is an error, not a warning: the pinned
+    revision is what the licence record and the measurements describe.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    for name, spec in MODEL["files"].items():
+        target = dest / name
+        if target.exists() and _sha256(target) == spec["sha256"]:
+            continue
+        url = f"{MODEL['source']}/resolve/{MODEL['revision']}/{spec['from']}"
+        partial = target.with_suffix(target.suffix + ".part")
+        # curl rather than urllib: every build host has it (the Linux job
+        # installs it), and it uses the system's CA store, where a python.org
+        # interpreter ships none until someone runs its certificate installer.
+        run(["curl", "-fsSL", "--retry", "3", "-o", str(partial), url])
+        got = _sha256(partial)
+        if got != spec["sha256"]:
+            partial.unlink()
+            raise SystemExit(f"{url}: sha256 {got}, expected {spec['sha256']}")
+        partial.replace(target)
+    manifest = {key: value for key, value in MODEL.items() if key != "files"}
+    manifest["files"] = {
+        name: {"sha256": spec["sha256"], "size": (dest / name).stat().st_size,
+               "from": spec["from"]}
+        for name, spec in MODEL["files"].items()
+    }
+    (dest / "MODEL.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return dest
 
 
 def _dereference_symlinks(root: Path) -> None:
@@ -288,7 +460,16 @@ def main() -> int:
                     help="vsce target triple; defaults to this machine's")
     ap.add_argument("--skip-grammars", action="store_true",
                     help="Reuse an already-seeded grammar cache under build/")
+    ap.add_argument("--python", default=None,
+                    help="Interpreter to freeze (its sqlite3 must load extensions; "
+                         "default: this one, else uv's CPython 3.12)")
+    ap.add_argument("--model-only", action="store_true",
+                    help="Only fetch and verify the embedding model into build/model")
     args = ap.parse_args()
+
+    if args.model_only:
+        print(f"model: {fetch_model(BUILD / 'model')}")
+        return 0
 
     target = args.target or host_target()
     if args.target and args.target != host_target():
@@ -304,9 +485,10 @@ def main() -> int:
         shutil.rmtree(payload)
     payload.mkdir(parents=True)
 
-    python = build_venv()
+    python = build_venv(choose_interpreter(args.python))
     freeze(python, payload / "runtime")
     grammar_version = seed_grammars(python, payload)
+    shutil.copytree(fetch_model(BUILD / "model"), payload / "model")
 
     (payload / "PAYLOAD.json").write_text(
         json.dumps(
@@ -314,6 +496,7 @@ def main() -> int:
                 "target": target,
                 "engine_version": engine_version(),
                 "grammar_pack_version": grammar_version,
+                "embedding_model": MODEL["name"],
                 "executable": "runtime/carto.exe" if target.startswith("win32") else "runtime/carto",
             },
             indent=2,

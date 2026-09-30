@@ -25,6 +25,8 @@ export interface Payload {
   readonly executable: string;
   /** Seeded grammar cache, passed to the engine as an environment variable. */
   readonly grammars: string;
+  /** Memory search's embedding model, passed the same way. */
+  readonly model: string;
   /** Engine version this payload was built from, for the skew check. */
   readonly engineVersion: string;
 }
@@ -60,6 +62,7 @@ export function readPayload(extensionPath: string): Payload | string {
     root,
     executable,
     grammars: path.join(root, "grammars"),
+    model: path.join(root, "model"),
     engineVersion: manifest.engine_version,
   };
 }

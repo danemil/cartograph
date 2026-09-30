@@ -17,6 +17,12 @@ if "%TREE_SITTER_LANGUAGE_PACK_CACHE_DIR%"=="" (
     set "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=%PAYLOAD%\grammars"
 )
 
+rem The same for memory search's embedding model, which exists only inside
+rem the payload; see launcher/carto.
+if "%CARTO_EMBEDDING_MODEL_DIR%"=="" (
+    set "CARTO_EMBEDDING_MODEL_DIR=%PAYLOAD%\model"
+)
+
 "%PAYLOAD%\runtime\carto.exe" %*
 exit /b %ERRORLEVEL%
 

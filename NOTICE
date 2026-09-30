@@ -48,6 +48,26 @@ Both upstream works have been modified. A file-level record of what changed and
 why is maintained in PROVENANCE.md.
 
 ================================================================================
+Shipped in the per-platform payload, not in this repository
+================================================================================
+
+--------------------------------------------------------------------------------
+all-MiniLM-L6-v2  —  https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+--------------------------------------------------------------------------------
+
+The embedding model memory search runs (payload/model/), licensed under the
+Apache License, Version 2.0, by its authors (sentence-transformers; the base
+model is nreimers/MiniLM-L6-H384-uncased). Shipped unmodified: the upstream
+repository's own int8-quantised ONNX export (onnx/model_qint8_arm64.onnx) and
+tokenizer.json, at revision 1110a243fdf4706b3f48f1d95db1a4f5529b4d41. The
+upstream repository carries no NOTICE file to reproduce.
+
+The runtime that executes it is frozen into payload/runtime/ with the engine:
+ONNX Runtime (MIT, Microsoft), Hugging Face tokenizers (Apache-2.0), NumPy
+(BSD-3-Clause) and sqlite-vec (MIT or Apache-2.0, Alex Garcia). Their licence
+files travel inside their package directories in the payload.
+
+================================================================================
 Design references — no code included
 ================================================================================
 
