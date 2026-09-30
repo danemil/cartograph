@@ -208,6 +208,53 @@ def local_unavailable_reason() -> str:
     return "no embedding provider is configured"
 
 
+#: Longest failure reason handed to an agent. It rides on every keyword-only
+#: search, so it is a sentence, never a traceback.
+_REASON_MAX = 160
+
+_GLIBC_MISSING = re.compile(r"version `(GLIBC\w*_[\d.]+)' not found \(required by ([^)]+)\)")
+
+
+def load_failure_reason(exc: BaseException) -> str:
+    """One line saying why the embedding runtime would not load.
+
+    The loader's own sentence is the useful part and is usually buried:
+    NumPy wraps a failed C-extension import in several paragraphs of advice
+    and puts the cause last, after "Original error was:". A glibc mismatch is
+    reduced further, to the version and the library that wanted it, which is
+    what someone has to act on.
+    """
+    return _one_line("embedding runtime failed to load", exc)
+
+
+def embedding_failure_reason(exc: BaseException) -> str:
+    """One line for any failure to embed, whichever provider raised it.
+
+    The single place a reason is shortened: the memory store reports what this
+    returns, in its envelope and its log, and keeps the detail for the debug log.
+    """
+    if isinstance(exc, EmbeddingRuntimeError):
+        return str(exc)
+    return _one_line("embedding failed", exc)
+
+
+def _one_line(prefix: str, exc: BaseException) -> str:
+    text = str(exc)
+    glibc = _GLIBC_MISSING.search(text)
+    if glibc:
+        detail = f"{glibc.group(1)} not found ({os.path.basename(glibc.group(2).strip())})"
+    else:
+        cause = text.split("Original error was:", 1)[1] if "Original error was:" in text else text
+        first = next((line.strip() for line in cause.splitlines() if line.strip()), "")
+        detail = first if "Original error was:" in text else f"{type(exc).__name__}: {first}"
+    reason = f"{prefix}: {detail}".rstrip(": ")
+    return reason if len(reason) <= _REASON_MAX else reason[:_REASON_MAX - 1] + "…"
+
+
+class EmbeddingRuntimeError(RuntimeError):
+    """The ONNX stack could not be loaded; ``str()`` is :func:`load_failure_reason`."""
+
+
 class OnnxEmbeddingProvider(EmbeddingProvider):
     """A sentence-embedding model run by ONNX Runtime on the CPU, from disk.
 
@@ -227,36 +274,52 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
         self._manifest = json.loads((self._dir / MODEL_MANIFEST).read_text(encoding="utf-8"))
         self._session: Any = None
         self._tokenizer: Any = None
+        self._failure: EmbeddingRuntimeError | None = None
 
     def _load(self) -> None:
         if self._session is not None:
             return
+        if self._failure is not None:
+            # A failed native import is retried by Python on every attempt and
+            # fails the same way; once per process is enough to know.
+            raise self._failure
         with _MODEL_INIT_LOCK:
             if self._session is not None:
                 return
-            import onnxruntime
-            from tokenizers import Tokenizer
+            try:
+                self._load_locked()
+            except Exception as exc:  # noqa: BLE001 — import, loader and ORT errors alike
+                logger.debug("embedding runtime failed to load", exc_info=True)
+                self._failure = EmbeddingRuntimeError(load_failure_reason(exc))
+                raise self._failure from None
 
-            options = onnxruntime.SessionOptions()
-            # ORT's own warnings go to stderr, which a hook or an agent reads as
-            # output. Errors still raise.
-            options.log_severity_level = 3
-            session = onnxruntime.InferenceSession(
-                str(self._dir / self._manifest["model"]),
-                sess_options=options,
-                providers=["CPUExecutionProvider"],
-            )
-            tokenizer = Tokenizer.from_file(str(self._dir / self._manifest["tokenizer"]))
-            tokenizer.enable_truncation(int(self._manifest["max_seq_length"]))
-            tokenizer.enable_padding()
-            self._inputs = {i.name for i in session.get_inputs()}
-            self._tokenizer = tokenizer
-            self._session = session
+    def _load_locked(self) -> None:
+        # numpy first: `embed` needs it, and it is what fails when the payload's
+        # native libraries do not suit the machine.
+        import numpy  # noqa: F401
+        import onnxruntime
+        from tokenizers import Tokenizer
+
+        options = onnxruntime.SessionOptions()
+        # ORT's own warnings go to stderr, which a hook or an agent reads as
+        # output. Errors still raise.
+        options.log_severity_level = 3
+        session = onnxruntime.InferenceSession(
+            str(self._dir / self._manifest["model"]),
+            sess_options=options,
+            providers=["CPUExecutionProvider"],
+        )
+        tokenizer = Tokenizer.from_file(str(self._dir / self._manifest["tokenizer"]))
+        tokenizer.enable_truncation(int(self._manifest["max_seq_length"]))
+        tokenizer.enable_padding()
+        self._inputs = {i.name for i in session.get_inputs()}
+        self._tokenizer = tokenizer
+        self._session = session
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        import numpy as np
-
         self._load()
+        import numpy as np  # loaded by _load, which is where its failure is reported
+
         out: list[list[float]] = []
         for start in range(0, len(texts), _ONNX_BATCH):
             encoded = self._tokenizer.encode_batch(texts[start:start + _ONNX_BATCH])

@@ -1916,6 +1916,11 @@ def main() -> None:
         # repository whose graph has never been built.
         from .mem.cli import run as _run_mem
 
+        if os.environ.get("CARTO_DEBUG"):
+            # Otherwise unconfigured on purpose: Python's last-resort handler
+            # prints warnings as bare lines, which is all an agent should read.
+            logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s",
+                                stream=sys.stderr)
         command = f"mem {args.mem_command}"
         _run_mem(args, _agent_repo_root(args, command))
         return
@@ -2108,8 +2113,10 @@ def main() -> None:
     # stream is named rather than left to the default: json mode promises that
     # stdout carries nothing but the envelope, and a log line landing there
     # hands the agent a JSONDecodeError instead of an answer.
+    # CARTO_DEBUG=1 is where the detail behind a one-line warning goes: the
+    # full traceback of an embedding runtime that would not load, for one.
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG if os.environ.get("CARTO_DEBUG") else logging.INFO,
         format="%(levelname)s: %(message)s",
         stream=sys.stderr,
     )

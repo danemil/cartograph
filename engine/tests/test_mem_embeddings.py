@@ -276,3 +276,107 @@ class TestTheEnvelope:
         assert env["ok"] is True
         assert env["search_mode"] == "hybrid"
         assert env["size"]["tokens_estimated"] <= 150
+
+
+# ---------------------------------------------------------------------------
+# A runtime that will not load
+# ---------------------------------------------------------------------------
+
+#: What 0.8.0's linux-x64 payload printed on Ubuntu 22.04, verbatim in shape:
+#: NumPy wraps the loader's one useful line in several paragraphs of advice.
+NUMPY_GLIBC_ERROR = """
+
+IMPORTANT: PLEASE READ THIS FOR ADVICE ON HOW TO SOLVE THIS ISSUE!
+
+Importing the numpy C-extensions failed. This error can happen for
+many reasons, often due to issues with your setup or how NumPy was
+installed.
+
+We have compiled some common reasons and troubleshooting tips at:
+
+    https://numpy.org/devdocs/user/troubleshooting-importerror.html
+
+Please note and check the following:
+
+  * The Python version is: Python 3.12 from "/root/.vscode-server/extensions/cartograph.cartograph-0.8.0/payload/runtime/carto"
+  * The NumPy version is: "2.5.3"
+
+and make sure that they are the versions you expect.
+
+Original error was: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.36' not found (required by /root/.vscode-server/extensions/cartograph.cartograph-0.8.0/payload/runtime/_internal/libstdc++.so.6)
+"""
+
+#: An agent reads the reason on every search; it has to stay a line.
+REASON_MAX = 160
+
+
+class TestTheFailureReason:
+    def test_a_glibc_mismatch_is_named_in_one_line(self):
+        reason = embeddings.load_failure_reason(ImportError(NUMPY_GLIBC_ERROR))
+        assert reason == (
+            "embedding runtime failed to load: GLIBC_2.36 not found (libstdc++.so.6)"
+        )
+
+    def test_a_missing_library_is_named_in_one_line(self):
+        exc = ImportError(
+            "\nIMPORTANT: PLEASE READ THIS\n\nOriginal error was: libgomp.so.1: "
+            "cannot open shared object file: No such file or directory\n"
+        )
+        assert embeddings.load_failure_reason(exc) == (
+            "embedding runtime failed to load: libgomp.so.1: cannot open shared "
+            "object file: No such file or directory"
+        )
+
+    def test_anything_else_is_its_first_line_and_bounded(self):
+        reason = embeddings.load_failure_reason(RuntimeError("x" * 500 + "\nsecond line"))
+        assert "\n" not in reason
+        assert len(reason) <= REASON_MAX
+        assert reason.startswith("embedding runtime failed to load: RuntimeError: xxx")
+
+
+@pytest.fixture
+def broken_numpy(tmp_path):
+    """A `numpy` that fails to import the way 0.8.0's did on glibc 2.35."""
+    shadow = tmp_path / "shadow"
+    (shadow / "numpy").mkdir(parents=True)
+    (shadow / "numpy" / "__init__.py").write_text(f"raise ImportError({NUMPY_GLIBC_ERROR!r})\n")
+    return shadow
+
+
+@needs_model
+class TestABrokenRuntimeInTheEnvelope:
+    """The reason reaches the agent as one line, on stdout and stderr alike."""
+
+    def _carto(self, repo: Path, shadow: Path, model_dir: Path, *args: str):
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(shadow), str(ENGINE)]),
+               embeddings.MODEL_DIR_ENV: str(model_dir)}
+        env.pop("CARTO_DEBUG", None)
+        out = subprocess.run(
+            [sys.executable, "-m", "cartograph", "mem", *args, "--repo", str(repo)],
+            env=env, capture_output=True, text=True,
+        )
+        return json.loads(out.stdout), out.stderr
+
+    def test_search_and_status_carry_one_short_line(self, tmp_path, broken_numpy):
+        repo = tmp_path / "repo"
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        model_dir = _model_dir()
+        expected = "embedding runtime failed to load: GLIBC_2.36 not found (libstdc++.so.6)"
+
+        added, stderr = self._carto(repo, broken_numpy, model_dir,
+                                    "add", "--title", MEMORIES[0][0], "--body", MEMORIES[0][1])
+        assert added["ok"] is True
+        assert added["data"]["observation"]["embedded"] is False
+        search, search_err = self._carto(repo, broken_numpy, model_dir, "search", "--query", REWORDED)
+        status, status_err = self._carto(repo, broken_numpy, model_dir, "status")
+
+        assert search["search_mode"] == "keyword"
+        assert search["data"]["semantic_unavailable"] == expected
+        assert status["data"]["semantic_search"] is False
+        assert status["data"]["semantic_search_unavailable"] == expected
+        for reason in (search["data"]["semantic_unavailable"],
+                       status["data"]["semantic_search_unavailable"]):
+            assert "\n" not in reason and len(reason) <= REASON_MAX
+        for err in (stderr, search_err, status_err):
+            assert "PLEASE READ THIS" not in err
+            assert len(err.strip().splitlines()) <= 1

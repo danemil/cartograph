@@ -26,6 +26,9 @@ from . import vector as _vector
 
 logger = logging.getLogger(__name__)
 
+#: ``mem_meta`` key: why the last attempt to embed failed, until one succeeds.
+_EMBED_FAILURE = "embedding_failure"
+
 #: Beside `graph.db` in whatever directory `get_data_dir` resolves for the
 #: repository, so `--data-dir` and `CRG_DATA_DIR` move the memory with the
 #: graph rather than stranding half of a project's state.
@@ -334,7 +337,30 @@ class MemoryStore:
                 self._provider = None
         return self._provider
 
+    def _embedding_failed(self, context: str, exc: BaseException) -> None:
+        """Log one line, keep the detail for debug, and remember the reason.
+
+        Remembered in ``mem_meta`` because ``mem status`` never loads the model,
+        and without it would report "not embedded yet" for a runtime that can
+        never embed on this machine.
+        """
+        from ..embeddings import embedding_failure_reason
+
+        reason = embedding_failure_reason(exc)
+        logger.debug("%s", context, exc_info=exc)
+        logger.warning("%s: %s", context, reason)
+        if self.get_meta(_EMBED_FAILURE) != reason:
+            self.set_meta(_EMBED_FAILURE, reason)
+
+    def _embedding_worked(self) -> None:
+        if self.get_meta(_EMBED_FAILURE) is not None:
+            self._conn.execute("DELETE FROM mem_meta WHERE key = ?", (_EMBED_FAILURE,))
+            self._conn.commit()
+
     def semantic_status(self) -> tuple[bool, Optional[str]]:
+        return self._semantic_status(report_failure=True)
+
+    def _semantic_status(self, *, report_failure: bool) -> tuple[bool, Optional[str]]:
         """Whether embeddings can participate, and if not, what is missing.
 
         The reason is reported by ``mem status`` because "why is my search
@@ -343,7 +369,10 @@ class MemoryStore:
         can only say that the answer is no.
 
         Never loads the model: the provider's identity comes from its
-        manifest, so asking costs a JSON read.
+        manifest, so asking costs a JSON read. A runtime that failed to load
+        is known from the last attempt, recorded by ``_embedding_failed``.
+        The search path asks without that record (``report_failure=False``)
+        and tries anyway, so a runtime that works again is noticed by using it.
         """
         if not self._vec_loaded_ok():
             return False, _vector.unavailable_reason()
@@ -351,6 +380,9 @@ class MemoryStore:
             from ..embeddings import local_unavailable_reason
 
             return False, local_unavailable_reason()
+        failure = self.get_meta(_EMBED_FAILURE) if report_failure else None
+        if failure:
+            return False, failure
         if _vector.count(self._conn) == 0:
             return False, "no observation has been embedded yet"
         stored = self._vector_meta()
@@ -376,7 +408,7 @@ class MemoryStore:
             # `dimension` loads the model on the local provider, so this is
             # where "installed but unusable" surfaces. Reported, not swallowed:
             # the caller degrades to keyword and says so.
-            logger.warning("embedding provider unusable: %s", exc)
+            self._embedding_failed("embedding provider unusable", exc)
             return None
 
     def _vector_meta(self) -> Optional[tuple[str, int]]:
@@ -444,7 +476,7 @@ class MemoryStore:
                 # An observation without a vector is still an observation, and
                 # the next pass will try it again.
                 self._conn.rollback()
-                logger.warning("observations left without a vector: %s", exc)
+                self._embedding_failed("observations left without a vector", exc)
                 break
             self._conn.executemany(
                 "INSERT OR REPLACE INTO mem_meta(key, value) VALUES (?, ?)",
@@ -452,6 +484,8 @@ class MemoryStore:
             )
             self._conn.commit()
             written += len(chunk)
+        if written:
+            self._embedding_worked()
         return written
 
     def _has_vector(self, rowid: int) -> bool:
@@ -791,14 +825,15 @@ class MemoryStore:
         if not self._vec_loaded_ok():
             return None
         self.embed_missing(limit=BACKFILL_CAP)
-        available, _ = self.semantic_status()
+        available, _ = self._semantic_status(report_failure=False)
         if not available:
             return None
         try:
             vector_value = self._embedding_provider().embed_query(query)
         except Exception as exc:  # noqa: BLE001 — provider internals vary
-            logger.warning("query not embedded, degrading to keyword: %s", exc)
+            self._embedding_failed("query not embedded, degrading to keyword", exc)
             return None
+        self._embedding_worked()
         neighbours = _vector.knn(self._conn, vector_value, limit * 4)
         if neighbours is None:
             return None
