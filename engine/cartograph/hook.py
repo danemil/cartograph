@@ -191,11 +191,20 @@ def summarise_argv(repo_root: Path, session: str) -> list[str]:
     return self_argv("mem", "summarise", "--session", session, "--repo", str(repo_root))
 
 
-def catchup_argv(repo_root: Path, current_session: str) -> list[str]:
-    """Summarise every earlier session that never got one, leaving *current_session*."""
+def catchup_argv(
+    repo_root: Path, current_session: str, *, hand_off: bool = False
+) -> list[str]:
+    """Summarise every earlier session that never got one, leaving *current_session*.
+
+    *hand_off* when Copilot Chat fired the hook: VS Code is open, so where no
+    ``copilot`` binary can write the summary the extension can, through VS
+    Code's models. Writing a structural one here first would spend the
+    session's only summary on the fallback.
+    """
     return self_argv(
         "mem", "summarise", "--pending",
         "--exclude-session", current_session, "--repo", str(repo_root),
+        *(("--hand-off", "no-cli") if hand_off else ()),
     )
 
 
@@ -286,7 +295,7 @@ def _session_summarise(repo_root: Path, _host: Optional[str] = None) -> int:
     return 0
 
 
-def _session_catchup(repo_root: Path, _host: Optional[str] = None) -> int:
+def _session_catchup(repo_root: Path, host: Optional[str] = None) -> int:
     """Summarise, in the background, the sessions that ended without saying so.
 
     VS Code has no ``SessionEnd``: its ``Stop`` is a turn boundary, and a Chat
@@ -306,7 +315,9 @@ def _session_catchup(repo_root: Path, _host: Optional[str] = None) -> int:
     session = ingest.session_from(payload)
     if not session or not db_path(repo_root, create=False).exists():
         return 0
-    spawn_detached(catchup_argv(repo_root, session), cwd=repo_root)
+    spawn_detached(
+        catchup_argv(repo_root, session, hand_off=host == "copilot-chat"), cwd=repo_root
+    )
     return 0
 
 

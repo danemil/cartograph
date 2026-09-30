@@ -147,6 +147,33 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
         ),
     )
 
+    summarise_cmd.add_argument(
+        "--brief-only", dest="brief_only", action="store_true",
+        help=(
+            "Return the brief a host agent would be sent, and write nothing — for a "
+            "caller that will get the summary from a model itself"
+        ),
+    )
+    summarise_cmd.add_argument(
+        "--answer-file", dest="answer_file", default=None, metavar="PATH",
+        help=(
+            "Store the summary a caller obtained for --session, read from this file, "
+            "as a host-agent summary (needs --summarised-by)"
+        ),
+    )
+    summarise_cmd.add_argument(
+        "--summarised-by", dest="summarised_by", default=None, metavar="LABEL",
+        help="With --answer-file: who wrote it, as vscode-lm:<model-id>",
+    )
+    summarise_cmd.add_argument(
+        "--hand-off", dest="hand_off", choices=list(_summarise.HAND_OFF_MODES), default=None,
+        help=(
+            "With --pending: list the sessions awaiting a summary and write nothing, "
+            "when no host agent CLI is on PATH (no-cli), or always"
+        ),
+    )
+    _add_log_dirs(summarise_cmd)
+
     sync_cmd = mem_sub.add_parser(
         "sync",
         help=(
@@ -161,20 +188,18 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
             f"{_sync.SETTLE_SECONDS // 60} minutes"
         ),
     )
-    sync_cmd.add_argument(
-        "--vscode-user-dir", dest="vscode_user_dirs", action="append", default=None,
-        help="A VS Code User directory to read Chat logs from (repeatable; auto-detected)",
-    )
-    sync_cmd.add_argument(
-        "--vscode-workspace-dir", dest="vscode_workspace_dirs", action="append", default=None,
-        help=(
-            "A VS Code workspaceStorage/<id> directory whose chat logs belong to this "
-            "repository (repeatable; for callers that know it, like the extension)"
-        ),
-    )
+    _add_log_dirs(sync_cmd)
     sync_cmd.add_argument(
         "--no-host-agent", dest="no_host_agent", action="store_true",
         help="With --summarise: write structural summaries without calling a host agent",
+    )
+    sync_cmd.add_argument(
+        "--hand-off", dest="hand_off", choices=list(_summarise.HAND_OFF_MODES), default=None,
+        help=(
+            "With --summarise: list the sessions awaiting a summary instead of writing "
+            "structural ones, for a caller that can summarise them — when no host "
+            "agent CLI is on PATH (no-cli), or always"
+        ),
     )
 
     for command in (add_cmd, search_cmd, show_cmd, status_cmd, summarise_cmd, sync_cmd):
@@ -192,6 +217,62 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
             help="Token budget for the response",
         )
     return mem_cmd
+
+
+def _add_log_dirs(command: argparse.ArgumentParser) -> None:
+    """Where the Chat logs are, for sync and for the replies in a brief.
+
+    Both commands read the same logs, and a brief built without the directory
+    the extension named would silently lose every reply a remote window has.
+    """
+    command.add_argument(
+        "--vscode-user-dir", dest="vscode_user_dirs", action="append", default=None,
+        help="A VS Code User directory to read Chat logs from (repeatable; auto-detected)",
+    )
+    command.add_argument(
+        "--vscode-workspace-dir", dest="vscode_workspace_dirs", action="append", default=None,
+        help=(
+            "A VS Code workspaceStorage/<id> directory whose chat logs belong to this "
+            "repository (repeatable; for callers that know it, like the extension)"
+        ),
+    )
+
+
+def _log_dirs(args: argparse.Namespace) -> "tuple[Optional[list[Path]], list[Path]]":
+    users = getattr(args, "vscode_user_dirs", None)
+    return (
+        [Path(d).expanduser() for d in users] if users else None,
+        [Path(d).expanduser() for d in getattr(args, "vscode_workspace_dirs", None) or []],
+    )
+
+
+def _usage_exit(command: str, message: str, fmt: str) -> None:
+    """A well-formed parse whose flags contradict each other: exit 1, like argparse's."""
+    from .. import envelope as _env
+
+    raise SystemExit(_env.emit(_env.error(command, _env.Exit.USAGE, message), fmt))
+
+
+def _summarise_usage(args: argparse.Namespace) -> Optional[str]:
+    """What is wrong with this `mem summarise` flag set, or None.
+
+    Checked before anything is read or written: each of these combinations
+    would otherwise do one of the two things asked and quietly drop the other.
+    """
+    from . import summarise as _summarise
+
+    if args.brief_only and (args.no_host_agent or args.answer_file or args.pending):
+        return "--brief-only writes nothing; it cannot be combined with " \
+            "--no-host-agent, --answer-file or --pending"
+    if bool(args.answer_file) != bool(args.summarised_by):
+        return "--answer-file and --summarised-by go together"
+    if args.answer_file and (args.pending or args.no_host_agent):
+        return "--answer-file stores one session's answer; not with --pending or --no-host-agent"
+    if args.hand_off and (not args.pending or args.no_host_agent):
+        return "--hand-off needs --pending, and not --no-host-agent"
+    if args.summarised_by and not _summarise.ANSWER_LABEL.match(args.summarised_by):
+        return f"--summarised-by must be vscode-lm:<model-id>, not {args.summarised_by!r}"
+    return None
 
 
 def _positive_int(value: str) -> int:
@@ -249,14 +330,19 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
         # where hooks never ran, so "no store yet" is its normal starting point.
         from . import sync as _sync
 
+        if args.hand_off and (args.no_host_agent or not args.summarise):
+            _usage_exit(
+                command, "--hand-off needs --summarise, and not --no-host-agent", fmt
+            )
+        user_dirs, workspace_dirs = _log_dirs(args)
         result = _sync.sync(
             repo_root,
-            user_dirs=[Path(d).expanduser() for d in args.vscode_user_dirs]
-            if args.vscode_user_dirs else None,
-            workspace_dirs=[Path(d).expanduser() for d in args.vscode_workspace_dirs or []],
+            user_dirs=user_dirs,
+            workspace_dirs=workspace_dirs,
             project=args.project,
             summarise_sessions=args.summarise,
             use_host=not args.no_host_agent,
+            hand_off=args.hand_off,
         )
         synced = _store.db_path(repo_root, create=False)
         provenance = None
@@ -267,6 +353,11 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
             args, result, command=command, provenance=provenance, repo_root=repo_root
         )
         return
+
+    if args.mem_command == "summarise":
+        problem = _summarise_usage(args)
+        if problem:
+            _usage_exit(command, problem, fmt)
 
     path = _store.db_path(repo_root, create=False)
     if not path.exists():
@@ -289,7 +380,19 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
         # describes the store including the row just written.
         from . import summarise as _summarise
 
-        if args.pending:
+        if args.pending and _summarise.hands_off(
+            use_host=not args.no_host_agent, hand_off=args.hand_off
+        ):
+            waiting = _summarise.awaiting(
+                repo_root, exclude=[args.exclude_session] if args.exclude_session else []
+            )
+            result = {
+                "summary": f"{len(waiting)} session(s) left for a caller to summarise; "
+                "nothing written.",
+                "sessions": [],
+                "awaiting_summary": waiting,
+            }
+        elif args.pending:
             ran = _summarise.summarise_pending(
                 repo_root, exclude=args.exclude_session, project=args.project,
                 use_host=not args.no_host_agent,
@@ -300,9 +403,19 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
                 "sessions": ran,
             }
         else:
+            answer = None
+            if args.answer_file:
+                try:
+                    answer = Path(args.answer_file).expanduser().read_text(encoding="utf-8")
+                except OSError as exc:
+                    _usage_exit(command, f"--answer-file could not be read: {exc}", fmt)
+            user_dirs, workspace_dirs = _log_dirs(args)
             result = _summarise.summarise(
                 repo_root, session=args.session, project=args.project,
                 use_host=not args.no_host_agent,
+                user_dirs=user_dirs, workspace_dirs=workspace_dirs,
+                brief_only=args.brief_only,
+                answer=answer, summarised_by=args.summarised_by,
             )
         with _store.MemoryStore(path) as memory:
             provenance = memory.provenance()
@@ -424,6 +537,24 @@ def _cost_lines(memory: _store.MemoryStore) -> dict[str, str]:
     return lines
 
 
+def _latest_summary_by(memory: _store.MemoryStore) -> Optional[str]:
+    """Who wrote the newest session summary: a host's label, or ``structural``.
+
+    What the status bar shows, read from the row itself rather than from
+    whichever process last ran, so a summary written by the CLI in a terminal
+    and one written through VS Code are reported alike.
+    """
+    row = memory._conn.execute(  # noqa: SLF001 — one lookup, here only
+        "SELECT platform_source, summary_source FROM observations "
+        "WHERE doc_type = 'sessions' ORDER BY created_at DESC, rowid DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return None
+    if row[1] != "host-agent":
+        return "structural"
+    return row[0] or "host-agent"
+
+
 def _status_result(
     memory: _store.MemoryStore, repo_root: Path, path: Path
 ) -> dict[str, Any]:
@@ -453,6 +584,9 @@ def _status_result(
     from . import sync as _sync
 
     result.update(_cost_lines(memory))
+    latest = _latest_summary_by(memory)
+    if latest:
+        result["latest_summary_by"] = latest
     for host, stats in _sync.last_status(memory).items():
         result[f"capture_{host.replace('-', '_')}"] = (
             f"{stats.get('capture', 'unknown')} "

@@ -100,6 +100,18 @@ HOST_TIMEOUT_SECONDS = 90
 #: month should drain over several sessions, not all at once.
 MAX_PENDING = 3
 
+#: What ``platform_source`` says when the answer came from outside the engine:
+#: the VS Code extension, through ``vscode.lm``, naming the model it used. Held
+#: to one shape because the field is how a later reader tells which model wrote
+#: a summary, and a caller must not be able to claim ``copilot-cli`` for text
+#: the CLI never saw.
+ANSWER_LABEL = re.compile(r"^vscode-lm:[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$")
+
+#: ``--hand-off`` values. ``no-cli``: hand off only what no CLI host will
+#: summarise here. ``always``: skip the CLI even where it is installed, for an
+#: organisation that wants summaries through VS Code's model policy alone.
+HAND_OFF_MODES = ("no-cli", "always")
+
 #: `sessions` for the row written, `prompts` for the rows read. Named once so
 #: the two never drift into meaning the same thing.
 SESSION_DOC_TYPE = "sessions"
@@ -385,14 +397,29 @@ def summarise(
     use_host: bool = True,
     user_dirs: "Optional[Iterable[Path]]" = None,
     workspace_dirs: "Iterable[Path]" = (),
+    brief_only: bool = False,
+    answer: Optional[str] = None,
+    summarised_by: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Summarise one session into one new observation. Never raises.
+    """Summarise one session into one new observation. Never raises, but for a bad label.
 
     Returns what `carto mem summarise` puts in ``data``. The ``observation``
     key is None for every outcome that wrote nothing, and the ``summary`` line
     says which outcome it was — a caller that cannot tell "already summarised"
     from "summarised now" would re-run it forever.
+
+    *brief_only* returns the brief a host would be sent and writes nothing.
+    *answer* is a host answer obtained by the caller — the extension, through
+    ``vscode.lm`` — stored exactly as a CLI answer would be, with
+    *summarised_by* as its ``platform_source``. Both pass every check below
+    first, so a caller cannot brief or store a session that the one-summary
+    rule or :data:`MIN_PROMPTS` would have refused.
     """
+    if answer is not None and not ANSWER_LABEL.match(summarised_by or ""):
+        raise ValueError(
+            "an answer needs --summarised-by vscode-lm:<model-id>, "
+            f"not {summarised_by!r}"
+        )
     path = _store.db_path(repo_root, create=False)
     # Read, then close, then compose, then reopen to write. The host call can
     # take a minute and a half; holding the connection across it would put a
@@ -438,9 +465,25 @@ def summarise(
     replies, raw_chars = _replies_for(
         repo_root, session, prompts, user_dirs=user_dirs, workspace_dirs=workspace_dirs
     )
-    title, body, source, host, reason, attempts = _compose(
-        session, prompts, replies, use_host=use_host
-    )
+    if brief_only:
+        return {
+            "summary": (
+                f"Brief for session {session} from {len(prompts)} prompt(s); nothing written."
+            ),
+            "session": session,
+            "prompts": len(prompts),
+            "brief": brief(prompts, replies),
+            "observation": None,
+        }
+    if answer is not None:
+        title, body, source, label, reason, attempts = _from_answer(
+            session, prompts, answer, summarised_by or ""
+        )
+    else:
+        title, body, source, host, reason, attempts = _compose(
+            session, prompts, replies, use_host=use_host
+        )
+        label = host.name if host else None
     with _store.MemoryStore(path) as memory:
         memory.set_meta(
             COST_HOST_CALLS, str(int(memory.get_meta(COST_HOST_CALLS) or 0) + attempts)
@@ -459,19 +502,22 @@ def summarise(
             # Which host wrote the text, or nothing when no host did. The
             # session's own host stays on its prompt rows; duplicating it here
             # would make this field mean two things.
-            platform_source=host.name if host else None,
+            platform_source=label,
             summary_source=source,
         )
 
+    via = None
+    if source == "host-agent":
+        via = summarised_by if answer is not None else host.binary
     result: dict[str, Any] = {
         "summary": (
             f"Summarised session {session} from {len(prompts)} prompt(s) "
-            f"({source}{f' via {host.binary}' if host else ''})"
+            f"({source}{f' via {via}' if via else ''})"
         ),
         "session": session,
         "prompts_summarised": len(prompts),
         "summary_source": source,
-        "host": host.binary if host else None,
+        "host": via,
         "observation": observation,
     }
     if reason:
@@ -550,6 +596,66 @@ def _replies_for(
     return replies, raw
 
 
+def _host_prose(answer: str, fallback_title: str) -> "tuple[str, str]":
+    """A host answer as ``(title, body)``: one reading, whichever host gave it."""
+    title, body = split_title(answer)
+    return title or fallback_title, _ingest.clip_body(body, by="summarise")
+
+
+def _from_answer(
+    session: str, prompts: "list[dict[str, Any]]", answer: str, label: str
+) -> "tuple[str, str, str, Optional[str], Optional[str], int]":
+    """:func:`_compose`'s result for an answer the caller already obtained.
+
+    Counted as one call whatever it holds: the caller spent a request on the
+    person's quota to get it, as a failed CLI call does.
+    """
+    fallback_title, fallback_body = structural_summary(session, prompts)
+    if not answer.strip():
+        return (
+            fallback_title, fallback_body, "structural", None,
+            f"the answer from {label} was empty", 1,
+        )
+    title, body = _host_prose(answer, fallback_title)
+    return title, body, "host-agent", label, None, 1
+
+
+def hands_off(*, use_host: bool, hand_off: Optional[str]) -> bool:
+    """Whether pending sessions go to the caller instead of being summarised here.
+
+    Never when the caller asked for structural, and never inside a
+    summarisation: the depth cap outranks a caller's offer, since that caller
+    could be the host process this module started.
+    """
+    if not use_host or not hand_off or os.environ.get(SUMMARISE_MARKER):
+        return False
+    return hand_off == "always" or not available_hosts()
+
+
+def awaiting(
+    repo_root: Path, *, exclude: "Iterable[str]" = ()
+) -> "list[dict[str, Any]]":
+    """The sessions :func:`summarise_pending` would take, and nothing written.
+
+    Same selection, same cap: a caller summarising them spends the same quota
+    per run as the CLI path would.
+    """
+    path = _store.db_path(repo_root, create=False)
+    with _store.MemoryStore(path) as memory:
+        sessions = memory.unsummarised_sessions(
+            source_type=PROMPT_DOC_TYPE,
+            summary_type=SESSION_DOC_TYPE,
+            min_rows=MIN_PROMPTS,
+            exclude=list(exclude),
+            limit=MAX_PENDING,
+        )
+        return [
+            {"session": session,
+             "prompts": memory.session_count(session, doc_type=PROMPT_DOC_TYPE)}
+            for session in sessions
+        ]
+
+
 def _compose(
     session: str,
     prompts: "list[dict[str, Any]]",
@@ -588,10 +694,10 @@ def _compose(
         answer = call_host(host, text)
         if answer is None:
             continue
-        title, body = split_title(answer)
+        title, body = _host_prose(answer, fallback_title)
         return (
-            title or fallback_title,
-            _ingest.clip_body(body, by="summarise"),
+            title,
+            body,
             "host-agent",
             host,
             None,

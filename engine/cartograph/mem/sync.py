@@ -349,6 +349,7 @@ def sync(
     project: Optional[str] = None,
     summarise_sessions: bool = False,
     use_host: bool = True,
+    hand_off: Optional[str] = None,
 ) -> dict[str, Any]:
     """Import the prompts Copilot logged for *repo_root* that are not stored yet.
 
@@ -425,10 +426,17 @@ def sync(
         "hosts": hosts,
     }
     if summarise_sessions:
-        result["summarised"] = []
-        if path.exists():
-            from . import summarise as _summarise
+        from . import summarise as _summarise
 
+        result["summarised"] = []
+        if _summarise.hands_off(use_host=use_host, hand_off=hand_off):
+            # The caller said it can summarise and no CLI here will: name the
+            # sessions and write nothing, so each keeps its one summary for
+            # whatever the caller manages — or structural, if it cannot.
+            result["awaiting_summary"] = (
+                _summarise.awaiting(repo_root, exclude=changing) if path.exists() else []
+            )
+        elif path.exists():
             result["summarised"] = [
                 outcome
                 for outcome in _summarise.summarise_pending(
