@@ -377,6 +377,19 @@ Code's models out for the window. **Unproven.**
 4. Session f2f66c3b keeps its structural summary (one per session); it has no
    stored reason, since it predates this.
 
+## Done — 2026-09-30, a session settles by its last message
+
+On the VM a finished session was never handed over: VS Code rewrites
+`chatSessions/<id>.jsonl` for UI state on reload, the companion re-copies it,
+and sync judged "still active" by file mtime. Now the last message's own
+timestamp decides, across all of a session's logs, with mtime only as a
+stated fallback; `mem sync --summarise` returns `waiting`
+(`{session, last_message_at, settles_at}`), the log line prints it and Sync
+Memory says so. Fields and limits: `docs/memory-design.md`, "When a session
+has finished". Tests: `engine/tests/test_mem_settle.py` (16, each seen failing
+under 11 mutations) and `node extension/test/waiting.js` after compiling.
+Not yet seen on the VM.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the

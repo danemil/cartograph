@@ -101,6 +101,47 @@ the rest: settings, the models offered, the choice and why, `canSendRequest`,
 each session's outcome and any `LanguageModelError` code — ids only, never
 prompt text.
 
+## When a session has finished
+
+A log has no end-of-session signal, and a session gets one summary, ever, so
+`mem sync --summarise` waits until a session's **last message** is 30 minutes
+old (`SETTLE_SECONDS`). The first release measured that by the log file's
+mtime. On the Remote SSH VM (VS Code 1.138) a session's last prompt was at
+22:07, a window reload at 22:16 rewrote its `chatSessions` file, the companion
+re-copied it, and a Sync Memory at 22:39 handed nothing over and said nothing.
+VS Code rewrites `chatSessions/<id>.jsonl` for UI state — kind-1 patches to
+`inputState`, selections, the title — with no new message, so every reload or
+click into the chat restarted the thirty minutes.
+
+It is now the timestamps inside the logs (`sync.last_message_at`), read off
+real files on this Mac on 2026-09-30:
+
+| Log | Fields | Format |
+|---|---|---|
+| `chatSessions/` (and the companion's mirror) | each visible request's `timestamp`, `responseTimestamp`, `modelState.completedAt` | epoch ms |
+| Copilot's `transcripts/`, CLI `events.jsonl` | `timestamp` of `user.*`, `assistant.*`, `tool.*` events — not `session.*`, `hook.*`, `system.*` | ISO 8601; epoch ms or s also accepted |
+
+- A session's time is the **latest message across all of its logs** — it can
+  be in VS Code's store, the mirror and a transcript at once. A log with no
+  message timestamps says nothing about when the last message was; the file's
+  mtime is used only when none of the session's logs has one, and the result
+  says so.
+- The per-file answer is cached in `mem_meta` (`sync:activity:<path>`) against
+  the file's mtime and size, so an unchanged log is not replayed every sync.
+- `mem sync --summarise` returns `waiting`: every session with enough prompts
+  and no summary that has not settled, as `{session, last_message_at,
+  settles_at}` (UTC), plus `reason` when mtime stood in. The extension's log
+  line ends `1 waiting: f2f66c3b… last message 22:07, settles 22:37`, and a
+  Sync Memory that summarised and handed over nothing says when the first one
+  can be.
+
+Known limits: a message timestamp on the mirror was written by the local
+machine's clock and is compared with the remote's, so clock skew between them
+shifts the settle time by that much. A Chat agent turn still running after 30
+minutes with no new request, response or completion time would be taken as
+settled; the CLI's `tool.*` events cover that case there. The CLI's
+`session.shutdown` event is an end signal not used yet.
+
 ## What memory cost
 
 `carto mem status` (and the extension's status bar tooltip) show two lines,
