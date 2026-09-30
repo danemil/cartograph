@@ -42,6 +42,19 @@ remote. If Chat hooks are off, install **Cartograph Local**
 release page) on the local side; it passes Chat history across. This
 extension offers to install it when it sees the need.
 
+**Session summaries without Copilot CLI.** Each finished session gets one
+summary. Where the engine finds `copilot` on PATH it writes it with
+`copilot -p --model auto`. Where it does not — often the case on a machine with
+only VS Code — the extension asks Copilot's models in VS Code instead
+(`vscode.lm`, Copilot's **Auto** model by default, on your own Copilot plan),
+and stores the answer through the engine. VS Code asks once before an
+extension may use Copilot's models; Cartograph asks first, in a notification,
+rather than raising that dialog from a background run. If permission is
+refused, the request is blocked by quota or policy, or the model is not
+offered, that session and the rest in this window get a structural summary (a
+list of the prompts, no synthesis), and a notification says so once. The status
+bar tooltip names what wrote the latest summary.
+
 **Copilot CLI only runs repository hooks in a folder you have trusted.** Start
 `copilot` interactively in the repository once and accept the trust prompt.
 
@@ -49,6 +62,8 @@ extension offers to install it when it sees the need.
 
 - **No network access, ever.** The engine and its tree-sitter grammars are
   inside the `.vsix`. The extension downloads nothing at install time or after.
+  A summary written through VS Code's models is a request Copilot makes on
+  your behalf, through VS Code, as Copilot Chat's own requests are.
 - **No MCP registration.** There is no MCP server to register.
 - **No edits to your instruction files.** The extension passes
   `--no-instructions`, so `.github/instructions/cartograph.instructions.md`,
@@ -63,6 +78,7 @@ extension offers to install it when it sees the need.
 | Cartograph: Update Graph | Incremental refresh after edits. |
 | Cartograph: Show Status | Nodes, edges, files, languages, staleness. |
 | Cartograph: Install Skills and Hooks into Workspace | Re-run the placement step. |
+| Cartograph: Sync Memory from Copilot Logs | Import from the logs now, and summarise finished sessions — the one run allowed to raise VS Code's model-consent dialog directly. |
 
 ## Settings
 
@@ -71,6 +87,9 @@ extension offers to install it when it sees the need.
 | `cartograph.home` | `~/.cartograph` | Where the `carto` launcher is written. |
 | `cartograph.installIntoWorkspace` | `true` | Place the skills pack on activation. |
 | `cartograph.statusBar` | `true` | Show graph state in the status bar. |
+| `cartograph.readCopilotLogs` | `true` | Import prompts from Copilot's own logs when hooks did not record them. |
+| `cartograph.summaryHost` | `auto` | What writes session summaries: `auto` (Copilot CLI if the engine finds it, else Copilot's models in VS Code, else structural), `vscode` (VS Code's models only), `cli` (Copilot CLI only), `structural` (no model, no quota). |
+| `cartograph.summaryModel` | `auto` | The Copilot model VS Code summarises with, by id or family. `auto` is Copilot's Auto model. |
 
 ## Platform-specific builds
 

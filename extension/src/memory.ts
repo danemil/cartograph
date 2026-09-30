@@ -20,6 +20,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { Carto } from "./carto";
+import { Awaiting, describeLatest, summariseArgs, SummaryHost, VsCodeSummaries } from "./summaries";
 
 /** Once per machine, and again only if the situation it describes changes. */
 const NOTICE_KEY = "cartograph.hooksNoticeShown";
@@ -42,6 +43,8 @@ export interface HostCapture {
 interface SyncData {
   summary: string;
   hosts: Record<string, HostCapture>;
+  /** Present when the engine handed summaries to this extension. */
+  awaiting_summary?: Awaiting[];
 }
 
 /** What `chat.useHooks` says, and whether anyone in reach of this UI set it. */
@@ -67,13 +70,20 @@ export class MemorySync implements vscode.Disposable {
   private rerun = false;
   private last: SyncData | undefined;
   private cost: string[] = [];
+  private summaryLine: string | undefined;
+  private userInitiated = false;
+  private readonly summaries: VsCodeSummaries;
 
   constructor(
     private readonly carto: Carto,
     private readonly context: vscode.ExtensionContext,
     private readonly cwd: string,
     private readonly onResult: (text: string) => void,
-  ) {}
+  ) {
+    this.summaries = new VsCodeSummaries(
+      carto, context, cwd, () => this.logDirArgs(), () => void this.sync(),
+    );
+  }
 
   /** Start syncing: now, on transcript writes, and on a timer. */
   start(): void {
@@ -101,6 +111,9 @@ export class MemorySync implements vscode.Disposable {
 
   /** Run once now, for the command palette. */
   async syncNow(): Promise<SyncData | undefined> {
+    // A person asked: the one run where VS Code's consent dialog may appear
+    // without Cartograph asking first.
+    this.userInitiated = true;
     await this.sync();
     return this.last;
   }
@@ -114,7 +127,7 @@ export class MemorySync implements vscode.Disposable {
       .filter(([, host]) => host.capture !== "unknown")
       .map(([name, host]) => `${name} via ${host.capture}`);
     const line = parts.length ? `memory: ${parts.join(", ")}` : "memory: no Copilot sessions yet";
-    return [line, ...this.cost].join("\n");
+    return [line, ...(this.summaryLine ? [this.summaryLine] : []), ...this.cost].join("\n");
   }
 
   /**
@@ -131,6 +144,10 @@ export class MemorySync implements vscode.Disposable {
       if (!status.ok) {
         return [];
       }
+      const latest = status.data.latest_summary_by;
+      this.summaryLine = describeLatest(
+        typeof latest === "string" ? latest : undefined, this.summaries.why,
+      );
       return ["memory_cost", "vs_raw_logs"]
         .map((key) => status.data[key])
         .filter((value): value is string => typeof value === "string");
@@ -162,6 +179,17 @@ export class MemorySync implements vscode.Disposable {
     return path.dirname(path.dirname(this.context.globalStorageUri.fsPath));
   }
 
+  /** Where the engine reads Chat logs, for sync and for the replies in a brief. */
+  private logDirArgs(): string[] {
+    const workspace = this.workspaceStorageDir();
+    return [
+      "--vscode-user-dir", this.userDir(),
+      // Named, because on a remote this directory has Copilot's transcripts
+      // but no workspace.json for the engine to match on.
+      ...(workspace ? ["--vscode-workspace-dir", workspace] : []),
+    ];
+  }
+
   /** Sync soon: something outside this extension changed a chat log. */
   nudge(): void {
     this.schedule();
@@ -184,21 +212,25 @@ export class MemorySync implements vscode.Disposable {
       do {
         this.rerun = false;
         try {
+          const host = vscode.workspace
+            .getConfiguration("cartograph")
+            .get<SummaryHost>("summaryHost", "auto");
+          const userInitiated = this.userInitiated;
+          this.userInitiated = false;
           const envelope = await this.carto.json<SyncData>(
             [
-              "mem", "sync", "--summarise",
-              "--vscode-user-dir", this.userDir(),
-              // Named, because on a remote this directory has Copilot's
-              // transcripts but no workspace.json for the engine to match on.
-              ...(this.workspaceStorageDir()
-                ? ["--vscode-workspace-dir", this.workspaceStorageDir() as string]
-                : []),
-              "--repo", this.cwd,
+              "mem", "sync", ...summariseArgs(host, this.summaries.isRuledOut),
+              ...this.logDirArgs(), "--repo", this.cwd,
             ],
             this.cwd,
           );
           if (envelope.ok) {
             this.last = envelope.data;
+            // Its failure must not cost the status line; the sessions wait for
+            // the next run, since nothing was written for them.
+            await this.summaries
+              .run(envelope.data.awaiting_summary ?? [], userInitiated)
+              .catch(() => undefined);
             this.cost = await this.costLines();
             this.onResult(this.describe());
           }
