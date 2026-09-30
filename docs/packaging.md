@@ -107,6 +107,9 @@ Three things that bite:
   can never load it. `build-payload.py` checks, falls back to uv's CPython 3.12
   when the running interpreter fails, and stops if neither will do. CI's macOS
   job installs uv for this; the Linux image and Windows' python.org build pass.
+- **A Linux build needs `cargo`**, and an old build image — see
+  "Supported Linux". `build-payload.py` stops without cargo rather than let pip
+  fall back to a wheel that raises the glibc floor.
 - **PyInstaller does not cross-compile.** It freezes the interpreter it is
   running on, so each target is built on its own machine or CI runner. The
   script refuses a `--target` that is not the host rather than emitting a
@@ -117,6 +120,55 @@ Three things that bite:
   the first directory-symlink, failing the package step; and how a symlink
   survives a zip round-trip depends on the extractor. `build-payload.py`
   dereferences them, costing about 12MB.
+
+## Supported Linux
+
+**Floor: glibc 2.31** — Ubuntu 20.04, Debian 11, and anything newer; RHEL /
+Alma / Rocky 8 (glibc 2.28) are expected to work, because the payload measures
+lower than the floor, but are not run.
+
+PyInstaller bundles libpython, libstdc++ and the rest but never libc, so each
+ELF file in the payload needs the glibc it was linked against, and the newest
+of those is the payload's floor. 0.8.0 was built on Debian 12 and bundled its
+`libstdc++.so.6` (needs `GLIBC_2.36`): on Ubuntu 22.04 (2.35) the graph ran and
+NumPy, which loads that libstdc++ through ONNX Runtime, did not. No proof had
+run on anything older than Debian 12.
+
+How the floor is kept:
+
+- **Built on `quay.io/pypa/manylinux_2_28`** (AlmaLinux 8, glibc 2.28), with
+  uv's CPython 3.12 frozen — the image's own CPython is static, and PyInstaller
+  needs a shared libpython. Debian 11 was the first choice and is unusable:
+  it left LTS on 2026-08-31 and its security mirror lists packages it no
+  longer serves, so `apt-get install` fails.
+- **`tree-sitter-language-pack` is compiled from source on Linux**
+  (`_SOURCE_ON_LINUX` in `build-payload.py`; needs `cargo`). Every 1.x Linux
+  wheel is `manylinux_2_34`: `dlopen`, `pthread_create` and friends bind to
+  their `GLIBC_2.34` versions. That one file would otherwise set the floor at
+  2.34 on any build image. The other native wheels are fine as published:
+  onnxruntime 1.30.0 needs 2.28, numpy 2.5.3 2.27, tokenizers 2.16,
+  sqlite-vec and tree-sitter 2.14, the downloaded grammars 2.14.
+- **Asserted on every build.** `scripts/check-glibc.py` reads each ELF file's
+  version-needs section and fails above `--max` (2.31); CI prints the ten
+  highest to the job summary, so a raised floor names its file.
+- **Proven on the targets.** CI's `linux-targets` jobs unzip the shipped
+  `.vsix` inside plain `ubuntu:22.04`, `ubuntu:20.04` and `debian:11`
+  containers (no Python; git and a standalone harness interpreter only) and run
+  `scripts/ci_smoke.py`: a graph build, then hybrid memory search finding a
+  reworded memory with the network blocked by `unshare --net`.
+
+Evidence, 2026-09-30:
+
+| Where | Payload max | Result |
+|---|---|---|
+| linux-arm64, local Docker (manylinux_2_28 build) | `GLIBC_2.28` (tree-sitter-language-pack, onnxruntime) | ci_smoke passed offline on `ubuntu:20.04` and `debian:11` |
+| linux-x64, CI run [36713397573](https://github.com/danemil/cartograph/actions/runs/36713397573), build job | `GLIBC_2.28` (same two files), 58 ELF files | check passed; ci_smoke passed on the AlmaLinux 8.10 build host (2.28) |
+| same run, `ubuntu:22.04` (2.35) | — | shipped `.vsix` passed offline: hybrid 0.50 s / 144 MB, keyword 0.35 s |
+| same run, `ubuntu:20.04` (2.31) | — | passed offline: hybrid 0.61 s / 144 MB, keyword 0.44 s |
+| same run, `debian:11` (2.31) | — | passed offline: hybrid 0.58 s / 144 MB, keyword 0.40 s |
+
+Embedding cost on those runners ranged 9–23 ms/row (shared CI machines; the
+spread is the runner, not the image).
 
 ## What is verified, and how
 
@@ -145,8 +197,9 @@ Stated plainly, because a confident claim here would be worth less than nothing.
   the status bar, the terminal `PATH` injection through
   `environmentVariableCollection`, and the version-skew notification are all
   unexercised. The code they call is not.
-- **Only darwin-arm64 exists.** No linux-x64, linux-arm64 or win32-x64 payload
-  has been built, because PyInstaller cannot cross-compile from here.
+- **Only the Linux payload has run on a target's own OS.** linux-x64 is proven
+  on Ubuntu 20.04/22.04 and Debian 11 containers in CI (above); win32-x64 and
+  darwin-arm64 only on their CI runners and this Mac.
 - **`installer/install.ps1` has never been run.** There is no Windows machine
   and no Windows payload. It was written against the same contract `install.sh`
   implements, and that is all that can be said for it.

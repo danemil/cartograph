@@ -321,6 +321,23 @@ capabilities, that the firewall rule applies, the Windows need for
 `MSVCP140.dll` (ORT imports it; the runner has it, a bare machine may not), and
 all their timings.
 
+## Done — 2026-09-30, the Linux floor, and two honest status lines
+
+0.8.0's linux-x64 embedding stack did not load on the user's Ubuntu 22.04
+(glibc 2.35): the payload bundled Debian 12's `libstdc++.so.6` (`GLIBC_2.36`).
+
+- **Build** (`build(linux)` commit): CI and `docker/Dockerfile` build on
+  `quay.io/pypa/manylinux_2_28` with uv's CPython; tree-sitter-language-pack is
+  compiled from source on Linux (its only wheel is `manylinux_2_34`);
+  `scripts/check-glibc.py` fails above 2.31; CI job `linux-targets` runs the
+  shipped `.vsix` offline on `ubuntu:22.04`, `ubuntu:20.04`, `debian:11`.
+  Floor, reasons and evidence: `docs/packaging.md`, "Supported Linux".
+- **One-line failure reason** (`fix(mem)`): `embedding_failure_reason` in
+  `embeddings.py`; the store records it in `mem_meta` so `mem status` names it;
+  the traceback only under `CARTO_DEBUG=1`.
+- **Status line** (`fix(extension)`): `describe()` reads `mem status`'s
+  persisted `capture_*` lines and counts, not the latest sync.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the

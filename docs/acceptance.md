@@ -48,7 +48,8 @@ tested.
 
 ## What the test stage has
 
-`debian:bookworm-slim`, unprivileged user, plus `git` and `jq`. Neither is a
+`ubuntu:20.04` (glibc 2.31, the supported floor — `docs/packaging.md`,
+"Supported Linux"), unprivileged user, plus `git` and `jq`. Neither is a
 Cartograph dependency: `git` is what the hook line and `review-summary` ask
 about a repository, and `jq` is the harness's own JSON parser, because the
 assertions read envelopes rather than log text and there is nothing else on the
@@ -146,9 +147,19 @@ fails at `carto --version` on the fresh machine — precisely where there is no
 way to diagnose it. The locked-down machines this project is for are RHEL 9,
 Ubuntu 22.04 and Debian 12 far more often than they are Debian 13.
 
-The builder stage is therefore pinned to `python:3.12-slim-bookworm`, and the
+The builder stage was therefore pinned to `python:3.12-slim-bookworm`, and the
 rule for any CI runner that builds a Linux payload is the same: **freeze
-against the oldest glibc the payload must run on.** The test stage is
+against the oldest glibc the payload must run on.**
+
+That pin turned out not to be old enough. 0.8.0, built on bookworm, ran its
+graph on Ubuntu 22.04 (2.35) and failed to load NumPy there: the bundled
+`libstdc++.so.6` needed `GLIBC_2.36`. Every proof had run on Debian 12 or
+newer, including this harness's own test stage, which was bookworm too. The
+builder is now `manylinux_2_28` (glibc 2.28) with the grammar pack compiled
+from source, `scripts/check-glibc.py` fails the build above 2.31, and the
+test stage is `ubuntu:20.04`; CI runs the shipped `.vsix` on `ubuntu:22.04`,
+`ubuntu:20.04` and `debian:11`. Details in `docs/packaging.md`, "Supported
+Linux". The test stage is
 deliberately *not* moved up to match the builder — a target that is older than
 the build host is the realistic case, and making the two identical would delete
 the only assertion that catches this.
