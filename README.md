@@ -54,8 +54,9 @@ host whether memory is arriving via **hooks** or **logs**.
 
 The graph, the skills and session summaries work the same in every row. One
 summary per session is written by `copilot -p --model auto` from each prompt
-and that turn's final reply, and separates what was **decided** from what was
-only **proposed**; nothing is pushed into new sessions, and `carto mem status`
+and that turn's final reply — or, where `copilot` is not on PATH, by Copilot's
+Auto model through VS Code's language-model API, after one consent prompt — and
+separates what was **decided** from what was only **proposed**; nothing is pushed into new sessions, and `carto mem status`
 reports what memory cost against what it replaced. Why this differs from
 claude-mem: [docs/memory-design.md](docs/memory-design.md).
 Details and evidence: [docs/copilot-hooks.md](docs/copilot-hooks.md). Step-by-step

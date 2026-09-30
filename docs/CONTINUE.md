@@ -135,7 +135,7 @@ tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
 | 1b | Narrow-lookup fix — `large-functions` answers with functions, compact rows, one-line summaries, skills say when `wc`/`find`/`grep` are cheaper | **done** (below) |
 | 1c | `impact` default: top 20, ranked direct-first, every file and exact totals always present | **done** (below) |
 | 2 | Exclude repo files locally — decision 3 | **done** (below) |
-| 3 | VS Code language models as the summary fallback — decision 1 | next |
+| 3 | VS Code language models as the summary fallback — decision 1 | **done** (below); needs a live window test |
 | 4 | Bundle the embedding model — decision 2 | |
 
 ## Done — decisions 4 and 4b
@@ -226,6 +226,61 @@ CorpusBuilder.ts 8,619 → 3,052. Hub files pay for the file list: logger.ts
 - Not changed: `carto uninstall` still deletes the skill files even where git
   tracks them, and still removes the `# Added by cartograph` block from
   `.gitignore` that earlier releases wrote.
+
+## Done — step 3, VS Code's language models as the summary fallback (decision 1)
+
+Order: `copilot -p --model auto`, then the extension through `vscode.lm`,
+then structural.
+
+- **Engine.** `mem sync --summarise --hand-off {no-cli,always}` lists the
+  sessions awaiting a summary (`awaiting_summary`, same selection and cap of 3
+  as `--pending`) and writes nothing, when no CLI host is on PATH (`no-cli`) or
+  always; `--no-host-agent` and the `SUMMARISE_MARKER` depth cap still win.
+  `mem summarise --session X --brief-only` returns the brief `brief()` builds,
+  replies included, and writes nothing. `--answer-file PATH --summarised-by
+  vscode-lm:<model-id>` stores the answer through the host-answer path:
+  `split_title`, `clip_body`, one summary per session, `host-agent`, the label
+  as `platform_source`, `cost:host_calls` +1 (an empty answer is structural,
+  and still counted). The label must match `vscode-lm:…`. `mem status` gains
+  `latest_summary_by`. Both commands take `--vscode-user-dir` /
+  `--vscode-workspace-dir`, so a brief in a remote window keeps its replies.
+- **The Chat catch-up hook hands off.** `SessionStart` from Chat now runs
+  `mem summarise --pending --hand-off no-cli`; without it, a VS Code-only
+  machine with hooks on would write structural summaries before the extension
+  saw the sessions. The CLI's hook is unchanged — `copilot` is there.
+- **Extension.** `extension/src/summaries.ts` holds every `vscode.lm` call.
+  Settings `cartograph.summaryHost` (`auto` / `vscode` / `cli` /
+  `structural`) and `cartograph.summaryModel` (default `auto`: Copilot Chat
+  registers its Auto model with `vscode.lm` as vendor `copilot`, id `auto` —
+  `microsoft/vscode` `extensions/copilot/src/extension/conversation/vscode-node/languageModelAccess.ts`
+  and `platform/endpoint/node/autoChatEndpoint.ts`, commit `3ba86b4`). Background runs never raise
+  VS Code's consent dialog: when consent was never asked, a notification asks
+  once per window; **Sync Memory** (a user action) may raise it directly.
+  NoPermissions, Blocked, NotFound or the named model missing → structural
+  for that session and the rest, VS Code's models ruled out for the window,
+  one notification. A timeout (90 s) or other error → structural for that
+  session only. No Copilot models at all (not signed in, not activated yet) →
+  nothing written; the sessions wait. The tooltip names the latest summary's
+  writer. `engines.vscode` raised `^1.85.0` → `^1.90.0` (the `vscode.lm`
+  API's first stable release).
+- Tests: `engine/tests/test_mem_summary_handoff.py` (27), each seen failing
+  with its behaviour removed (18 mutations). No TS test runner: the extension
+  side is compiled, not run.
+
+**Needs a live window test** (none of this has run in VS Code):
+1. A VS Code-only machine (no `copilot` on PATH), Chat hooks on: two Chat
+   sessions of 2+ prompts, start a third. Expect the Allow notification,
+   then VS Code's consent dialog naming the justification, then `carto mem
+   show` of the summary row: `platform_source: vscode-lm:auto`,
+   `host-agent`, and the tooltip "summaries via VS Code (model auto)".
+2. Same, refusing in VS Code's consent dialog: expect one warning,
+   a structural row, and no further prompts until reload.
+3. Hooks off (logs path), `cartograph.summaryHost: vscode` with `copilot`
+   installed: expect the sessions summarised through VS Code, not the CLI.
+4. A Remote SSH window: the same as 1, with the engine on the remote.
+5. Whether `selectChatModels({vendor: "copilot"})` really lists `id: "auto"`
+   on the user's Copilot plan and VS Code version; if not, the tooltip will
+   say the model is not offered — set `cartograph.summaryModel` to a family.
 
 ## NEXT TASK
 

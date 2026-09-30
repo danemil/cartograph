@@ -38,6 +38,8 @@ every tool call would bill every file read.
 |---|---|---|
 | Model calls to write memory | **One per session**; at most 3 per catch-up run | Copilot quota |
 | Model | `copilot -p --model auto` (override: `CARTO_SUMMARY_MODEL`) | Auto routes a short brief to a light model (measured: `gpt-6-luna`), is 10% cheaper on paid plans, and never picks a model an administrator blocked — a pinned name that policy blocks would make every summary silently structural |
+| …where `copilot` is not on PATH | The VS Code extension, through `vscode.lm`: Copilot's model with id `auto` (setting `cartograph.summaryModel`), labelled `platform_source: vscode-lm:<model-id>` | Same reasons as the CLI's `auto`. Copilot Chat registers Auto with `vscode.lm` as vendor `copilot`, id `auto` (`microsoft/vscode` `extensions/copilot/.../languageModelAccess.ts`, commit `3ba86b4`). The engine hands off (`mem sync --hand-off`), gives the extension the same brief (`mem summarise --brief-only`) and stores its answer through the host-answer path (`--answer-file`), so the one-summary rule and the cost counter are unchanged |
+| …when neither can | Structural: the prompts in order, `summary_source: structural` | Consent refused, blocked by quota or policy, model not offered, timeout: each lands here, and says so |
 | Summary input | Each prompt **and that turn's final assistant reply**, from the logs; reply clipped to 600 chars | Prompts alone say what was asked, not what was concluded |
 | Summary fields | TITLE · WORKED ON · **DECIDED** (only what the person stated or accepted) · **PROPOSED** (what the assistant suggested, unconfirmed) · DEAD ENDS | A summary must never record a decision nobody made |
 | Raw evidence kept | Prompts, verbatim | The graph answers code questions more currently than stored tool output would |
@@ -77,5 +79,13 @@ itself, these lines say so.
 
 - **Per-turn summaries** — finer than per session, and a model call per turn.
 - **Semantic search** — everything is `search_mode: keyword`.
-- **Summarising through VS Code's language-model API** rather than the Copilot
-  CLI, which would work on a machine with no `copilot` binary.
+- **Which model Auto chose.** Through `vscode.lm` the stored label is
+  `vscode-lm:auto`; the API does not say which model Auto routed the request
+  to. The CLI path records `copilot-cli` and no model at all.
+- **Summaries while VS Code is closed.** The `vscode.lm` path runs only in an
+  open window; sessions wait (unwritten) until one opens, or until a Copilot
+  CLI hook or `mem sync --summarise` without `--hand-off` writes them.
+- **`cartograph.summaryHost: vscode` does not reach the hooks.** Where
+  `copilot` is installed, a CLI `SessionEnd` or a Chat `SessionStart` still
+  summarises through it; the setting governs the summaries the extension
+  runs.

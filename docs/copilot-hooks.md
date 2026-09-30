@@ -37,6 +37,10 @@ Consequences, each of which is now code:
    ended, so `SessionStart` runs `carto mem summarise --pending`, which
    summarises up to three earlier sessions that have none — excluding the one
    starting. This also catches a CLI session that crashed before `SessionEnd`.
+   When Chat fired it, the command adds `--hand-off no-cli`: where no
+   `copilot` binary is on PATH it writes nothing, and the extension summarises
+   those sessions through VS Code's models (decision 1) — otherwise this hook
+   would spend each session's one summary on a structural one first.
 4. **The graph refreshes on `Stop`, not `PostToolUse`.** `Stop` is once per
    agent turn. `PostToolUse` fires for reads too, VS Code ignores matchers,
    and the CLI's agent writes files through `Bash` as often as through an edit
