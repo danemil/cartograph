@@ -20,6 +20,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { Carto } from "./carto";
+import * as log from "./log";
 import { Awaiting, describeLatest, summariseArgs, SummaryHost, VsCodeSummaries } from "./summaries";
 
 /** Once per machine, and again only if the situation it describes changes. */
@@ -40,11 +41,13 @@ export interface HostCapture {
   already_recorded: number;
 }
 
-interface SyncData {
+export interface SyncData {
   summary: string;
   hosts: Record<string, HostCapture>;
   /** Present when the engine handed summaries to this extension. */
   awaiting_summary?: Awaiting[];
+  /** Present with --summarise when the engine wrote summaries itself. */
+  summarised?: unknown[];
 }
 
 /** What the store holds, from `mem status`, rather than what one sync read. */
@@ -90,6 +93,17 @@ export function describeHeld(held: MemoryHeld | undefined): string {
     return `memory: ${held.sessions} session(s), ${held.observations} observation(s)`;
   }
   return "memory: no Copilot sessions yet";
+}
+
+/** One log line for a sync run: its flags, what it imported, what it wrote or handed over. */
+export function describeSync(data: SyncData, args: string[], userInitiated: boolean): string {
+  const hosts = Object.entries(data.hosts ?? {})
+    .map(([name, h]) => `${name} ${h.imported} imported/${h.already_recorded} already (${h.capture})`)
+    .join(", ");
+  const summarised = data.summarised?.length ? ` · ${data.summarised.length} summarised by the engine` : "";
+  const awaiting = data.awaiting_summary ? ` · ${data.awaiting_summary.length} handed over` : "";
+  return `sync (${userInitiated ? "user-initiated" : "background"}; ${args.join(" ")}): ` +
+    `${hosts || "no logs"}${summarised}${awaiting}`;
 }
 
 /** What `chat.useHooks` says, and whether anyone in reach of this UI set it. */
@@ -259,26 +273,29 @@ export class MemorySync implements vscode.Disposable {
             .get<SummaryHost>("summaryHost", "auto");
           const userInitiated = this.userInitiated;
           this.userInitiated = false;
+          const args = summariseArgs(host, this.summaries.ruledOutReason);
           const envelope = await this.carto.json<SyncData>(
-            [
-              "mem", "sync", ...summariseArgs(host, this.summaries.isRuledOut),
-              ...this.logDirArgs(), "--repo", this.cwd,
-            ],
+            ["mem", "sync", ...args, ...this.logDirArgs(), "--repo", this.cwd],
             this.cwd,
           );
           if (envelope.ok) {
             this.last = envelope.data;
+            log.info(describeSync(envelope.data, args, userInitiated));
             // Its failure must not cost the status line; the sessions wait for
             // the next run, since nothing was written for them.
             await this.summaries
               .run(envelope.data.awaiting_summary ?? [], userInitiated)
-              .catch(() => undefined);
+              .catch((err) => log.warn(`summaries: run failed, nothing written: ${err}`));
             this.cost = await this.costLines();
             this.onResult(this.describe());
+          } else {
+            log.warn(`sync: ${envelope.error?.message ?? "failed without a message"}`);
           }
-        } catch {
+        } catch (err) {
           // A failed sync leaves memory as it was, and the next write or the
-          // timer tries again. Nothing a notification could ask anyone to do.
+          // timer tries again. Nothing a notification could ask anyone to do,
+          // but the log keeps it.
+          log.warn(`sync: ${String(err).slice(0, 300)}`);
         }
       } while (this.rerun);
     })();

@@ -11,3 +11,4 @@ out/**/*.map
 # Cartograph Local, staged in by scripts/build-vsix.sh. vsce drops *.vsix by
 # default, and this one is meant to ride along.
 !companion/cartograph-local.vsix
+test/**

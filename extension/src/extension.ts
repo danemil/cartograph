@@ -14,6 +14,7 @@
 
 import * as vscode from "vscode";
 import { Carto, GraphState } from "./carto";
+import * as log from "./log";
 import { Companion, MemorySync, noticeHooksState } from "./memory";
 import { cartoHome, placeLaunchers, readPayload } from "./payload";
 
@@ -59,6 +60,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("cartograph.installSkills", () =>
       installIntoWorkspace(carto, context, { force: true })),
     vscode.commands.registerCommand("cartograph.syncMemory", () => syncMemoryNow()),
+    vscode.commands.registerCommand("cartograph.showLog", () => log.show()),
+    { dispose: () => log.dispose() },
   );
 
   // Memory from Copilot's own logs, for whatever the hooks did not record.
@@ -84,9 +87,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return;
     }
     const result = await memory.syncNow();
-    vscode.window.showInformationMessage(
+    const choice = await vscode.window.showInformationMessage(
       `Cartograph: ${result?.summary ?? "sync did not complete"} ${memory.describe()}`,
+      "Show Log",
     );
+    if (choice === "Show Log") {
+      log.show();
+    }
   };
   // Declared before memory starts, so the status line can say when Chat in a
   // remote window is waiting on Cartograph Local.
