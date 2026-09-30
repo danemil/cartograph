@@ -267,6 +267,26 @@ def freeze(python: Path, out: Path) -> None:
         for unused in out.rglob(pattern):
             print(f"  pruned {unused.relative_to(out)} ({unused.stat().st_size / 1e6:.0f} MB)")
             unused.unlink()
+    if sys.platform.startswith("linux"):
+        _drop_duplicate_libs(out / "_internal")
+
+
+def _drop_duplicate_libs(internal: Path) -> None:
+    """Remove top-level copies of libraries a wheel vendors in ``<pkg>.libs/``.
+
+    PyInstaller's dependency scan copies each vendored library (NumPy's 27 MB
+    OpenBLAS) to the top of ``_internal`` as well as keeping ``numpy.libs/``.
+    The extension modules find theirs through ``DT_RPATH $ORIGIN/../../numpy.libs``,
+    which the loader honours before anything else, so the top-level copy is
+    never loaded. Linux only: that is where the RPATH was read and the result
+    run (docker/acceptance.sh); Windows' delvewheel layout was not checked.
+    """
+    for vendored in internal.glob("*.libs/*"):
+        twin = internal / vendored.name
+        if twin.is_file() and twin.stat().st_size == vendored.stat().st_size \
+                and _sha256(twin) == _sha256(vendored):
+            print(f"  dropped duplicate {twin.name} ({twin.stat().st_size / 1e6:.0f} MB)")
+            twin.unlink()
 
 
 def _sha256(path: Path) -> str:

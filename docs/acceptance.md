@@ -200,6 +200,11 @@ docker run --privileged --rm tonistiigi/binfmt --install amd64
 `acceptance.sh` checks for it and says so rather than letting the build fail
 several minutes in with `exec format error`.
 
+2026-09-30, with the embedding model: `linux-arm64`, payload 243 MB, all
+assertions passed, including hybrid recall of a reworded memory with no
+network. `linux-x64` was not re-run: amd64 emulation is off in this Docker
+Desktop, so CI's linux job is the x64 proof.
+
 ## What this still cannot verify
 
 Stated plainly, because a confident claim here would be worth less than

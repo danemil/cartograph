@@ -145,6 +145,12 @@ python3 scripts/build-payload.py --target darwin-arm64 && ./scripts/build-vsix.s
 python3 scripts/ci_smoke.py darwin-arm64   # prints the table's "After" rows
 ```
 
+linux-arm64, `docker/acceptance.sh linux/arm64` (native on this Mac, installed
+with `install.sh` into a container with `--network none` and no Python):
+payload 142 → 243 MB unpacked, and hybrid search finds the reworded memory.
+Linux costs more than macOS because NumPy's wheel vendors OpenBLAS (27 MB);
+PyInstaller also copied it a second time, which the build now removes.
+
 The same script runs in every platform's CI job and prints these rows to the
 job summary, so linux-x64 and win32-x64 have their own numbers. None have been
 read yet.
