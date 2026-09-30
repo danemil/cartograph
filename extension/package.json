@@ -2,7 +2,7 @@
   "name": "cartograph",
   "displayName": "Cartograph",
   "description": "A code knowledge graph for AI coding agents, as a CLI and a skills pack. No MCP server.",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "publisher": "cartograph",
   "license": "Apache-2.0",
   "engines": {
@@ -73,7 +73,12 @@
         },
         "cartograph.summaryHost": {
           "type": "string",
-          "enum": ["auto", "vscode", "cli", "structural"],
+          "enum": [
+            "auto",
+            "vscode",
+            "cli",
+            "structural"
+          ],
           "enumDescriptions": [
             "Copilot CLI where the engine finds `copilot` on PATH, otherwise Copilot's models in VS Code, otherwise structural.",
             "Copilot's models in VS Code only, even where Copilot CLI is installed; structural if they cannot be used.",
