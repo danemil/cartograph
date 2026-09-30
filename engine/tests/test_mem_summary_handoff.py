@@ -49,9 +49,9 @@ def _capture(repo: Path, session: str, *texts: str) -> None:
         assert ingest.capture(repo, {"session_id": session, "prompt": text}, host="copilot-chat")
 
 
-def _line(kind: str, data: dict) -> str:
+def _line(kind: str, data: dict, timestamp: str = "2026-09-29T14:14:23.964Z") -> str:
     return json.dumps({"type": kind, "data": data, "id": f"{kind}-{len(json.dumps(data))}",
-                       "timestamp": "2026-09-29T14:14:23.964Z", "parentId": None})
+                       "timestamp": timestamp, "parentId": None})
 
 
 def _chat_log(user_dir: Path, folder: Path, session: str, turns: list[tuple[str, str]],
@@ -62,14 +62,17 @@ def _chat_log(user_dir: Path, folder: Path, session: str, turns: list[tuple[str,
     transcripts.mkdir(parents=True, exist_ok=True)
     (ws / "workspace.json").write_text(
         json.dumps({"folder": folder.resolve().as_uri()}), encoding="utf-8")
+    # Settling is judged by the messages' own timestamps; a live chat's are now.
+    at = "2026-09-29T14:14:23.964Z" if quiet else time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     lines = [_line("session.start", {"sessionId": session, "version": 1,
-                                     "producer": "copilot-agent"})]
+                                     "producer": "copilot-agent"}, at)]
     for n, (prompt, reply) in enumerate(turns):
         lines += [
-            _line("user.message", {"content": prompt}),
-            _line("assistant.turn_start", {"turnId": str(n)}),
-            _line("assistant.message", {"messageId": f"m{n}", "content": reply}),
-            _line("assistant.turn_end", {"turnId": str(n)}),
+            _line("user.message", {"content": prompt}, at),
+            _line("assistant.turn_start", {"turnId": str(n)}, at),
+            _line("assistant.message", {"messageId": f"m{n}", "content": reply}, at),
+            _line("assistant.turn_end", {"turnId": str(n)}, at),
         ]
     path = transcripts / f"{session}.jsonl"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -223,6 +226,7 @@ def test_hand_off_leaves_a_session_still_being_written(repo, tmp_path, no_cli):
                        summarise_sessions=True, hand_off="no-cli")
 
     assert result["awaiting_summary"] == []
+    assert [w["session"] for w in result["waiting"]] == ["live"]
 
 
 def test_without_hand_off_no_cli_still_means_structural(repo, tmp_path, no_cli):

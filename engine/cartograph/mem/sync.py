@@ -28,6 +28,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional
 from urllib.parse import unquote, urlparse
@@ -40,11 +41,23 @@ logger = logging.getLogger(__name__)
 CHAT_HOST = "copilot-chat"
 CLI_HOST = "copilot-cli"
 
-#: How long a session's log must be unchanged before an import will summarise
-#: it. A log gives no end-of-session signal, and a session is summarised only
-#: once, ever — summarising one someone is still typing into would spend that
-#: once on half of it. Thirty minutes is past any pause inside one task.
+#: How long after a session's last message an import will summarise it. A log
+#: gives no end-of-session signal, and a session is summarised only once, ever
+#: — summarising one someone is still typing into would spend that once on
+#: half of it. Thirty minutes is past any pause inside one task.
+#:
+#: Measured from the timestamps inside the logs, not the file's mtime: VS Code
+#: rewrites ``chatSessions/<id>.jsonl`` for UI state (``inputState``,
+#: selections, the title) with no new message, and the companion re-copies the
+#: file whenever it changes, so on the Remote SSH VM a window reload restarted
+#: the thirty minutes and a finished session was never handed over.
 SETTLE_SECONDS = 30 * 60
+
+#: Event types that are the conversation itself. ``session.*`` (a resume, a
+#: usage checkpoint), ``hook.*`` and ``system.*`` are written without anyone
+#: saying anything; ``tool.*`` is kept because a long agent turn is still a
+#: turn in progress.
+_TURN_EVENT_PREFIXES = ("user.", "assistant.", "tool.")
 
 #: ``mem_meta`` keys. Per-file size and mtime, so an unchanged log is not
 #: reparsed on every sync; and the last result, for ``mem status``.
@@ -54,6 +67,9 @@ _STATUS_KEY = "sync:status"
 #: would still be marked — the mark answers "did the logs carry any of this",
 #: which is the question ``capture`` is asking.
 _FROM_LOGS_KEY = "sync:from-logs:"
+#: Per-file last message time, keyed by the same stamp, so the settle check
+#: does not replay every log on every sync.
+_ACTIVITY_KEY = "sync:activity:"
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +337,105 @@ def session_exchanges(
     return best
 
 
+def _epoch(value: Any) -> Optional[float]:
+    """A log timestamp in epoch seconds: epoch ms (``chatSessions``), epoch
+    seconds, or ISO 8601 (the event logs). Anything else is no timestamp."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        # Epoch ms passed 1e11 in 1973; epoch seconds will not reach it.
+        seconds = value / 1000 if value > 1e11 else float(value)
+        return seconds if seconds > 0 else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        return _epoch(float(text))
+    except ValueError:
+        pass
+    try:
+        # Python 3.10's parser does not take a trailing Z.
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def last_message_at(path: Path) -> Optional[float]:
+    """When the last message in one log was sent or answered, or None.
+
+    ``chatSessions``: each request's ``timestamp``, ``responseTimestamp`` and
+    ``modelState.completedAt`` (epoch ms, read off VS Code 1.139's files).
+    Transcripts and CLI logs: the ``timestamp`` of turn events.
+    """
+    times: list[float] = []
+    if path.parent.name == "chatSessions":
+        for request in _replay(path).get("requests") or []:
+            if not isinstance(request, dict) or request.get("hiddenFromTranscript"):
+                continue
+            state = request.get("modelState")
+            completed = state.get("completedAt") if isinstance(state, dict) else None
+            for value in (request.get("timestamp"), request.get("responseTimestamp"), completed):
+                at = _epoch(value)
+                if at is not None:
+                    times.append(at)
+    else:
+        for event in _events(path):
+            kind = event.get("type")
+            if isinstance(kind, str) and kind.startswith(_TURN_EVENT_PREFIXES):
+                at = _epoch(event.get("timestamp"))
+                if at is not None:
+                    times.append(at)
+    return max(times, default=None)
+
+
+def _cached_last_message(path: Path, memory: Optional[_store.MemoryStore]) -> Optional[float]:
+    stamp = _stamp(path)
+    key = _ACTIVITY_KEY + str(path)
+    cached = memory.get_meta(key) if memory is not None else None
+    if cached and cached.startswith(stamp + "|"):
+        value = cached[len(stamp) + 1:]
+        return float(value) if value else None
+    at = last_message_at(path)
+    if memory is not None:
+        memory.set_meta(key, f"{stamp}|{'' if at is None else repr(at)}")
+    return at
+
+
+def _utc(epoch: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+def _settle_times(
+    logs: "Iterable[tuple[str, Path, Optional[float]]]",
+) -> dict[str, tuple[float, Optional[str]]]:
+    """Each session's ``(last activity, reason)`` across all of its logs.
+
+    A session can be in VS Code's store, the companion's mirror and Copilot's
+    transcript at once; the latest message in any of them counts. A log with
+    no message timestamps says nothing about when the last message was, so
+    mtime is used only when none of the session's logs has one — and the
+    reason says so.
+    """
+    found: dict[str, dict[str, Any]] = {}
+    for session, log, message_at in logs:
+        entry = found.setdefault(session, {"message": None, "mtime": 0.0, "file": ""})
+        if message_at is not None and (entry["message"] is None or message_at > entry["message"]):
+            entry["message"] = message_at
+        mtime = log.stat().st_mtime
+        if mtime > entry["mtime"]:
+            entry["mtime"], entry["file"] = mtime, f"{log.parent.name}/{log.name}"
+    return {
+        session: (entry["message"], None) if entry["message"] is not None else (
+            entry["mtime"],
+            f"no message timestamps in {entry['file']}; using its modification time",
+        )
+        for session, entry in found.items()
+    }
+
+
 def _stamp(path: Path) -> str:
     stat = path.stat()
     return f"{stat.st_mtime_ns}:{stat.st_size}"
@@ -366,7 +481,7 @@ def sync(
         CLI_HOST: cli_logs(repo_root, copilot_dir or Path.home() / ".copilot"),
     }
     hosts: dict[str, dict[str, Any]] = {}
-    changing: list[str] = []
+    activity: list[tuple[str, Path, Optional[float]]] = []
     path = _store.db_path(repo_root, create=False)
     memory: Optional[_store.MemoryStore] = None
     embedded = 0
@@ -381,8 +496,11 @@ def sync(
             if host == CLI_HOST:
                 stats["hooks_fired"] = False
             for log in logs:
-                if time.time() - log.stat().st_mtime < SETTLE_SECONDS:
-                    changing.append(log.stem if host == CHAT_HOST else log.parent.name)
+                activity.append((
+                    log.stem if host == CHAT_HOST else log.parent.name,
+                    log,
+                    _cached_last_message(log, memory),
+                ))
                 if memory is not None and memory.get_meta(_FILE_KEY + str(log)) == _stamp(log):
                     continue
                 session, prompts, hooks_fired = _read(log)
@@ -430,6 +548,10 @@ def sync(
         if memory is not None:
             memory.close()
 
+    now = time.time()
+    settle = _settle_times(activity)
+    changing = [session for session, (at, _) in settle.items() if now - at < SETTLE_SECONDS]
+
     imported = sum(stats["imported"] for stats in hosts.values())
     result: dict[str, Any] = {
         "summary": f"Imported {imported} prompt(s) from Copilot's logs.",
@@ -440,6 +562,7 @@ def sync(
         from . import summarise as _summarise
 
         result["summarised"] = []
+        result["waiting"] = _waiting(path, settle, changing) if path.exists() else []
         if _summarise.hands_off(use_host=use_host, hand_off=hand_off):
             # The caller said it can summarise and no CLI here will: name the
             # sessions and write nothing, so each keeps its one summary for
@@ -458,6 +581,43 @@ def sync(
                 if outcome.get("observation")
             ]
     return result
+
+
+def _waiting(
+    path: Path, settle: dict[str, tuple[float, Optional[str]]], changing: list[str],
+) -> list[dict[str, Any]]:
+    """Sessions that would be summarised but for their last message being recent.
+
+    Said, because a run that hands nothing over otherwise looks exactly like a
+    run that found nothing — which is how the Remote SSH case went unexplained.
+    """
+    from . import summarise as _summarise
+
+    if not changing:
+        return []
+    with _store.MemoryStore(path) as memory:
+        # LIMIT -1 is SQLite for no limit: every unsettled one is reported, not
+        # only the three a run would take.
+        pending = memory.unsummarised_sessions(
+            source_type=_summarise.PROMPT_DOC_TYPE,
+            summary_type=_summarise.SESSION_DOC_TYPE,
+            min_rows=_summarise.MIN_PROMPTS,
+            limit=-1,
+        )
+    waiting: list[dict[str, Any]] = []
+    for session in pending:
+        if session not in changing:
+            continue
+        at, reason = settle[session]
+        entry: dict[str, Any] = {
+            "session": session,
+            "last_message_at": _utc(at),
+            "settles_at": _utc(at + SETTLE_SECONDS),
+        }
+        if reason:
+            entry["reason"] = reason
+        waiting.append(entry)
+    return waiting
 
 
 def last_status(memory: _store.MemoryStore) -> dict[str, Any]:

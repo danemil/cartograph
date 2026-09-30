@@ -39,15 +39,20 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
-def _line(kind: str, data: dict) -> str:
+def _line(kind: str, data: dict, timestamp: str = "2026-09-29T14:14:23.964Z") -> str:
     return json.dumps({
         "type": kind, "data": data, "id": f"id-{kind}-{len(json.dumps(data))}",
-        "timestamp": "2026-09-29T14:14:23.964Z", "parentId": None,
+        "timestamp": timestamp, "parentId": None,
     })
 
 
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def _chat_log(user_dir: Path, folder: Path, session: str, prompts: list[str],
-              *, workspace: str = "ws1", folder_uri: str | None = None) -> Path:
+              *, workspace: str = "ws1", folder_uri: str | None = None,
+              timestamp: str = "2026-09-29T14:14:23.964Z") -> Path:
     """A VS Code workspaceStorage entry with one Copilot Chat transcript."""
     ws = user_dir / "workspaceStorage" / workspace
     transcripts = ws / "GitHub.copilot-chat" / "transcripts"
@@ -58,13 +63,13 @@ def _chat_log(user_dir: Path, folder: Path, session: str, prompts: list[str],
     lines = [_line("session.start", {
         "sessionId": session, "version": 1, "producer": "copilot-agent",
         "copilotVersion": "0.67.0", "vscodeVersion": "1.139.1",
-    })]
+    }, timestamp)]
     for n, prompt in enumerate(prompts):
         lines += [
-            _line("user.message", {"content": prompt}),
-            _line("assistant.turn_start", {"turnId": str(n)}),
-            _line("assistant.message", {"messageId": f"m{n}", "content": f"reply {n}"}),
-            _line("assistant.turn_end", {"turnId": str(n)}),
+            _line("user.message", {"content": prompt}, timestamp),
+            _line("assistant.turn_start", {"turnId": str(n)}, timestamp),
+            _line("assistant.message", {"messageId": f"m{n}", "content": f"reply {n}"}, timestamp),
+            _line("assistant.turn_end", {"turnId": str(n)}, timestamp),
         ]
     path = transcripts / f"{session}.jsonl"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -262,7 +267,8 @@ def test_the_summarisers_own_cli_sessions_are_never_imported(repo, tmp_path):
 
 
 def test_summarise_skips_a_session_whose_log_is_still_changing(repo, tmp_path):
-    _chat_log(tmp_path / "User", repo, "live", ["First prompt of a live chat", "Second prompt of it"])
+    _chat_log(tmp_path / "User", repo, "live", ["First prompt of a live chat", "Second prompt of it"],
+              timestamp=_now())
 
     result = _sync(repo, tmp_path, summarise_sessions=True, use_host=False)
 

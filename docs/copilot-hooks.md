@@ -79,7 +79,8 @@ logs equal the hooks' ids, so it never double-records. Imported-versus-already-
 recorded is the empirical test of whether hooks fire, stored and shown by
 `mem status` as `capture_copilot_chat` / `capture_copilot_cli`. The extension
 runs it on activation, 30 s after a transcript changes, and every 10 minutes,
-with `--summarise` for sessions whose log has been quiet for 30 minutes.
+with `--summarise` for sessions whose last message is 30 minutes old (by the
+timestamps inside the logs, not the file's mtime — see `docs/memory-design.md`).
 Proven on this Mac against real logs: with the hooks' store, 7 of 7 logged
 prompts already recorded (`hooks`); with the store removed, the same 7
 recovered with the same session ids (`logs`). And through the extension

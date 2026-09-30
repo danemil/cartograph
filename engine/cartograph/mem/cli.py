@@ -191,8 +191,9 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     sync_cmd.add_argument(
         "--summarise", action="store_true",
         help=(
-            "Afterwards, summarise sessions whose logs have been quiet for "
-            f"{_sync.SETTLE_SECONDS // 60} minutes"
+            "Afterwards, summarise sessions whose last message is "
+            f"{_sync.SETTLE_SECONDS // 60} minutes old; `waiting` lists the ones "
+            "not yet settled"
         ),
     )
     _add_log_dirs(sync_cmd)
