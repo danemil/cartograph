@@ -368,6 +368,7 @@ def sync(
     changing: list[str] = []
     path = _store.db_path(repo_root, create=False)
     memory: Optional[_store.MemoryStore] = None
+    embedded = 0
     try:
         if path.exists():
             memory = _store.MemoryStore(path)
@@ -400,7 +401,10 @@ def sync(
                         continue
                     if memory.session_count(session) >= _ingest.SESSION_CAP:
                         continue
-                    memory.add(project=project or repo_root.name, platform_source=host, **shaped)
+                    memory.add(
+                        project=project or repo_root.name, platform_source=host,
+                        embed=False, **shaped,
+                    )
                     memory.set_meta(_FROM_LOGS_KEY + session, "1")
                     stats["imported"] += 1
                 if memory is not None:
@@ -416,6 +420,11 @@ def sync(
                 if stats["prompts_seen"] or host not in previous:
                     previous[host] = {**stats, "at": now}
             memory.set_meta(_STATUS_KEY, json.dumps(previous))
+            # Once, after the import, and without a bound: sync is the command
+            # that runs off the host's turn (the extension's timer, a person),
+            # so it is where rows the hooks captured get their vectors, and
+            # where an older store is backfilled in full.
+            embedded = memory.embed_missing()
     finally:
         if memory is not None:
             memory.close()
@@ -424,6 +433,7 @@ def sync(
     result: dict[str, Any] = {
         "summary": f"Imported {imported} prompt(s) from Copilot's logs.",
         "hosts": hosts,
+        "embedded": embedded,
     }
     if summarise_sessions:
         from . import summarise as _summarise

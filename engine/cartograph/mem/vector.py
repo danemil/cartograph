@@ -32,21 +32,41 @@ def load(conn: sqlite3.Connection) -> bool:
     Three distinct absences collapse to one answer — the package is not
     installed, the interpreter was built without loadable-extension support,
     or SQLite refused the load — because the caller's recovery is identical in
-    all three: search without vectors and report keyword.
+    all three: search without vectors and report keyword. Which one it was is
+    :func:`unavailable_reason`'s job, for the status line.
     """
+    return _try_load(conn) is None
+
+
+def unavailable_reason() -> str:
+    """Why :func:`load` answers no here, in words a person can act on.
+
+    Asked of a scratch connection rather than remembered from the last load,
+    so the answer describes this interpreter and not whichever connection
+    happened to be opened first. The second case is the one that bit: the
+    python.org macOS interpreter has no ``enable_load_extension`` at all, and a
+    payload frozen from it reported "not installed" for a package it carried.
+    """
+    return _try_load(sqlite3.connect(":memory:")) or f"{EXTENSION} loaded"
+
+
+def _try_load(conn: sqlite3.Connection) -> Optional[str]:
     try:
         import sqlite_vec
     except ImportError:
-        return False
+        return f"{EXTENSION} is not installed"
+    if not hasattr(conn, "enable_load_extension"):
+        return (
+            f"this Python's sqlite3 cannot load extensions, so {EXTENSION} "
+            "cannot be used"
+        )
     try:
-        # AttributeError is the "built without extension support" case, which
-        # is a property of the interpreter rather than of this repository.
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
-        return True
-    except (AttributeError, sqlite3.Error) as exc:
+        return None
+    except sqlite3.Error as exc:
         logger.debug("%s present but not loadable: %s", EXTENSION, exc)
-        return False
+        return f"{EXTENSION} is installed but SQLite refused to load it: {exc}"
     finally:
         try:
             # Only stops *further* loads; what was loaded above stays loaded.
@@ -77,10 +97,32 @@ def ensure_table(conn: sqlite3.Connection, dimension: int) -> None:
     refuses the vector path on a mismatch rather than returning neighbours
     computed against two incompatible spaces.
     """
+    # Cosine, not vec0's default L2: the scores then read as similarity, which
+    # is what the floor in the store is written in.
     conn.execute(
         f"CREATE VIRTUAL TABLE IF NOT EXISTS observations_vec USING vec0("  # noqa: S608
-        f"embedding float[{int(dimension)}])"
+        f"embedding float[{int(dimension)}] distance_metric=cosine)"
     )
+
+
+def drop_table(conn: sqlite3.Connection) -> None:
+    """Remove the vector index. The observations it was derived from stay."""
+    conn.execute("DROP TABLE IF EXISTS observations_vec")
+
+
+def missing(conn: sqlite3.Connection, limit: Optional[int]) -> list[tuple[int, str, str]]:
+    """Observations without a vector, newest first: ``(rowid, title, body)``.
+
+    Newest first because a capped pass should spend itself on what a person
+    is likeliest to search for next — what they did last.
+    """
+    rows = conn.execute(
+        "SELECT rowid, title, body FROM observations "
+        "WHERE rowid NOT IN (SELECT rowid FROM observations_vec) "
+        "ORDER BY created_at DESC LIMIT ?",
+        (-1 if limit is None else int(limit),),
+    ).fetchall()
+    return [(int(r[0]), r[1] or "", r[2] or "") for r in rows]
 
 
 def upsert(conn: sqlite3.Connection, rowid: int, vector: list[float]) -> None:
@@ -113,7 +155,8 @@ def knn(
     response must degrade to keyword.
 
     Scores are ``1 - distance`` so that higher is better, matching the
-    convention the rest of the engine's search results already use.
+    convention the rest of the engine's search results already use; with the
+    cosine metric that is the cosine similarity itself.
     """
     try:
         rows = conn.execute(

@@ -164,6 +164,9 @@ class _FakeProvider:
     name = "fake:test"
     dimension = 8
 
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed_query(text) for text in texts]
+
     def embed_query(self, text: str) -> list[float]:
         vector = [0.0] * self.dimension
         for word in text.lower().split():
@@ -188,7 +191,7 @@ class TestSearchModeNeverLies:
         monkeypatch.setattr("cartograph.embeddings.get_provider", lambda *a, **k: None)
         _add(store, "degraded", "body")
         assert store.search(query="degraded")[1] == "fts"
-        assert "provider" in store.semantic_status()[1]
+        assert "embedding model" in store.semantic_status()[1]
 
     def test_when_the_provider_is_installed_but_unusable(self, store, monkeypatch):
         class _Broken:
@@ -245,8 +248,9 @@ class TestVectorPath:
         # "semantic" is then the truthful report, not an overclaim.
         assert vec_store.search(query="...")[1] == "semantic"
 
-    def test_a_foreign_index_is_refused_rather_than_mixed(self, vec_store, monkeypatch):
+    def test_a_foreign_index_is_rebuilt_rather_than_mixed(self, vec_store, monkeypatch):
         _add(vec_store, "alpha beta", "gamma delta")
+        _add(vec_store, "epsilon", "zeta")
 
         class _Wider(_FakeProvider):
             name = "fake:wider"
@@ -256,10 +260,15 @@ class TestVectorPath:
             "cartograph.embeddings.get_provider", lambda *a, **k: _Wider()
         )
         with mem_store.MemoryStore(vec_store.path) as reopened:
+            # Read-only, the mismatch is reported, never searched across.
             available, reason = reopened.semantic_status()
             assert available is False
             assert "dimensions" in reason
-            assert reopened.search(query="alpha")[1] == "fts"
+            # The next pass re-derives every vector under the new model.
+            assert reopened.search(query="alpha")[1] == "hybrid"
+            assert reopened.semantic_status() == (True, None)
+            assert reopened.vector_count() == 2
+            assert reopened._vector_meta() == ("fake:wider", 16)
 
 
 class TestVectorModule:

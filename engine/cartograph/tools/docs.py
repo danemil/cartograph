@@ -74,11 +74,16 @@ def embed_graph(
                         "the endpoint is reachable."
                     )
                 else:
+                    # The bundled model's own reason first: on an installed
+                    # payload that is the provider that should have answered,
+                    # and sentence-transformers is a developer's fallback.
+                    from ..embeddings import local_unavailable_reason
+
                     err = (
-                        "The local embedding provider needs sentence-transformers. "
-                        "Install with: pip install cartograph[embeddings] — "
-                        "or switch provider to 'openai' / 'google' / 'minimax' "
-                        "/ 'voyage'."
+                        f"No local embedding model: {local_unavailable_reason()}. "
+                        "Outside the payload, pip install cartograph[embeddings] "
+                        "for sentence-transformers, or switch provider to "
+                        "'openai' / 'google' / 'minimax' / 'voyage'."
                     )
                 return {"status": "error", "error": err}
 

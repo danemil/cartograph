@@ -57,6 +57,21 @@ _UNRESOLVED = object()
 #: budget. `fit` will shed the tail of the list if they do not.
 _MAX_SNIPPET_CHARS = 240
 
+#: Rows a search or a single write may embed on its way past. Vectors are
+#: filled in lazily so an existing store needs no rebuild step anyone has to
+#: know about, but a read must not turn into a minutes-long backfill: at the
+#: measured ~3 ms a row this bounds the detour to about a second. `mem sync`
+#: embeds without a bound.
+BACKFILL_CAP = 256
+
+#: Nearest neighbours below this cosine similarity are dropped. A vector index
+#: always has a nearest neighbour, however unrelated; without a floor every
+#: search returns `limit` rows and an agent cannot tell recall from filler.
+#: Set from all-MiniLM-L6-v2 on memory-shaped text (a title and a few
+#: sentences): unrelated queries measured at most 0.17, reworded ones that
+#: share no keyword 0.32-0.42 (docs/memory-design.md).
+MIN_SIMILARITY = 0.25
+
 
 def db_path(repo_root: "str | Path", *, create: bool = False) -> Path:
     """Where this repository's observations live.
@@ -261,6 +276,12 @@ def _end_of_day(value: str) -> str:
     return f"{value}T23:59:59.999999Z" if len(value) == 10 else value
 
 
+#: Rows embedded and committed together, so an interrupted backfill keeps
+#: what it finished and a failure loses at most one chunk.
+_EMBED_CHUNK = 64
+
+
+
 # ---------------------------------------------------------------------------
 # The store
 # ---------------------------------------------------------------------------
@@ -320,11 +341,16 @@ class MemoryStore:
         keyword-only" is otherwise unanswerable from the outside: three
         independent things have to be true, and the envelope's `search_mode`
         can only say that the answer is no.
+
+        Never loads the model: the provider's identity comes from its
+        manifest, so asking costs a JSON read.
         """
         if not self._vec_loaded_ok():
-            return False, f"{_vector.EXTENSION} is not installed"
+            return False, _vector.unavailable_reason()
         if self._embedding_provider() is None:
-            return False, "no embedding provider is configured"
+            from ..embeddings import local_unavailable_reason
+
+            return False, local_unavailable_reason()
         if _vector.count(self._conn) == 0:
             return False, "no observation has been embedded yet"
         stored = self._vector_meta()
@@ -335,6 +361,10 @@ class MemoryStore:
                 f"but {current[0]} is configured now"
             )
         return True, None
+
+    def vector_count(self) -> int:
+        """Observations that carry a vector, for `mem status`."""
+        return _vector.count(self._conn) if self._vec_loaded_ok() else 0
 
     def _provider_identity(self) -> Optional[tuple[str, int]]:
         provider = self._embedding_provider()
@@ -361,34 +391,76 @@ class MemoryStore:
             return None
         return name, int(dimension)
 
-    def _embed(self, rowid: int, text: str) -> bool:
-        """Attach a vector to a row, if everything the vector path needs exists."""
+    def embed_missing(self, *, limit: Optional[int] = None) -> int:
+        """Give observations that lack a vector one. How many were written.
+
+        The one place vectors are written, so every path — a write, a sync, a
+        search meeting rows nobody embedded — fills the index the same way. A
+        store from before embeddings shipped is therefore backfilled by using
+        it, with no rebuild step to know about.
+
+        An index written by a different model is rebuilt rather than refused:
+        vectors are derived from the observations, which are all still here,
+        and two models' vectors in one index would give neighbours computed
+        across incompatible spaces. Until the rebuild finishes the index holds
+        fewer rows, never mixed ones.
+        """
         if not self._vec_loaded_ok():
-            return False
+            return 0
         identity = self._provider_identity()
         if identity is None:
-            return False
+            return 0
         name, dimension = identity
         stored = self._vector_meta()
-        if stored and stored != (name, dimension):
-            logger.warning(
-                "not embedding: index belongs to %s, current provider is %s", stored[0], name
+        if stored and stored != identity:
+            logger.info("re-embedding: index belongs to %s, provider is %s", stored[0], name)
+            _vector.drop_table(self._conn)
+            self._conn.execute(
+                "DELETE FROM mem_meta WHERE key IN ('embedding_provider', 'embedding_dimension')"
             )
-            return False
+            self._conn.commit()
         try:
-            vector_value = self._embedding_provider().embed_query(text)
             _vector.ensure_table(self._conn, dimension)
-            _vector.upsert(self._conn, rowid, vector_value)
-        except Exception as exc:  # noqa: BLE001 — provider internals vary
-            # An observation without a vector is still an observation; losing
-            # the write because the optional half failed would be worse.
-            logger.warning("observation stored without a vector: %s", exc)
+            pending = _vector.missing(self._conn, limit)
+        except sqlite3.Error as exc:
+            # A broken index is a reason to search by keyword, which the
+            # caller will then report — not a reason to fail the command.
+            logger.warning("vector index unusable, not embedding: %s", exc)
+            return 0
+        # Read, then release: the model runs with no transaction open, so a
+        # hook capturing a prompt meanwhile is never kept waiting on it.
+        self._conn.commit()
+        if not pending:
+            return 0
+        provider = self._embedding_provider()
+        written = 0
+        for start in range(0, len(pending), _EMBED_CHUNK):
+            chunk = pending[start:start + _EMBED_CHUNK]
+            try:
+                vectors = provider.embed([f"{title}\n{body}" for _, title, body in chunk])
+                for (rowid, _, _), vector_value in zip(chunk, vectors):
+                    _vector.upsert(self._conn, rowid, vector_value)
+            except Exception as exc:  # noqa: BLE001 — provider internals vary
+                # An observation without a vector is still an observation, and
+                # the next pass will try it again.
+                self._conn.rollback()
+                logger.warning("observations left without a vector: %s", exc)
+                break
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO mem_meta(key, value) VALUES (?, ?)",
+                [("embedding_provider", name), ("embedding_dimension", str(dimension))],
+            )
+            self._conn.commit()
+            written += len(chunk)
+        return written
+
+    def _has_vector(self, rowid: int) -> bool:
+        try:
+            return self._conn.execute(
+                "SELECT 1 FROM observations_vec WHERE rowid = ?", (rowid,)
+            ).fetchone() is not None
+        except sqlite3.Error:
             return False
-        self._conn.executemany(
-            "INSERT OR REPLACE INTO mem_meta(key, value) VALUES (?, ?)",
-            [("embedding_provider", name), ("embedding_dimension", str(dimension))],
-        )
-        return True
 
     # -- writes -----------------------------------------------------------
 
@@ -422,8 +494,15 @@ class MemoryStore:
         platform_source: Optional[str] = None,
         summary_source: str = "verbatim",
         file_paths: Sequence[str] = (),
+        embed: bool = True,
     ) -> dict[str, Any]:
-        """Record one observation and return it."""
+        """Record one observation and return it.
+
+        ``embed=False`` is for the prompt-capture hook, which runs inside the
+        host's turn: loading a model there would turn ~1 ms of work into most
+        of a second on every prompt. Its rows are embedded by the next sync,
+        write or search instead (:meth:`embed_missing`).
+        """
         created_at = self._next_timestamp()
         paths = list(file_paths)
         # The id is content-addressed including the timestamp, which is unique
@@ -442,8 +521,12 @@ class MemoryStore:
                 json.dumps(paths), platform_source, summary_source, created_at,
             ),
         )
-        embedded = self._embed(int(cursor.lastrowid or 0), f"{title}\n{body}")
         self._conn.commit()
+        embedded = False
+        if embed:
+            rowid = int(cursor.lastrowid or 0)
+            self.embed_missing(limit=BACKFILL_CAP)
+            embedded = self._has_vector(rowid)
         return {
             "id": obs_id,
             "project": project,
@@ -707,6 +790,7 @@ class MemoryStore:
         """
         if not self._vec_loaded_ok():
             return None
+        self.embed_missing(limit=BACKFILL_CAP)
         available, _ = self.semantic_status()
         if not available:
             return None
@@ -718,6 +802,7 @@ class MemoryStore:
         neighbours = _vector.knn(self._conn, vector_value, limit * 4)
         if neighbours is None:
             return None
+        neighbours = [pair for pair in neighbours if pair[1] >= MIN_SIMILARITY]
         if not where:
             return neighbours[:limit]
         allowed = {

@@ -164,7 +164,10 @@ def capture(
                 session, shaped["body"], doc_type=shaped["doc_type"]
             ):
                 return False
-            memory.add(project=repo_root.name, platform_source=host, **shaped)
+            # No embedding here: this runs inside the host's turn, and the
+            # model's load would be most of a second on every prompt. The
+            # next sync, write or search gives the row its vector.
+            memory.add(project=repo_root.name, platform_source=host, embed=False, **shaped)
     except Exception as exc:  # noqa: BLE001 — a hook must not be the thing that fails
         logger.debug("capture skipped: %s", exc)
         return False

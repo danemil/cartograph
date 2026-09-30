@@ -1,6 +1,8 @@
 """Vector embedding support for semantic code search.
 
 Supports multiple providers:
+0. ONNX (the model the payload carries) - the default wherever the launcher
+   names one; CPU only, no network, no PyTorch.
 1. Local (sentence-transformers) - Private, fast, offline.
 2. Google Gemini - High-quality, cloud-based. Requires explicit opt-in.
 3. MiniMax (embo-01) - High-quality 1536-dim cloud embeddings. Requires MINIMAX_API_KEY.
@@ -12,6 +14,7 @@ Supports multiple providers:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -147,6 +150,140 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     @property
     def name(self) -> str:
         return f"local:{self._model_name}"
+
+
+#: Where the embedding model the payload carries is, set by the launcher and
+#: the extension exactly as they set ``TREE_SITTER_LANGUAGE_PACK_CACHE_DIR``
+#: for the grammars: the frozen engine has no business guessing its own
+#: install layout, and one variable is what an operator can override.
+MODEL_DIR_ENV = "CARTO_EMBEDDING_MODEL_DIR"
+
+#: Written by ``scripts/build-payload.py`` beside the model. The engine reads
+#: the model's shape from it rather than restating it, so the build is the one
+#: place the model is defined.
+MODEL_MANIFEST = "MODEL.json"
+
+#: Rows per inference call. Padding makes a batch as long as its longest row,
+#: so larger batches stop paying for themselves quickly on short memories.
+_ONNX_BATCH = 16
+
+
+def bundled_model_dir() -> Path | None:
+    """The model directory named by :data:`MODEL_DIR_ENV`, if it holds one."""
+    raw = os.environ.get(MODEL_DIR_ENV, "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if (path / MODEL_MANIFEST).is_file() else None
+
+
+def _onnx_runtime_missing() -> str | None:
+    """Which of the ONNX stack's packages is absent, without importing it.
+
+    ``find_spec`` rather than an import because importing onnxruntime and
+    numpy costs most of a second cold, and this is asked on paths — `mem
+    status`, a keyword search — that must not pay for a model they never run.
+    """
+    import importlib.util
+
+    for module in ("onnxruntime", "tokenizers", "numpy"):
+        if importlib.util.find_spec(module) is None:
+            return module
+    return None
+
+
+def local_unavailable_reason() -> str:
+    """Why the default provider resolved to nothing, for `mem status`."""
+    raw = os.environ.get(MODEL_DIR_ENV, "").strip()
+    if not raw:
+        return (
+            f"no embedding model: {MODEL_DIR_ENV} is not set (the carto launcher "
+            "sets it to the model the payload carries)"
+        )
+    if bundled_model_dir() is None:
+        return f"no embedding model at {raw} ({MODEL_MANIFEST} not found)"
+    missing = _onnx_runtime_missing()
+    if missing:
+        return f"the embedding runtime is incomplete: {missing} is not installed"
+    return "no embedding provider is configured"
+
+
+class OnnxEmbeddingProvider(EmbeddingProvider):
+    """A sentence-embedding model run by ONNX Runtime on the CPU, from disk.
+
+    What the payload ships, because PyTorch and sentence-transformers are an
+    order of magnitude too large for a `.vsix` and neither works offline
+    without a pre-seeded model cache anyway. Nothing here can reach the
+    network: the model and tokenizer are files, and the tokenizer is built
+    from its JSON rather than through any hub client.
+
+    Nothing is imported or loaded until the first embedding, so constructing
+    the provider — which `mem status` and every keyword-only path do — costs a
+    small JSON read.
+    """
+
+    def __init__(self, model_dir: Path) -> None:
+        self._dir = Path(model_dir)
+        self._manifest = json.loads((self._dir / MODEL_MANIFEST).read_text(encoding="utf-8"))
+        self._session: Any = None
+        self._tokenizer: Any = None
+
+    def _load(self) -> None:
+        if self._session is not None:
+            return
+        with _MODEL_INIT_LOCK:
+            if self._session is not None:
+                return
+            import onnxruntime
+            from tokenizers import Tokenizer
+
+            options = onnxruntime.SessionOptions()
+            # ORT's own warnings go to stderr, which a hook or an agent reads as
+            # output. Errors still raise.
+            options.log_severity_level = 3
+            session = onnxruntime.InferenceSession(
+                str(self._dir / self._manifest["model"]),
+                sess_options=options,
+                providers=["CPUExecutionProvider"],
+            )
+            tokenizer = Tokenizer.from_file(str(self._dir / self._manifest["tokenizer"]))
+            tokenizer.enable_truncation(int(self._manifest["max_seq_length"]))
+            tokenizer.enable_padding()
+            self._inputs = {i.name for i in session.get_inputs()}
+            self._tokenizer = tokenizer
+            self._session = session
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        import numpy as np
+
+        self._load()
+        out: list[list[float]] = []
+        for start in range(0, len(texts), _ONNX_BATCH):
+            encoded = self._tokenizer.encode_batch(texts[start:start + _ONNX_BATCH])
+            ids = np.array([e.ids for e in encoded], dtype=np.int64)
+            mask = np.array([e.attention_mask for e in encoded], dtype=np.int64)
+            feed = {"input_ids": ids, "attention_mask": mask}
+            if "token_type_ids" in self._inputs:
+                feed["token_type_ids"] = np.zeros_like(ids)
+            hidden = self._session.run(None, feed)[0]
+            # Mean pooling over real tokens, then unit length: what the model
+            # was trained with (its 1_Pooling config), so cosine is meaningful.
+            weights = mask[..., None].astype(np.float32)
+            pooled = (hidden * weights).sum(axis=1) / np.clip(weights.sum(axis=1), 1e-9, None)
+            pooled /= np.clip(np.linalg.norm(pooled, axis=1, keepdims=True), 1e-12, None)
+            out.extend(row.tolist() for row in pooled)
+        return out
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed([text])[0]
+
+    @property
+    def dimension(self) -> int:
+        return int(self._manifest["dimension"])
+
+    @property
+    def name(self) -> str:
+        return f"onnx:{self._manifest['name']}"
 
 
 class GoogleEmbeddingProvider(EmbeddingProvider):
@@ -982,7 +1119,12 @@ def get_provider(
         except ImportError:
             return None
 
-    # Default: local
+    # Default: local. The payload's own model first, when no other local model
+    # was asked for: it is the only one a default-deny machine can have.
+    if model is None and not os.environ.get("CRG_EMBEDDING_MODEL"):
+        bundled = bundled_model_dir()
+        if bundled is not None and _onnx_runtime_missing() is None:
+            return OnnxEmbeddingProvider(bundled)
     if not _check_available():
         return None
     try:

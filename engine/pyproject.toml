@@ -67,12 +67,16 @@ google-embeddings = [
 communities = [
     "igraph>=0.11.0",
 ]
-# Vector search over observations. Optional on purpose: the target machines
-# install under default-deny egress and are not guaranteed a loadable SQLite
-# extension, so `carto mem search` runs without it and reports `search_mode`
-# keyword rather than claiming a semantic answer it did not compute.
+# Vector search over observations. The payload always carries these (pinned in
+# scripts/build-payload.py, with the model); here they are optional so a
+# source install without them runs `carto mem search` as keyword and says so
+# rather than claiming a semantic answer it did not compute. The model itself
+# is data, not a package: `python3 scripts/build-payload.py --model-only`.
 memory = [
     "sqlite-vec>=0.1.6,<0.2",
+    "onnxruntime>=1.20,<2",
+    "tokenizers>=0.20,<1",
+    "numpy>=1.26,<3",
 ]
 eval = [
     "matplotlib>=3.7.0",

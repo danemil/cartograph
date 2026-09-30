@@ -466,8 +466,20 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
             "summary": f"Found {len(items)} observation(s) matching '{args.query}'",
             "items": items,
         }
+        semantic_reason = None
+        if mode == "fts":
+            # Everything was in place and the query itself failed — the model
+            # raised, or the index did not answer — is the one case status
+            # cannot name, because it holds only for this query.
+            semantic_reason = memory.semantic_status()[1] or (
+                "the embedding model or the vector index failed on this query"
+            )
         _count_served(memory, result)
 
+    if mode == "fts":
+        # Keyword with no reason is a dead end: the agent cannot tell a store
+        # that has no model from one that has not been embedded yet.
+        result["semantic_unavailable"] = semantic_reason
     if relaxed:
         # Said plainly, because it changes how far the rows should be trusted:
         # these share SOME of the query's words, not all of them.
@@ -575,6 +587,7 @@ def _status_result(
         "schema_version": _store.LATEST_VERSION,
         "semantic_search": semantic,
         **stats,
+        "embedded_observations": memory.vector_count(),
     }
     if reason:
         result["semantic_search_unavailable"] = reason
