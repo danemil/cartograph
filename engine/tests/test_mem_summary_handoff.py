@@ -416,3 +416,116 @@ def test_hand_off_on_summarise_needs_pending(repo):
                        "--hand-off", "no-cli")
 
     assert code == 1
+
+
+# --- why a summary is structural, kept in the store ------------------------
+#
+# The extension decides in a window why it could not use a model, and that
+# window's memory is gone at reload. `mem status` must still say why the latest
+# summary is structural, so the reason is persisted with the session it
+# explains.
+
+
+def test_a_callers_fallback_reason_is_stored_and_reported(repo, no_cli):
+    _capture(repo, "s1", "First prompt of the session", "Second prompt of the session")
+
+    result = summarise.summarise(repo, session="s1", use_host=False,
+                                 fallback_reason='model "auto" not offered')
+
+    assert result["fallback_reason"] == 'model "auto" not offered'
+    with store.MemoryStore(store.db_path(repo, create=False)) as memory:
+        assert summarise.fallback_reason_for(memory, "s1") == 'model "auto" not offered'
+
+
+def test_status_names_the_reason_beside_structural(repo):
+    _capture(repo, "s1", "First prompt of the session", "Second prompt of the session")
+    _run_cli("mem", "summarise", "--repo", str(repo), "--session", "s1", "--no-host-agent",
+             "--fallback-reason", 'model "auto" not offered')
+
+    code, status = _run_cli("mem", "status", "--repo", str(repo))
+
+    assert code == 0
+    assert status["data"]["latest_summary_by"] == 'structural (model "auto" not offered)'
+
+
+def test_the_engines_own_fallback_reason_is_kept_too(repo, no_cli):
+    _capture(repo, "s1", "First prompt of the session", "Second prompt of the session")
+
+    summarise.summarise(repo, session="s1")
+
+    with store.MemoryStore(store.db_path(repo, create=False)) as memory:
+        assert "no host agent CLI on PATH" in (summarise.fallback_reason_for(memory, "s1") or "")
+
+
+def test_structural_by_choice_has_no_reason_to_report(repo, no_cli):
+    # --no-host-agent alone is somebody's choice, not a failure to explain.
+    _capture(repo, "s1", "First prompt of the session", "Second prompt of the session")
+
+    summarise.summarise(repo, session="s1", use_host=False)
+
+    with store.MemoryStore(store.db_path(repo, create=False)) as memory:
+        assert summarise.fallback_reason_for(memory, "s1") is None
+
+
+def test_a_later_model_summary_does_not_inherit_an_older_reason(repo, tmp_path, no_cli):
+    _capture(repo, "s1", "First prompt of the session", "Second prompt of the session")
+    _capture(repo, "s2", "Third prompt, other session", "Fourth prompt, other session")
+    summarise.summarise(repo, session="s1", use_host=False, fallback_reason="consent refused")
+    time.sleep(0.01)
+    summarise.summarise(repo, session="s2", answer=_ANSWER, summarised_by="vscode-lm:auto",
+                        user_dirs=[tmp_path / "User"])
+
+    code, status = _run_cli("mem", "status", "--repo", str(repo))
+
+    assert status["data"]["latest_summary_by"] == "vscode-lm:auto"
+
+
+def test_the_reason_is_one_short_line(repo, no_cli):
+    _capture(repo, "s1", "First prompt of the session", "Second prompt of the session")
+
+    summarise.summarise(repo, session="s1", use_host=False,
+                        fallback_reason="first line\nsecond line " + "x" * 500)
+
+    with store.MemoryStore(store.db_path(repo, create=False)) as memory:
+        reason = summarise.fallback_reason_for(memory, "s1") or ""
+    assert "\n" not in reason
+    assert reason.startswith("first line second line")
+    assert len(reason) <= summarise.MAX_REASON_CHARS
+
+
+def test_sync_passes_the_reason_to_every_structural_summary(repo, tmp_path, no_cli):
+    user = tmp_path / "User"
+    _chat_log(user, repo, "done", _TURNS)
+
+    sync.sync(repo, user_dirs=[user], copilot_dir=tmp_path / "copilot",
+              summarise_sessions=True, use_host=False, fallback_reason="consent refused")
+
+    with store.MemoryStore(store.db_path(repo, create=False)) as memory:
+        assert summarise.fallback_reason_for(memory, "done") == "consent refused"
+
+
+def test_cli_sync_takes_the_reason(repo, tmp_path):
+    user = tmp_path / "User"
+    _chat_log(user, repo, "done", _TURNS)
+
+    code, _ = _run_cli("mem", "sync", "--repo", str(repo), "--vscode-user-dir", str(user),
+                       "--summarise", "--no-host-agent", "--fallback-reason", "consent refused")
+    code, status = _run_cli("mem", "status", "--repo", str(repo))
+
+    assert status["data"]["latest_summary_by"] == "structural (consent refused)"
+
+
+@pytest.mark.parametrize("command", [
+    ["summarise", "--session", "s1"],
+    ["summarise", "--session", "s1", "--brief-only"],
+    ["sync", "--summarise"],
+    ["sync"],
+])
+def test_a_reason_without_no_host_agent_is_a_usage_error(repo, command):
+    _capture(repo, "s1", "First prompt of the session", "Second prompt of the session")
+
+    code, doc = _run_cli("mem", *command, "--repo", str(repo), "--fallback-reason", "why")
+
+    assert code == 1
+    assert doc["ok"] is False
+    assert _sessions(repo) == []

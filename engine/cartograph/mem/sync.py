@@ -350,6 +350,7 @@ def sync(
     summarise_sessions: bool = False,
     use_host: bool = True,
     hand_off: Optional[str] = None,
+    fallback_reason: Optional[str] = None,
 ) -> dict[str, Any]:
     """Import the prompts Copilot logged for *repo_root* that are not stored yet.
 
@@ -452,6 +453,7 @@ def sync(
                 for outcome in _summarise.summarise_pending(
                     repo_root, exclude=changing, project=project, use_host=use_host,
                     user_dirs=user_dirs, workspace_dirs=workspace_dirs,
+                    fallback_reason=fallback_reason,
                 )
                 if outcome.get("observation")
             ]

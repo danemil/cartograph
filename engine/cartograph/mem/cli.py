@@ -146,6 +146,13 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
             "agent, so no Copilot quota is spent"
         ),
     )
+    summarise_cmd.add_argument(
+        "--fallback-reason", dest="fallback_reason", default=None, metavar="TEXT",
+        help=(
+            "With --no-host-agent: why no model could write this summary, kept in the "
+            "store so `mem status` can say it"
+        ),
+    )
 
     summarise_cmd.add_argument(
         "--brief-only", dest="brief_only", action="store_true",
@@ -192,6 +199,13 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     sync_cmd.add_argument(
         "--no-host-agent", dest="no_host_agent", action="store_true",
         help="With --summarise: write structural summaries without calling a host agent",
+    )
+    sync_cmd.add_argument(
+        "--fallback-reason", dest="fallback_reason", default=None, metavar="TEXT",
+        help=(
+            "With --no-host-agent: why no model could write these summaries, kept in the "
+            "store so `mem status` can say it"
+        ),
     )
     sync_cmd.add_argument(
         "--hand-off", dest="hand_off", choices=list(_summarise.HAND_OFF_MODES), default=None,
@@ -270,6 +284,8 @@ def _summarise_usage(args: argparse.Namespace) -> Optional[str]:
         return "--answer-file stores one session's answer; not with --pending or --no-host-agent"
     if args.hand_off and (not args.pending or args.no_host_agent):
         return "--hand-off needs --pending, and not --no-host-agent"
+    if args.fallback_reason is not None and not args.no_host_agent:
+        return "--fallback-reason explains a structural summary; it needs --no-host-agent"
     if args.summarised_by and not _summarise.ANSWER_LABEL.match(args.summarised_by):
         return f"--summarised-by must be vscode-lm:<model-id>, not {args.summarised_by!r}"
     return None
@@ -334,6 +350,10 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
             _usage_exit(
                 command, "--hand-off needs --summarise, and not --no-host-agent", fmt
             )
+        if args.fallback_reason is not None and not (args.summarise and args.no_host_agent):
+            _usage_exit(
+                command, "--fallback-reason needs --summarise and --no-host-agent", fmt
+            )
         user_dirs, workspace_dirs = _log_dirs(args)
         result = _sync.sync(
             repo_root,
@@ -343,6 +363,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
             summarise_sessions=args.summarise,
             use_host=not args.no_host_agent,
             hand_off=args.hand_off,
+            fallback_reason=args.fallback_reason,
         )
         synced = _store.db_path(repo_root, create=False)
         provenance = None
@@ -395,7 +416,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
         elif args.pending:
             ran = _summarise.summarise_pending(
                 repo_root, exclude=args.exclude_session, project=args.project,
-                use_host=not args.no_host_agent,
+                use_host=not args.no_host_agent, fallback_reason=args.fallback_reason,
             )
             result = {
                 "summary": f"Summarised {sum(1 for r in ran if r.get('observation'))} "
@@ -416,6 +437,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
                 user_dirs=user_dirs, workspace_dirs=workspace_dirs,
                 brief_only=args.brief_only,
                 answer=answer, summarised_by=args.summarised_by,
+                fallback_reason=args.fallback_reason,
             )
         with _store.MemoryStore(path) as memory:
             provenance = memory.provenance()
@@ -554,16 +576,21 @@ def _latest_summary_by(memory: _store.MemoryStore) -> Optional[str]:
 
     What the status bar shows, read from the row itself rather than from
     whichever process last ran, so a summary written by the CLI in a terminal
-    and one written through VS Code are reported alike.
+    and one written through VS Code are reported alike. A structural one
+    carries its recorded reason, ``structural (<reason>)``: a bare "structural"
+    left the one person who hit it with no way to learn why.
     """
+    from . import summarise as _summarise
+
     row = memory._conn.execute(  # noqa: SLF001 — one lookup, here only
-        "SELECT platform_source, summary_source FROM observations "
+        "SELECT platform_source, summary_source, session FROM observations "
         "WHERE doc_type = 'sessions' ORDER BY created_at DESC, rowid DESC LIMIT 1"
     ).fetchone()
     if row is None:
         return None
     if row[1] != "host-agent":
-        return "structural"
+        reason = _summarise.fallback_reason_for(memory, row[2]) if row[2] else None
+        return f"structural ({reason})" if reason else "structural"
     return row[0] or "host-agent"
 
 

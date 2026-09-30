@@ -107,6 +107,19 @@ MAX_PENDING = 3
 #: the CLI never saw.
 ANSWER_LABEL = re.compile(r"^vscode-lm:[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$")
 
+#: ``mem_meta`` key prefix, per session: why that session's summary is
+#: structural. The row itself only says ``structural``; the reason was known to
+#: whoever decided it — often the extension, whose window forgets at reload —
+#: and ``mem status`` is where someone later asks.
+FALLBACK_REASON = "summary:fallback_reason:"
+
+#: A reason is a status line, not a log: one line, short enough to read there.
+MAX_REASON_CHARS = 200
+
+#: The reason ``--no-host-agent`` gives on its own. A choice, not a failure, so
+#: nothing is persisted for it.
+_CHOSEN = "--no-host-agent"
+
 #: ``--hand-off`` values. ``no-cli``: hand off only what no CLI host will
 #: summarise here. ``always``: skip the CLI even where it is installed, for an
 #: organisation that wants summaries through VS Code's model policy alone.
@@ -400,6 +413,7 @@ def summarise(
     brief_only: bool = False,
     answer: Optional[str] = None,
     summarised_by: Optional[str] = None,
+    fallback_reason: Optional[str] = None,
 ) -> dict[str, Any]:
     """Summarise one session into one new observation. Never raises, but for a bad label.
 
@@ -414,6 +428,10 @@ def summarise(
     *summarised_by* as its ``platform_source``. Both pass every check below
     first, so a caller cannot brief or store a session that the one-summary
     rule or :data:`MIN_PROMPTS` would have refused.
+
+    *fallback_reason*, with ``use_host=False``, is why the caller could not get
+    a model to write this one; it replaces the bare ``--no-host-agent`` as the
+    reason, and is persisted like the engine's own reasons.
     """
     if answer is not None and not ANSWER_LABEL.match(summarised_by or ""):
         raise ValueError(
@@ -484,11 +502,15 @@ def summarise(
             session, prompts, replies, use_host=use_host
         )
         label = host.name if host else None
+        if not use_host and fallback_reason and fallback_reason.strip():
+            reason = one_line_reason(fallback_reason)
     with _store.MemoryStore(path) as memory:
         memory.set_meta(
             COST_HOST_CALLS, str(int(memory.get_meta(COST_HOST_CALLS) or 0) + attempts)
         )
         memory.set_meta(COST_RAW_CHARS + session, str(raw_chars))
+        if source == "structural" and reason and reason != _CHOSEN:
+            memory.set_meta(FALLBACK_REASON + session, one_line_reason(reason))
         observation = memory.add(
             project=project or repo_root.name,
             title=title,
@@ -536,6 +558,7 @@ def summarise_pending(
     use_host: bool = True,
     user_dirs: "Optional[Iterable[Path]]" = None,
     workspace_dirs: "Iterable[Path]" = (),
+    fallback_reason: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """Summarise the sessions that ended without anything saying so.
 
@@ -558,9 +581,23 @@ def summarise_pending(
         summarise(
             repo_root, session=session, project=project, use_host=use_host,
             user_dirs=user_dirs, workspace_dirs=workspace_dirs,
+            fallback_reason=fallback_reason,
         )
         for session in sessions
     ]
+
+
+def one_line_reason(text: str) -> str:
+    """*text* as it may be stored: whitespace folded, clipped to one status line."""
+    folded = " ".join(text.split())
+    if len(folded) <= MAX_REASON_CHARS:
+        return folded
+    return folded[: MAX_REASON_CHARS - 1].rstrip() + "…"
+
+
+def fallback_reason_for(memory: "_store.MemoryStore", session: str) -> Optional[str]:
+    """Why *session*'s summary is structural, where anything recorded why."""
+    return memory.get_meta(FALLBACK_REASON + session)
 
 
 def _replies_for(
