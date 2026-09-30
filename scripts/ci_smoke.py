@@ -214,7 +214,7 @@ def check_graph(carto: Path, root: Path) -> None:
     print(f"ok: {nodes} nodes, {data.get('files')} files, languages={data.get('languages')}")
 
 
-def check_memory(carto: Path, root: Path) -> None:
+def check_memory(carto: Path, root: Path, target: str) -> None:
     with tempfile.TemporaryDirectory() as tmp, Offline(carto) as offline:
         repo = Path(tmp)
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
@@ -242,10 +242,10 @@ def check_memory(carto: Path, root: Path) -> None:
         print(f"ok: without the model: keyword, and missed "
               f"({keyword['data'].get('semantic_unavailable')})")
 
-        measure(run, repo, with_model, without, root)
+        measure(run, repo, with_model, without, root, target)
 
 
-def measure(run: list[str], repo: Path, with_model, without, root: Path) -> None:
+def measure(run: list[str], repo: Path, with_model, without, root: Path, target: str) -> None:
     search = [*run, "mem", "search", "--query", REWORDED, "--repo", str(repo)]
     # Each sample is a fresh process, as every `carto` call is; the OS file
     # cache is warm, because the checks above already read the model.
@@ -276,7 +276,7 @@ def measure(run: list[str], repo: Path, with_model, without, root: Path) -> None
         return "n/a" if value is None else f"{value / 1e6:.0f} MB"
 
     print("\n== memory search cost on this runner ==")
-    built = sorted(Path("dist").glob(f"carto-{root.name}-*.vsix"), key=lambda f: f.stat().st_mtime)
+    built = sorted(Path("dist").glob(f"carto-{target}-*.vsix"), key=lambda f: f.stat().st_mtime)
     if built:
         print(f"vsix               {built[-1].name}: {built[-1].stat().st_size / 1e6:.0f} MB")
     print(f"payload            {size / 1e6:.0f} MB unpacked (model {model / 1e6:.0f} MB)")
@@ -289,15 +289,50 @@ def measure(run: list[str], repo: Path, with_model, without, root: Path) -> None
     print(f"embedding          {per_row:.1f} ms/row ({TIMED_ROWS} rows in one mem sync)")
 
 
-def main(target: str) -> int:
-    root = (Path("dist/payload") / target).resolve()
-    manifest = json.loads((root / "PAYLOAD.json").read_text())
-    carto = root / manifest["executable"]
-    subprocess.run([str(carto), "--version"], check=True)
-    check_graph(carto, root)
-    check_memory(carto, root)
+def unpack_vsix(vsix: Path, into: Path) -> Path:
+    """The payload as VS Code would install it: unzipped, modes kept.
+
+    Python's zipfile drops the Unix mode that `vsce` stored, and VS Code's
+    extractor restores it, so it is restored here too — a payload whose engine
+    lost its executable bit in the zip should fail this, not be patched up.
+    """
+    import zipfile
+
+    with zipfile.ZipFile(vsix) as archive:
+        for info in archive.infolist():
+            path = Path(archive.extract(info, into))
+            mode = info.external_attr >> 16
+            if mode and not info.is_dir():
+                path.chmod(mode & 0o7777)
+    return into / "extension" / "payload"
+
+
+def main(argv: list[str]) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("target")
+    ap.add_argument("--vsix", type=Path,
+                    help="test the payload inside this .vsix rather than dist/payload/<target>")
+    args = ap.parse_args(argv)
+    if sys.platform.startswith("linux"):
+        # Which machine this proved: the floor is the point of the Linux runs.
+        release = Path("/etc/os-release").read_text() if Path("/etc/os-release").exists() else ""
+        name = next((line.split("=", 1)[1].strip('"') for line in release.splitlines()
+                     if line.startswith("PRETTY_NAME=")), "unknown")
+        print(f"host: {name}, {os.confstr('CS_GNU_LIBC_VERSION')}")
+    with tempfile.TemporaryDirectory() as unpacked:
+        if args.vsix:
+            root = unpack_vsix(args.vsix.resolve(), Path(unpacked))
+        else:
+            root = (Path("dist/payload") / args.target).resolve()
+        manifest = json.loads((root / "PAYLOAD.json").read_text())
+        carto = root / manifest["executable"]
+        subprocess.run([str(carto), "--version"], check=True)
+        check_graph(carto, root)
+        check_memory(carto, root, args.target)
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1]))
+    raise SystemExit(main(sys.argv[1:]))

@@ -13,26 +13,28 @@
 # language runtime, by checking that python, pip, node and npm are all absent.
 
 # ---------------------------------------------------------------- stage one
-# Python 3.12 to match the interpreter the engine is developed against;
-# PyInstaller freezes whichever one it runs on, so the version is not an
-# incidental choice.
+# The same image and interpreter as CI's linux job (.github/workflows/release.yml),
+# which explains the choice at length. In short: PyInstaller bundles libpython
+# and libstdc++ but NOT libc, so the payload needs the glibc of whatever built
+# it — and the machine it lands on is older than any developer's. Pinned to
+# bookworm (2.36), 0.8.0's bundled libstdc++ could not load on Ubuntu 22.04
+# (2.35). manylinux_2_28 is glibc 2.28 and maintained for building exactly
+# this kind of artifact. Its own CPython is static and PyInstaller needs a
+# shared libpython, so uv's CPython 3.12 is frozen instead — which also loads
+# SQLite extensions, as build-payload.py requires.
 #
-# Pinned to bookworm, and that matters more than the Python version.
-# PyInstaller bundles libpython but NOT libc — the frozen binary dynamically
-# links whatever glibc it was built against, and glibc is forward- but not
-# backward-compatible. The unpinned `python:3.12-slim` is Debian 13 (glibc
-# 2.41) as of this writing, which produces a binary demanding GLIBC_2.38 that
-# will not start on Debian 12, RHEL 9, or Ubuntu 22.04 — the machines this is
-# actually for. Freeze against the OLDEST glibc the payload must run on.
-FROM python:3.12-slim-bookworm AS payload-builder
+# The image carries binutils (PyInstaller shells out to objdump), curl (the
+# embedding model) and uv. Rust compiles tree-sitter-language-pack, whose only
+# Linux wheel needs glibc 2.34.
+ARG TARGETARCH
+FROM quay.io/pypa/manylinux_2_28_x86_64 AS builder-amd64
+FROM quay.io/pypa/manylinux_2_28_aarch64 AS builder-arm64
+FROM builder-${TARGETARCH} AS payload-builder
 
-# PyInstaller reads ELF headers to find the shared libraries it must bundle,
-# and shells out to objdump to do it. Without binutils it produces a binary
-# that is missing its dependencies and fails only when run.
-# curl fetches the embedding model (build-payload.py), as in the CI job.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends binutils ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+    && uv python install 3.12 \
+    && ln -s "$(uv python find --managed-python 3.12)" /usr/local/bin/build-python
+ENV PATH=/root/.cargo/bin:$PATH
 
 WORKDIR /work
 # Only what build-payload.py reads. The rest of the repo would invalidate this
@@ -43,13 +45,19 @@ COPY scripts /work/scripts
 # Writes dist/payload/<target>, where target is derived from this container's
 # own architecture — linux-x64 under an amd64 platform, linux-arm64 under an
 # arm64 one. This is the step that exists because PyInstaller cannot
-# cross-compile: a Linux payload has to be frozen on Linux.
-RUN python3 scripts/build-payload.py
+# cross-compile: a Linux payload has to be frozen on Linux. Then the floor:
+# no ELF file in the payload may need a glibc newer than 2.31.
+RUN build-python scripts/build-payload.py --python "$(readlink -f /usr/local/bin/build-python)" \
+    && build-python scripts/check-glibc.py dist/payload/linux-* --max 2.31
 
 # ---------------------------------------------------------------- stage two
-# Debian slim rather than the Python image: the point is a machine with no
-# language runtime on it at all.
-FROM debian:bookworm-slim AS acceptance
+# A plain distribution image rather than a Python one: the point is a machine
+# with no language runtime on it at all. Ubuntu 20.04 (glibc 2.31) because it
+# is the oldest the payload claims (docs/packaging.md, "Supported Linux"); a
+# test stage older than the builder's claims is the only one that catches a
+# floor that crept up.
+FROM ubuntu:20.04 AS acceptance
+ENV DEBIAN_FRONTEND=noninteractive
 
 # git because both the hook line and review-summary ask a repository what
 # changed; jq because the assertions read envelopes rather than log text, and

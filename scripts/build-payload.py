@@ -78,7 +78,9 @@ DIST = ROOT / "dist"
 #: this is not `pip install ./engine`.
 RUNTIME_DEPS = [
     "tree-sitter>=0.23.0,<1",
-    "tree-sitter-language-pack>=0.3.0,<2",
+    # Pinned: on Linux it is compiled here (see _SOURCE_ON_LINUX), and an
+    # unpinned source build is a new toolchain question on every release.
+    "tree-sitter-language-pack==1.20.0",
     "pyyaml>=6.0,<7",
     "networkx>=3.2,<4",
     "watchdog>=4.0.0,<7",
@@ -95,6 +97,14 @@ RUNTIME_DEPS = [
 #: from a file) and which would carry an HTTP stack into an artifact that must
 #: not reach the network.
 NO_DEPS = ["tokenizers==0.23.2"]
+
+#: Built from source on Linux instead of installed as a wheel. Its only Linux
+#: wheels are manylinux_2_34: linked on glibc 2.34+, so `dlopen` and
+#: `pthread_create` resolve to their GLIBC_2.34 versions and the payload's
+#: floor becomes 2.34 whatever the build image. Compiled on the build image,
+#: the same source links against that image's glibc. It is a small Rust crate;
+#: the grammars themselves are downloaded, not compiled (seed_grammars).
+_SOURCE_ON_LINUX = ["tree-sitter-language-pack"]
 
 #: Pinned so a rebuild months from now produces the same artifact shape.
 PYINSTALLER = "pyinstaller==6.16.0"
@@ -212,7 +222,20 @@ def build_venv(base: str) -> Path:
         run([base, "-m", "venv", str(venv)])
         marker.write_text(base)
     run([str(python), "-m", "pip", "install", "--upgrade", "pip", "--quiet"])
-    run([str(python), "-m", "pip", "install", "--quiet", *RUNTIME_DEPS, PYINSTALLER])
+    source: list[str] = []
+    if sys.platform.startswith("linux"):
+        if not shutil.which("cargo"):
+            raise SystemExit(
+                "cargo not found: on Linux tree-sitter-language-pack is compiled from "
+                "source so the payload keeps the build image's glibc floor. Install a "
+                "Rust toolchain (rustup, minimal profile) and re-run."
+            )
+        # --only-binary for everything else: on an old image pip would otherwise
+        # quietly compile any package whose wheels outgrew it, and the glibc
+        # check would be the first to notice. In this order: a later
+        # `--only-binary :all:` would clear the --no-binary list.
+        source = ["--only-binary", ":all:", "--no-binary", ",".join(_SOURCE_ON_LINUX)]
+    run([str(python), "-m", "pip", "install", "--quiet", *source, *RUNTIME_DEPS, PYINSTALLER])
     run([str(python), "-m", "pip", "install", "--quiet", "--no-deps", *NO_DEPS])
     return python
 

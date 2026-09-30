@@ -21,36 +21,47 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
-    # Deliberately an OLD image. PyInstaller bundles libpython but NOT libc, so
-    # the binary demands the glibc of whatever built it. ubuntu-latest is glibc
-    # 2.39; the locked-down machines this ships to are far more often RHEL 9,
-    # Ubuntu 22.04 or Debian 12, where such a binary dies at `carto --version`
-    # with a message nobody can act on. bookworm is 2.36 and runs on all of
-    # them. docker/acceptance.sh caught exactly this defect once already — do
-    # not "modernise" this line.
+    # Deliberately an OLD image. PyInstaller bundles libpython, libstdc++ and
+    # the rest but NOT libc, so every ELF file in the payload demands the glibc
+    # of whatever built it. ubuntu-latest is 2.39. 0.8.0 built on Debian 12
+    # (2.36): the graph ran on Ubuntu 22.04 and the embedding runtime did not,
+    # because the bundled libstdc++ needed GLIBC_2.36. Debian 11 is not an
+    # option any more (EOL, its security mirror 404s mid-archive), so this is
+    # the manylinux_2_28 image (AlmaLinux 8, glibc 2.28), maintained for exactly
+    # this purpose. Its own CPython is static and PyInstaller needs a shared
+    # libpython, so the build freezes uv's CPython instead. The payload's floor
+    # is asserted below, and proven on the targets in `linux-targets`. Do not
+    # "modernise" this line.
     container:
-      image: python:3.12-slim-bookworm
+      image: quay.io/pypa/manylinux_2_28_x86_64
       # For `unshare --net` in scripts/ci_smoke.py: the offline proof runs the
       # frozen engine in a network namespace with no interfaces, and creating
       # one needs CAP_SYS_ADMIN and a seccomp profile that allows unshare(2).
       options: --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     steps:
-      # binutils is the one that is easy to miss and fails late: PyInstaller
-      # shells out to objdump to find each shared library's dependencies, so
-      # without it the freeze dies after the venv and the pip install have
-      # already run. docker/Dockerfile installs it for the same reason — this
-      # list is deliberately the same one, so the two cannot drift.
+      # The image already carries binutils (PyInstaller shells out to objdump
+      # for each library's dependencies), git, curl, zip and uv. Rust is for
+      # tree-sitter-language-pack, compiled here because its only Linux wheel
+      # is manylinux_2_34 (see build-payload.py).
       - name: Install build prerequisites
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            binutils ca-certificates git zip curl
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          uv python install 3.12
+          echo "PY=$(uv python find --managed-python 3.12)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - name: Build the payload
-        run: python scripts/build-payload.py --target linux-x64
+        run: $PY scripts/build-payload.py --target linux-x64 --python "$PY"
+      # The floor, measured rather than inferred from the build image: the
+      # newest GLIBC_x.y any ELF file in the payload references. Fails above
+      # 2.31 (Debian 11, Ubuntu 20.04), so a new dependency with a newer wheel
+      # cannot raise it without this step saying which file did.
+      - name: The payload needs no glibc newer than 2.31
+        shell: bash
+        run: $PY scripts/check-glibc.py dist/payload/linux-x64 --max 2.31 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Package the .vsix
         run: ./scripts/build-vsix.sh linux-x64
       # Also: memory search embeds and finds a reworded memory with no
@@ -59,12 +70,59 @@ jobs:
         # Named explicitly: only an explicit bash gets -o pipefail, and without
         # it the tee would pass a failed smoke.
         shell: bash
-        run: python scripts/ci_smoke.py linux-x64 | tee -a "$GITHUB_STEP_SUMMARY"
+        run: $PY scripts/ci_smoke.py linux-x64 | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: carto-linux-x64
           path: dist/*.vsix
           if-no-files-found: error
+
+  # The build image proves nothing about the machines the payload is for. This
+  # runs the shipped .vsix on them: unzipped as VS Code would, in plain
+  # distribution images that have no Python, under the same network block.
+  # Their only additions are git (the smoke test makes a repository) and a
+  # standalone CPython for the harness itself, kept outside the system library
+  # paths so it cannot lend the frozen engine anything.
+  linux-targets:
+    name: linux-x64 on ${{ matrix.image }}
+    needs: linux
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "ubuntu:20.04", "debian:11"]
+    container:
+      image: ${{ matrix.image }}
+      options: --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+    steps:
+      - name: Install git
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          if grep -q bullseye /etc/os-release; then
+            # Debian 11 left LTS on 2026-08-31 and its mirrors are mid-archive:
+            # the index lists security updates the pool no longer has. The
+            # image's own pinned snapshot sources are consistent.
+            sed -i -e 's|^deb http://deb.debian.org|# &|' \
+              -e 's|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' \
+              /etc/apt/sources.list
+          fi
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Harness interpreter (not the engine's)
+        run: |
+          uv python install 3.12
+          echo "PY=$(uv python find --managed-python 3.12)" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: carto-linux-x64
+          path: dist
+      - name: The shipped .vsix parses, and searches memory offline
+        shell: bash
+        run: |
+          $PY scripts/ci_smoke.py linux-x64 --vsix dist/carto-linux-x64-*.vsix \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
   desktop:
     name: ${{ matrix.target }}
@@ -118,7 +176,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [linux, desktop]
+    needs: [linux, linux-targets, desktop]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
