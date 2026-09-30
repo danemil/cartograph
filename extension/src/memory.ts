@@ -47,6 +47,51 @@ interface SyncData {
   awaiting_summary?: Awaiting[];
 }
 
+/** What the store holds, from `mem status`, rather than what one sync read. */
+export interface MemoryHeld {
+  sessions: number;
+  observations: number;
+  /** Host name → "hooks" | "logs" | "unknown", from the last sync that saw prompts. */
+  capture: Record<string, string>;
+}
+
+/**
+ * Read `mem status`'s `capture_copilot_chat` / `capture_copilot_cli` lines —
+ * "logs (3 imported, 0 already recorded, at …)" — and its counts.
+ *
+ * These are persisted by `mem sync` from the last run that saw a prompt, so a
+ * run that read nothing new does not erase what earlier runs established.
+ */
+export function readHeld(data: Record<string, unknown>): MemoryHeld {
+  const capture: Record<string, string> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (key.startsWith("capture_") && typeof value === "string") {
+      capture[key.slice("capture_".length).replace(/_/g, "-")] = value.split(" ")[0];
+    }
+  }
+  const count = (value: unknown) => (typeof value === "number" ? value : 0);
+  return { sessions: count(data.sessions), observations: count(data.observations), capture };
+}
+
+/** The status-bar line for what memory holds. */
+export function describeHeld(held: MemoryHeld | undefined): string {
+  if (!held) {
+    return "memory: not synced yet";
+  }
+  const parts = Object.entries(held.capture)
+    .filter(([, mode]) => mode !== "unknown")
+    .map(([name, mode]) => `${name} via ${mode}`);
+  if (parts.length) {
+    return `memory: ${parts.join(", ")}`;
+  }
+  // Nothing says how prompts arrive (no sync has seen one yet), but the store
+  // may still hold sessions — from hooks, `mem add`, or another window.
+  if (held.sessions || held.observations) {
+    return `memory: ${held.sessions} session(s), ${held.observations} observation(s)`;
+  }
+  return "memory: no Copilot sessions yet";
+}
+
 /** What `chat.useHooks` says, and whether anyone in reach of this UI set it. */
 export function chatHooksState(): { enabled: boolean; setByPolicy: boolean } {
   const chat = vscode.workspace.getConfiguration("chat");
@@ -69,6 +114,7 @@ export class MemorySync implements vscode.Disposable {
   private running: Promise<void> | undefined;
   private rerun = false;
   private last: SyncData | undefined;
+  private held: MemoryHeld | undefined;
   private cost: string[] = [];
   private summaryLine: string | undefined;
   private userInitiated = false;
@@ -120,18 +166,13 @@ export class MemorySync implements vscode.Disposable {
 
   /** One line for the status bar tooltip. */
   describe(): string {
-    if (!this.last) {
-      return "memory: not synced yet";
-    }
-    const parts = Object.entries(this.last.hosts)
-      .filter(([, host]) => host.capture !== "unknown")
-      .map(([name, host]) => `${name} via ${host.capture}`);
-    const line = parts.length ? `memory: ${parts.join(", ")}` : "memory: no Copilot sessions yet";
+    const line = describeHeld(this.held);
     return [line, ...(this.summaryLine ? [this.summaryLine] : []), ...this.cost].join("\n");
   }
 
   /**
-   * What memory cost and what it replaced, from `carto mem status`: counted
+   * What memory holds (for `describe`), what it cost and what it replaced,
+   * from `carto mem status`: counted
    * Copilot calls, served recall at chars/4, and summaries against the raw
    * sessions they stand for. In the tooltip only — a line added to every
    * session would cost tokens on every session to report on tokens.
@@ -144,6 +185,7 @@ export class MemorySync implements vscode.Disposable {
       if (!status.ok) {
         return [];
       }
+      this.held = readHeld(status.data);
       const latest = status.data.latest_summary_by;
       this.summaryLine = describeLatest(
         typeof latest === "string" ? latest : undefined, this.summaries.why,
