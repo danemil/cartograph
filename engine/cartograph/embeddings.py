@@ -13,6 +13,7 @@ Supports multiple providers:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -255,6 +256,29 @@ class EmbeddingRuntimeError(RuntimeError):
     """The ONNX stack could not be loaded; ``str()`` is :func:`load_failure_reason`."""
 
 
+@contextlib.contextmanager
+def _native_stderr_silenced():
+    """Point file descriptor 2 at the null device for the duration, then back.
+
+    For native code only: Python-level warnings and exceptions are unaffected,
+    and a platform where fd 2 cannot be duplicated is left as it is.
+    """
+    try:
+        sys.stderr.flush()
+        saved = os.dup(2)
+    except (OSError, ValueError):
+        yield
+        return
+    null = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(null, 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
+        os.close(null)
+
+
 class OnnxEmbeddingProvider(EmbeddingProvider):
     """A sentence-embedding model run by ONNX Runtime on the CPU, from disk.
 
@@ -297,22 +321,26 @@ class OnnxEmbeddingProvider(EmbeddingProvider):
         # numpy first: `embed` needs it, and it is what fails when the payload's
         # native libraries do not suit the machine.
         import numpy  # noqa: F401
-        import onnxruntime
-        from tokenizers import Tokenizer
 
         # ORT's own warnings go to stderr, which a hook or an agent reads as
-        # output. Errors still raise. The session option below is not enough on
-        # its own: device discovery logs through the process-wide default logger
-        # before any session exists — measured on a Hyper-V Ubuntu VM, one
-        # "Skipping pci_bus_id" warning per search.
-        onnxruntime.set_default_logger_severity(3)
-        options = onnxruntime.SessionOptions()
-        options.log_severity_level = 3
-        session = onnxruntime.InferenceSession(
-            str(self._dir / self._manifest["model"]),
-            sess_options=options,
-            providers=["CPUExecutionProvider"],
-        )
+        # output. Its logger settings do not reach all of them: on a Hyper-V
+        # Ubuntu VM a "Skipping pci_bus_id" warning came from device discovery
+        # while the runtime loaded, with severity 3 already set, one per search.
+        # So fd 2 itself is closed for the load. Failures still arrive — as the
+        # exceptions that carry the one-line reason.
+        with _native_stderr_silenced():
+            import onnxruntime
+
+            onnxruntime.set_default_logger_severity(3)
+            options = onnxruntime.SessionOptions()
+            options.log_severity_level = 3
+            session = onnxruntime.InferenceSession(
+                str(self._dir / self._manifest["model"]),
+                sess_options=options,
+                providers=["CPUExecutionProvider"],
+            )
+        from tokenizers import Tokenizer
+
         tokenizer = Tokenizer.from_file(str(self._dir / self._manifest["tokenizer"]))
         tokenizer.enable_truncation(int(self._manifest["max_seq_length"]))
         tokenizer.enable_padding()
