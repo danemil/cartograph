@@ -2,7 +2,7 @@
   "name": "cartograph",
   "displayName": "Cartograph",
   "description": "A code knowledge graph for AI coding agents, as a CLI and a skills pack. No MCP server.",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "publisher": "cartograph",
   "license": "Apache-2.0",
   "engines": {
@@ -96,7 +96,7 @@
         "cartograph.summaryModel": {
           "type": "string",
           "default": "auto",
-          "markdownDescription": "The Copilot model VS Code summarises with, by id or family. `auto` is Copilot's Auto model: it picks a model for the request, never one your administrator blocked, and costs less on paid plans. If the model named here is not offered, Cartograph uses another Copilot model rather than no model: Auto, else a light one (`mini`, `nano`, `luna`, `flash`, `haiku`, `lite`, `small` in its family, id or name), else the first offered — and says which in the **Cartograph** output channel. Only used when `#cartograph.summaryHost#` reaches VS Code's models."
+          "markdownDescription": "The Copilot model VS Code summarises with, by id or family. `auto` is Copilot's Auto model: it picks a model for the request, never one your administrator blocked, and costs less on paid plans. If the model named here is not offered, Cartograph uses another Copilot model rather than no model: Auto, else a light one (`mini`, `nano`, `luna`, `flash`, `haiku`, `lite`, `small` in its family, id or name), else the first offered \u2014 and says which in the **Cartograph** output channel. Only used when `#cartograph.summaryHost#` reaches VS Code's models."
         }
       }
     }
