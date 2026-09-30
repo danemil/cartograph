@@ -76,6 +76,11 @@ From the release page, install:
   on your local machine. The main extension offers to install it when it sees
   a remote window with Chat hooks off.
 
+On **Windows**, meaning-based memory search needs Microsoft's Visual C++
+runtime (ONNX Runtime depends on `MSVCP140.dll`). Most machines already have
+it; a bare one needs the *Microsoft Visual C++ Redistributable (x64)*. Without
+it, memory search still works, by keyword, and says why.
+
 In a remote window, run the install from a VS Code terminal *of that window* —
 the `code` command there installs on the remote. Cartograph Local is installed
 from your local machine (**Extensions: Install from VSIX…**), or accepted when
