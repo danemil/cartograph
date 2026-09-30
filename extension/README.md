@@ -49,11 +49,22 @@ only VS Code — the extension asks Copilot's models in VS Code instead
 (`vscode.lm`, Copilot's **Auto** model by default, on your own Copilot plan),
 and stores the answer through the engine. VS Code asks once before an
 extension may use Copilot's models; Cartograph asks first, in a notification,
-rather than raising that dialog from a background run. If permission is
-refused, the request is blocked by quota or policy, or the model is not
-offered, that session and the rest in this window get a structural summary (a
-list of the prompts, no synthesis), and a notification says so once. The status
-bar tooltip names what wrote the latest summary.
+rather than raising that dialog from a background run. If the model in
+`cartograph.summaryModel` is not offered, another Copilot model writes the
+summary — Auto, else a light one (`mini`, `nano`, `luna`, `flash`, `haiku`,
+`lite`, `small` in its family, id or name), else the first offered — and a
+pinned model that was passed over is named in a notification. If permission is
+refused, the request is blocked by quota or policy, or the model is withdrawn,
+that session and the rest in this window get a structural summary (a list of
+the prompts, no synthesis), and a notification says so once, with the reason
+and **Show Log**. The reason is stored with the summary, so `carto mem status`
+and the status bar tooltip still name it after a reload.
+
+**Cartograph: Show Log** opens the **Cartograph** output channel: one line per
+summary decision (the settings, the models Copilot offered, the one chosen and
+why, whether VS Code allows the request, each session's outcome, any
+`LanguageModelError` code) and per sync run. Session and model ids only — no
+prompt or chat text.
 
 **Copilot CLI only runs repository hooks in a folder you have trusted.** Start
 `copilot` interactively in the repository once and accept the trust prompt.
@@ -79,6 +90,7 @@ bar tooltip names what wrote the latest summary.
 | Cartograph: Show Status | Nodes, edges, files, languages, staleness. |
 | Cartograph: Install Skills and Hooks into Workspace | Re-run the placement step. |
 | Cartograph: Sync Memory from Copilot Logs | Import from the logs now, and summarise finished sessions — the one run allowed to raise VS Code's model-consent dialog directly. |
+| Cartograph: Show Log | The **Cartograph** output channel: every summary decision and sync run, one line each. |
 
 ## Settings
 
@@ -89,7 +101,7 @@ bar tooltip names what wrote the latest summary.
 | `cartograph.statusBar` | `true` | Show graph state in the status bar. |
 | `cartograph.readCopilotLogs` | `true` | Import prompts from Copilot's own logs when hooks did not record them. |
 | `cartograph.summaryHost` | `auto` | What writes session summaries: `auto` (Copilot CLI if the engine finds it, else Copilot's models in VS Code, else structural), `vscode` (VS Code's models only), `cli` (Copilot CLI only), `structural` (no model, no quota). |
-| `cartograph.summaryModel` | `auto` | The Copilot model VS Code summarises with, by id or family. `auto` is Copilot's Auto model. |
+| `cartograph.summaryModel` | `auto` | The Copilot model VS Code summarises with, by id or family. `auto` is Copilot's Auto model. If it is not offered: Auto, else a light model, else the first offered — never no model. |
 
 ## Platform-specific builds
 

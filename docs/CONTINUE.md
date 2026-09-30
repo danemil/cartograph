@@ -256,9 +256,10 @@ then structural.
   and `platform/endpoint/node/autoChatEndpoint.ts`, commit `3ba86b4`). Background runs never raise
   VS Code's consent dialog: when consent was never asked, a notification asks
   once per window; **Sync Memory** (a user action) may raise it directly.
-  NoPermissions, Blocked, NotFound or the named model missing → structural
+  NoPermissions, Blocked or NotFound → structural
   for that session and the rest, VS Code's models ruled out for the window,
-  one notification. A timeout (90 s) or other error → structural for that
+  one notification. (The named model missing did the same until 2026-09-30;
+  it now falls back to another model — see below.) A timeout (90 s) or other error → structural for that
   session only. No Copilot models at all (not signed in, not activated yet) →
   nothing written; the sessions wait. The tooltip names the latest summary's
   writer. `engines.vscode` raised `^1.85.0` → `^1.90.0` (the `vscode.lm`
@@ -279,8 +280,8 @@ then structural.
    installed: expect the sessions summarised through VS Code, not the CLI.
 4. A Remote SSH window: the same as 1, with the engine on the remote.
 5. Whether `selectChatModels({vendor: "copilot"})` really lists `id: "auto"`
-   on the user's Copilot plan and VS Code version; if not, the tooltip will
-   say the model is not offered — set `cartograph.summaryModel` to a family.
+   on the user's Copilot plan and VS Code version — now read from the
+   **Cartograph** output channel's `models offered:` line.
 
 ## Done — step 4, the bundled embedding model (decision 2)
 
@@ -337,6 +338,44 @@ all their timings.
   the traceback only under `CARTO_DEBUG=1`.
 - **Status line** (`fix(extension)`): `describe()` reads `mem status`'s
   persisted `capture_*` lines and counts, not the latest sync.
+
+## Done — 2026-09-30, a missing model no longer means structural, and a log
+
+On the Remote SSH VM (VS Code 1.138, Ubuntu 22.04, Chat hooks off by policy,
+`summaryHost: vscode` likely in Windows User settings) **Sync Memory** gave
+session f2f66c3b a structural summary with no consent dialog, no Allow
+notification and no recorded reason. Likeliest cause, from the code: Copilot
+did not offer a model with id/family `auto`, and a missing model ruled VS
+Code's models out for the window. **Unproven.**
+
+- **Engine** (`feat(mem)`): the reason for each structural summary is kept in
+  `mem_meta` (`summary:fallback_reason:<session>`) — the engine's own, or a
+  caller's via `--fallback-reason` (needs `--no-host-agent`; on `mem summarise`
+  and `mem sync --summarise`). `mem status` → `latest_summary_by: structural
+  (<reason>)`. Tests: 9 more in `test_mem_summary_handoff.py`, seen failing
+  under three mutations.
+- **Extension** (`fix(extension)`): `modelChoice.ts` — pinned setting, else
+  Auto, else a light model (whole-word mini/nano/luna/flash/haiku/lite/small in
+  family → id → name, `maxInputTokens` ≥ 12,000), else the first offered;
+  checked by `node extension/test/model-choice.js` after compiling (13 cases).
+  A pinned model not offered is reported once and replaced, never structural.
+  **Cartograph** output channel + **Cartograph: Show Log**. Every structural
+  summary the extension writes carries `--fallback-reason`; the ruled-out
+  warning and the Sync Memory result offer "Show Log".
+- Re-summarising a structural summary later: proposed, not built —
+  `docs/memory-design.md`, "Open questions".
+
+**Needs the live retest** on the VM, before anything else about summaries:
+1. **Cartograph: Show Log** after **Sync Memory** with a new finished session:
+   read the `models offered:` line. It settles whether `auto` is offered on
+   this VS Code/plan, and which model was chosen instead.
+2. Expect VS Code's consent dialog (Sync Memory is user-initiated), then a
+   `host-agent` row labelled `vscode-lm:<chosen id>` and the tooltip naming it.
+3. If it is still structural: the log line for the session names the reason
+   and any `LanguageModelError` code, and `carto mem status` shows
+   `structural (<that reason>)`.
+4. Session f2f66c3b keeps its structural summary (one per session); it has no
+   stored reason, since it predates this.
 
 ## NEXT TASK
 

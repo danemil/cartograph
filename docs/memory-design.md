@@ -38,8 +38,8 @@ every tool call would bill every file read.
 |---|---|---|
 | Model calls to write memory | **One per session**; at most 3 per catch-up run | Copilot quota |
 | Model | `copilot -p --model auto` (override: `CARTO_SUMMARY_MODEL`) | Auto routes a short brief to a light model (measured: `gpt-6-luna`), is 10% cheaper on paid plans, and never picks a model an administrator blocked — a pinned name that policy blocks would make every summary silently structural |
-| …where `copilot` is not on PATH | The VS Code extension, through `vscode.lm`: Copilot's model with id `auto` (setting `cartograph.summaryModel`), labelled `platform_source: vscode-lm:<model-id>` | Same reasons as the CLI's `auto`. Copilot Chat registers Auto with `vscode.lm` as vendor `copilot`, id `auto` (`microsoft/vscode` `extensions/copilot/.../languageModelAccess.ts`, commit `3ba86b4`). The engine hands off (`mem sync --hand-off`), gives the extension the same brief (`mem summarise --brief-only`) and stores its answer through the host-answer path (`--answer-file`), so the one-summary rule and the cost counter are unchanged |
-| …when neither can | Structural: the prompts in order, `summary_source: structural` | Consent refused, blocked by quota or policy, model not offered, timeout: each lands here, and says so |
+| …where `copilot` is not on PATH | The VS Code extension, through `vscode.lm`: Copilot's model with id `auto` (setting `cartograph.summaryModel`), labelled `platform_source: vscode-lm:<model-id>`. If that model is not offered, another Copilot model — see "Which model, when the preferred one is missing" | Same reasons as the CLI's `auto`. Copilot Chat registers Auto with `vscode.lm` as vendor `copilot`, id `auto` (`microsoft/vscode` `extensions/copilot/.../languageModelAccess.ts`, commit `3ba86b4`). The engine hands off (`mem sync --hand-off`), gives the extension the same brief (`mem summarise --brief-only`) and stores its answer through the host-answer path (`--answer-file`), so the one-summary rule and the cost counter are unchanged |
+| …when neither can | Structural: the prompts in order, `summary_source: structural`, and the reason kept with it | Consent refused, blocked by quota or policy, the model withdrawn, timeout: each lands here, and says so — in `mem status`, not only in the window that decided it |
 | Summary input | Each prompt **and that turn's final assistant reply**, from the logs; reply clipped to 600 chars | Prompts alone say what was asked, not what was concluded |
 | Summary fields | TITLE · WORKED ON · **DECIDED** (only what the person stated or accepted) · **PROPOSED** (what the assistant suggested, unconfirmed) · DEAD ENDS | A summary must never record a decision nobody made |
 | Raw evidence kept | Prompts, verbatim | The graph answers code questions more currently than stored tool output would |
@@ -53,6 +53,53 @@ a fix the person never accepted came back with the fix under `PROPOSED` and
 only the person's own call under `DECIDED`. **Known limitation:** in that
 second session an earlier, parked recommendation was left out of `PROPOSED`
 altogether — omitted, not promoted.
+
+## Which model, when the preferred one is missing
+
+The first `vscode.lm` release looked for one model, id or family `auto`. On the
+user's Remote SSH machine (VS Code 1.138, Ubuntu 22.04) a finished session came
+out structural with no consent dialog and no notification seen; the likeliest
+reading of the code is that Copilot did not offer `auto` there, and a missing
+model ruled VS Code's models out for the window. That is unproven — nothing
+was logged — but the rule was wrong either way: any Copilot model writes a
+better summary than a list of prompts.
+
+`extension/src/modelChoice.ts`, a pure function checked under plain node
+(`extension/test/model-choice.js`):
+
+1. `cartograph.summaryModel`, when it is not `auto`: id, then family, exact,
+   then ignoring case.
+2. Copilot's Auto model (id or family `auto`).
+3. A light model: `mini`, `nano`, `luna`, `flash`, `haiku`, `lite` or `small`
+   as a **whole word** of the family, then the id, then the display name
+   (`gemini` is not `mini`). Family first: `LanguageModelChat` exposes id,
+   family, version, name and `maxInputTokens`, and family is the one filled
+   from the model's own name; ids can be deployment names, names are for
+   display. One whose `maxInputTokens` is below 12,000 — the engine's
+   worst-case brief is about 11k — is passed over.
+4. The first model offered.
+
+A pinned model that is not offered is not a failure: the next rule picks, a
+notification says once which model was used instead, and the log says why.
+
+### Why a summary is structural, kept in the store
+
+Each structural summary's reason is stored per session in `mem_meta`
+(`summary:fallback_reason:<session>`, one line, at most 200 characters): the
+engine's own reasons (no CLI on PATH, the CLI failed, an empty answer), and a
+caller's, passed as `--fallback-reason` with `mem summarise --no-host-agent`
+or `mem sync --summarise --no-host-agent`. `--no-host-agent` alone is a
+choice, not a failure, and records nothing. `mem status` reads it beside the
+newest summary:
+
+```
+latest summary by   structural (permission to use Copilot's models was not given)
+```
+
+The extension's **Cartograph** output channel (**Cartograph: Show Log**) has
+the rest: settings, the models offered, the choice and why, `canSendRequest`,
+each session's outcome and any `LanguageModelError` code — ids only, never
+prompt text.
 
 ## What memory cost
 
@@ -166,7 +213,40 @@ read yet.
 - **Summaries while VS Code is closed.** The `vscode.lm` path runs only in an
   open window; sessions wait (unwritten) until one opens, or until a Copilot
   CLI hook or `mem sync --summarise` without `--hand-off` writes them.
+- **Where `summaryHost` is `auto` and VS Code's models are ruled out**, the
+  engine writes the summary through the CLI or structurally, and the stored
+  reason is the engine's ("no host agent CLI on PATH"), not the window's
+  (say, consent refused): `--fallback-reason` only accompanies
+  `--no-host-agent`, and `auto` must still try the CLI. The log has the
+  window's reason.
 - **`cartograph.summaryHost: vscode` does not reach the hooks.** Where
   `copilot` is installed, a CLI `SessionEnd` or a Chat `SessionStart` still
   summarises through it; the setting governs the summaries the extension
   runs.
+
+## Open questions
+
+### Should a structural summary be upgradable?
+
+Today one summary per session is final, so a session that came out structural
+because of one window's failure — the model missing, consent not yet given, a
+timeout — keeps a prompt list forever, even once a later window could have
+summarised it. Proposal, not built: **a structural summary whose stored reason
+is a failure (a `summary:fallback_reason:` entry exists) may be replaced once
+by a host-agent summary**; one written by choice (`--no-host-agent` with no
+reason, `summaryHost: structural`) may not. `awaiting` would list such sessions
+after the never-summarised ones, under the same cap of 3 per run, so the
+backlog drains at the rate new sessions do. The replacement would be an
+`UPDATE` of the same row in one transaction — title, body, `summary_source`,
+`platform_source`, a fresh vector, the FTS entry through its update trigger —
+rather than a delete and insert, so the store never holds two summaries of a
+session, and an id someone already cited from `mem search` still resolves (to
+better text). The reason entry is deleted with it, which makes "once" hold:
+without a reason the row is no longer eligible. Costs to weigh: a second
+Copilot request for a session already counted; `created_at` either kept (the
+status line would not call the upgrade the latest summary) or bumped (the
+session would sort as newer than it is); and a timeout-prone model could spend
+its request twice on the same long session. Worth deciding on the evidence of
+the next live test: if `auto` was the cause, most such rows date from before
+the fix, and a one-off `mem summarise --session X --upgrade` may be all anyone
+needs.
