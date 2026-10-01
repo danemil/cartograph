@@ -1,6 +1,6 @@
 ---
 name: explore-codebase
-description: Understand how an unfamiliar codebase is shaped — its architecture, clusters, execution flows, and where a concept lives. Use when onboarding, before planning a change, or when asked how something works. Not for reviewing a specific diff (use review-changes) or tracing a known bug (use debug-issue).
+description: How a repository is structured — its main components and how they connect — and where a concept lives. Use when onboarding or asked how the repo works. Not for who calls a symbol or what a change breaks (refactor-safely).
 ---
 
 ## Explore a codebase
@@ -16,7 +16,7 @@ you open twenty files to find the three that matter.
 ### When NOT to use this
 - You have a diff to assess → `review-changes`.
 - You have a symptom to trace → `debug-issue`.
-- You already know the symbol and want its callers → `carto query` directly.
+- Who calls a symbol, or what a change to it would break → `refactor-safely`.
 
 ### When NOT to use carto at all
 File-level questions are cheaper with the shell, and just as exact:

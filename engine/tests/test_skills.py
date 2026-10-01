@@ -390,3 +390,41 @@ class TestInstallPlacesOnlyCopilotFiles:
             tmp_path, no_skills=True, no_hooks=True, no_instructions=True,
         )
         assert not (tmp_path / ".github").exists()
+
+
+class TestSkillRouting:
+    """A host picks a skill by its description alone, and every description is
+    sent with every request. These pin the routing a measured run got wrong —
+    "who calls X, and what would break" was answered with grep — and the size."""
+
+    @staticmethod
+    def _frontmatter() -> dict[str, dict]:
+        import yaml
+
+        out = {}
+        for slug, text in skills_module.skill_documents().items():
+            out[slug] = yaml.safe_load(text.split("---", 2)[1])
+        return out
+
+    def test_frontmatter_is_valid_yaml_with_name_and_description(self):
+        for slug, fm in self._frontmatter().items():
+            assert fm["name"] == slug
+            assert isinstance(fm["description"], str) and fm["description"]
+
+    def test_graph_questions_route_to_the_skill_that_runs_callers_and_impact(self):
+        docs = skills_module.skill_documents()
+        owners = [
+            slug for slug, text in docs.items()
+            if "carto query callers_of" in text and "carto impact" in text
+            and "who calls" in self._frontmatter()[slug]["description"].lower()
+        ]
+        assert owners == ["refactor-safely"]
+        description = self._frontmatter()["refactor-safely"]["description"].lower()
+        for phrase in ("who calls", "would break", "where it is used",
+                       "blast radius", "impact of", "signature"):
+            assert phrase in description, phrase
+
+    def test_descriptions_stay_small(self):
+        # 1,849 characters before the routing fix; every one is paid per request.
+        total = sum(len(fm["description"]) for fm in self._frontmatter().values())
+        assert total <= 1400, total

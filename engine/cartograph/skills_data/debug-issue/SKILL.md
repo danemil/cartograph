@@ -1,6 +1,6 @@
 ---
 name: debug-issue
-description: Trace a bug from symptom to cause using the code graph — find the symbol, walk its callers and callees, and see what else the fix would touch. Use when given an error, a stack trace, or a bug report. Not for assessing an existing diff (use review-changes) or for general codebase orientation (use explore-codebase).
+description: Trace a bug from symptom to cause with the code graph. Use given an error, a stack trace, a failing test or a bug report. Not for a diff (review-changes) or what a change would break (refactor-safely).
 ---
 
 ## Debug an issue
@@ -15,6 +15,7 @@ without reading the whole call path by hand.
 ### When NOT to use this
 - You have a diff and want its risk → `review-changes`.
 - You are orienting in an unfamiliar repo → `explore-codebase`.
+- You want what a planned change would break → `refactor-safely`.
 
 ### Steps
 

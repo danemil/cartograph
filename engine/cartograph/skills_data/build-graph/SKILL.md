@@ -1,6 +1,6 @@
 ---
 name: build-graph
-description: Build or refresh the Cartograph code knowledge graph, and check whether it is current. Use when carto reports no graph, when carto results look stale after edits, or before a first review on an unfamiliar checkout. Not for querying the graph — that is what the other carto skills do.
+description: Build or refresh the Cartograph code graph and check that it is current. Use when carto reports no graph or stale results, or on a fresh checkout. Not for querying the graph.
 ---
 
 ## Build the graph

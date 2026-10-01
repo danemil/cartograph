@@ -1,6 +1,6 @@
 ---
 name: review-changes
-description: Risk-score a diff before it lands — working tree, a commit range, or a checked-out PR branch. Use before approving, merging, or writing review comments, to find what a change touches beyond the files it edits. Not for open-ended "how does this codebase work" questions (use explore-codebase) or for root-causing a reported bug (use debug-issue).
+description: Risk-score a diff before it lands — working tree, commit range or PR branch — including what it touches beyond the edited files. Use before approving, merging or commenting on a change. Not for a change not yet made (refactor-safely).
 ---
 
 ## Review changes

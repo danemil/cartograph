@@ -1,6 +1,6 @@
 ---
 name: recall-context
-description: Search what earlier sessions recorded about this repository, and record decisions worth keeping. Use before re-deriving something that was probably already worked out, and after settling a decision or hitting a dead end. Not for questions the code itself answers — use explore-codebase or debug-issue for those.
+description: Search what earlier sessions decided about this repository, and record decisions worth keeping. Use for "have we already decided/tried X", before re-deriving a choice, and after settling one. Not for what the code itself shows.
 ---
 
 ## Recall what was learned before

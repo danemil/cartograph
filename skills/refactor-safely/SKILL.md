@@ -1,64 +1,83 @@
 ---
 name: refactor-safely
-description: Plan a rename or structural change by previewing every site it would touch before editing anything. Use when renaming a symbol, removing dead code, or looking for refactoring candidates. Not for reviewing a diff that already exists (use review-changes) or for diagnosing a bug (use debug-issue).
+description: Who calls or uses a symbol, and what would break if it changed — callers, where it is used, blast radius, impact of a signature change, rename or removal — from the call graph, more completely than grep. Also dead code. Not for an existing diff (review-changes).
 ---
 
 ## Refactor safely
 
-Previews the reach of a change before you make it, so the edit is informed by
-the whole call graph rather than by grep.
-
-### `carto refactor` never edits your code
-
-Every mode is a **preview**. There is no apply step and no `--write` flag:
-Cartograph reports the sites, you make the edits with your normal tools. If a
-plan says "then carto applies the rename", the plan is wrong.
+Answers "who calls this, and what breaks if I change it?" from the call graph,
+and previews a rename before you make it. The graph resolves calls through
+imports, aliases and methods, which a text search confuses with comments,
+strings and same-named symbols in other files.
 
 ### When to use this
-- Renaming a function, class, or method across a codebase.
-- Hunting dead code before a cleanup.
-- "What would break if I changed this?"
+- "Who calls X?", "Where is X used?"
+- "What would break if X's signature changed?", "What's the blast radius /
+  impact of changing X?"
+- Renaming a function, class or method; removing it; hunting dead code.
 
 ### When NOT to use this
 - Assessing a change that already exists → `review-changes`.
 - Finding the cause of a bug → `debug-issue`.
 
-### Steps
+### `carto refactor` never edits your code
 
-1. **Preview the rename.** Modes are `rename`, `dead_code`, `suggest`.
-   ```
-   carto refactor rename --old-name <old> --new-name <new> --format json
-   ```
-   Narrow with `--kind Function|Class` and `--path <pattern>` when the name
-   is common.
+Every mode is a **preview**. There is no apply step and no `--write` flag:
+Cartograph reports the sites, you make the edits with your normal tools.
 
-2. **Cross-check the reach.** The rename preview and the graph should agree;
-   where they disagree, trust neither and read the code.
+### Who calls it, and what breaks
+
+1. **Direct callers** — the code that breaks first when a signature changes:
+   ```
+   carto query callers_of <symbol> --limit 50 --format json
+   ```
+   A target is a name, or `path/to/file.py::Name` when the name is ambiguous
+   (the response's `disambiguation` rows carry the names to pass back). If `truncated` is true, pass
+   `page.next_cursor` back with `--cursor` until it is not.
+
+2. **Other uses** — passed as a callback, imported, inherited from:
    ```
    carto query references_to <symbol> --format json
+   ```
+
+3. **Tests** that will need updating in the same commit:
+   ```
+   carto query tests_for <symbol> --format json
+   ```
+
+4. **The wider reach**, transitively, from the file that defines it:
+   ```
    carto impact --files <file> --depth 2 --format json
    ```
    `impact` lists the 20 most affected items, direct dependents first. It
    never shortens the scope: `data.totals` counts everything, and
    `data.affected_files` names **every** affected file with how many of its
    items are direct. If `truncated` is true you have not seen every item —
-   before changing a signature, list every direct dependent (they rank first,
-   so the limit is `data.totals.direct`), or run `data.see_all` for all of it:
+   list every direct dependent (they rank first, so the limit is
+   `data.totals.direct`), or run `data.see_all` for all of it:
    ```
    carto impact --files <file> --limit <totals.direct> --format json
    ```
 
-3. **Check the tests** that will need updating in the same commit:
-   ```
-   carto query tests_for <symbol> --format json
-   ```
+Steps 1 and 4 answer most "what would break" questions; add 2 and 3 when the
+change is a removal or the symbol is not only called.
 
-4. **Make the edits yourself**, then keep the graph honest:
+### Renaming
+
+1. **Preview the rename.** Modes are `rename`, `dead_code`, `suggest`.
+   ```
+   carto refactor rename --old-name <old> --new-name <new> --format json
+   ```
+   Narrow with `--kind Function|Class` and `--path <pattern>` when the name
+   is common. Cross-check it against steps 1–2 above; where they disagree,
+   read the code.
+
+2. **Make the edits yourself**, then keep the graph honest:
    ```
    carto update --base HEAD~1
    ```
 
-5. **Verify** with `review-changes` against your own diff before committing.
+3. **Verify** with `review-changes` against your own diff before committing.
 
 ### Finding candidates
 
@@ -92,4 +111,5 @@ which you left for a human.
 
 ### Reference
 
-`carto capabilities --command refactor` for the full flag list.
+`carto capabilities --command query` and `--command refactor` for the full
+flag lists.
