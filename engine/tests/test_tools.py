@@ -2221,3 +2221,42 @@ def test_impact_radius_tool_exposes_best_first_scores(monkeypatch, tmp_path):
     ]
     scores = [node["impact_score"] for node in result["impacted_nodes"]]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_minimal_overview_says_where_each_community_lives_and_which_pairs_couple():
+    from cartograph.tools.community_tools import _minimal_overview
+
+    root = "/repo"
+    members = (
+        [f"{root}/src/services/a{i}.ts::f" for i in range(6)]
+        + [f"{root}/src/server/b{i}.ts::g" for i in range(3)]
+        + [f"{root}/main.ts::h"]
+    )
+    overview = {
+        "communities": [
+            {"id": 1, "name": "core", "size": 10, "cohesion": 0.3,
+             "dominant_language": "typescript", "members": members},
+            {"id": 2, "name": "ui", "size": 1, "cohesion": 0.5,
+             "dominant_language": "javascript", "members": ["ui/app.js::render"]},
+            {"id": 3, "name": "test-core", "size": 1, "cohesion": 0.5,
+             "dominant_language": "typescript", "members": ["tests/a.test.ts::t"]},
+        ],
+        "cross_community_edges": (
+            [{"source_community": 2, "target_community": 1, "edge_kind": "CALLS"}] * 11
+            + [{"source_community": 3, "target_community": 1, "edge_kind": "CALLS"}] * 11
+            + [{"source_community": 1, "target_community": 2, "edge_kind": "IMPORTS_FROM"}]
+        ),
+        "warnings": [],
+    }
+    out = _minimal_overview(overview, root)
+    by_name = {c["name"]: c for c in out["communities"]}
+    # Two directories at most, by share; a member at the root is ".".
+    assert by_name["core"]["top_dirs"] == [["src/services", 60], ["src/server", 30]]
+    assert by_name["ui"]["top_dirs"] == [["ui", 100]]
+    assert "members" not in by_name["core"]
+    pairs = {(p["source_community"], p["target_community"]): p
+             for p in out["cross_community_edges"]}
+    assert pairs[("core", "ui")]["edge_count"] == 12
+    assert pairs[("core", "ui")]["high_coupling"] is True
+    # The same rule as the warnings: a test community's coupling is expected.
+    assert pairs[("core", "test-core")]["high_coupling"] is False

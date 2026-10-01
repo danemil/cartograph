@@ -198,6 +198,45 @@ def community_row(community: dict[str, Any]) -> Any:
     )
 
 
+def architecture_community_row(community: dict[str, Any]) -> Any:
+    """``<name> | <size> nodes | <language> | <dir> <share>%, ...``.
+
+    Generated names (``acr-up-detect``) say little on their own; the
+    directories a community's members live in are what make it a component an
+    agent can name. A row with members came from ``--detail-level standard``,
+    which asked for them, and is left whole.
+    """
+    if "name" not in community or "members" in community:
+        return community
+    parts = [community["name"], f"{community.get('size')} nodes"]
+    if community.get("dominant_language"):
+        parts.append(community["dominant_language"])
+    dirs = community.get("top_dirs") or []
+    if dirs:
+        parts.append(", ".join(f"{d} {share}%" for d, share in dirs))
+    return " | ".join(parts)
+
+
+def connection_row(pair: dict[str, Any]) -> Any:
+    """``<a> <-> <b> | <n> edges | <kinds>[ | high coupling]``.
+
+    The pair is aggregated in canonical order, so its ``source``/``target``
+    labels are not a direction and the row does not claim one. A per-edge row
+    (``--detail-level standard``) has no ``edge_count`` and is left whole.
+    """
+    if "edge_count" not in pair:
+        return pair
+    parts = [
+        f"{pair.get('source_community')} <-> {pair.get('target_community')}",
+        f"{pair['edge_count']} edges",
+    ]
+    if pair.get("top_kinds"):
+        parts.append(", ".join(pair["top_kinds"]))
+    if pair.get("high_coupling"):
+        parts.append("high coupling")
+    return " | ".join(parts)
+
+
 def _with_metric(field_name: str, unit: str) -> Callable[[dict[str, Any]], Any]:
     return lambda node: node_row(node, metric=(field_name, unit))
 
@@ -208,6 +247,8 @@ class _Spec:
     rows: dict[tuple[str, ...], Callable[[dict[str, Any]], Any]]
     #: Top-level keys that repeat something else in the response.
     drop: tuple[str, ...] = field(default_factory=tuple)
+    #: Keys that repeat the rows only once every row is compact.
+    drop_when_compact: tuple[str, ...] = field(default_factory=tuple)
 
 
 _SPECS: dict[str, _Spec] = {
@@ -246,6 +287,20 @@ _SPECS: dict[str, _Spec] = {
     "dead-code": _Spec(rows={("items",): node_row}),
     "flows": _Spec(rows={("flows",): flow_row}),
     "communities": _Spec(rows={("communities",): community_row}),
+    # The overview an agent asks for first, so the one that most needs to be
+    # one cheap call. Each warning restates a pair, which now says "high
+    # coupling" itself; the total is in the summary; the savings estimate
+    # describes the tool, not the repository.
+    "architecture": _Spec(
+        rows={
+            ("communities",): architecture_community_row,
+            ("cross_community_edges",): connection_row,
+        },
+        drop=("cross_community_edges_total", "context_savings"),
+        # Per-edge rows (standard) carry no coupling flag, so there the
+        # warnings are the only place it is said.
+        drop_when_compact=("warnings",),
+    ),
     "review-context": _Spec(
         rows={
             ("items",): node_row,
@@ -276,11 +331,16 @@ def compact(command: str, result: Any) -> Any:
     spec = _SPECS.get(command)
     if spec is None or not isinstance(result, dict):
         return result
+    all_compact = True
     for path, render in spec.rows.items():
         holder = _container(result, path)
         rows = holder.get(path[-1]) if holder is not None else None
         if isinstance(rows, list):
             holder[path[-1]] = [render(r) if isinstance(r, dict) else r for r in rows]
+            all_compact = all_compact and all(isinstance(r, str) for r in holder[path[-1]])
+    if all_compact:
+        for key in spec.drop_when_compact:
+            result.pop(key, None)
     for key in (*_ALWAYS_DROP, *spec.drop):
         result.pop(key, None)
     for key in [k for k, v in result.items() if v is None]:

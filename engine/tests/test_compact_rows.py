@@ -122,8 +122,81 @@ def test_ok_status_is_a_default_and_goes():
 
 
 def test_commands_without_a_spec_are_untouched():
-    result = {"status": "ok", "summary": "s", "communities": [{"id": 1}]}
-    assert compact.compact("architecture", dict(result)) == result
+    result = {"status": "ok", "summary": "s", "suggestions": [{"id": 1}]}
+    assert compact.compact("refactor", dict(result)) == result
+
+
+# --------------------------------------------------------------------------
+# architecture: the overview in one call
+# --------------------------------------------------------------------------
+
+_MINIMAL_ARCHITECTURE = {
+    "status": "ok",
+    "summary": "Architecture: 2 communities, 1 community pairs, 1 warning(s)",
+    "communities": [
+        {"id": 12, "name": "sync-real", "size": 6605, "cohesion": 0.1435,
+         "dominant_language": "typescript",
+         "top_dirs": [["tests/worker", 21], ["tests", 14]]},
+        {"id": 11, "name": "shared-server", "size": 3719, "cohesion": 0.2794,
+         "dominant_language": "typescript", "top_dirs": [["src/services", 52]]},
+    ],
+    "cross_community_edges": [
+        {"source_community": "shared-server", "target_community": "sync-real",
+         "edge_count": 5024, "top_kinds": ["CALLS", "REFERENCES"],
+         "high_coupling": True},
+    ],
+    "warnings": ["High coupling (5024 edges) between 'shared-server' and 'sync-real'"],
+    "cross_community_edges_total": 1,
+    "truncated": False,
+    "_hints": {"next_steps": [{"tool": "list_communities"}]},
+    "context_savings": {"estimated": True, "saved_tokens": 1475207, "saved_percent": 100},
+}
+
+
+def test_architecture_community_row_says_where_it_lives():
+    assert compact.architecture_community_row(_MINIMAL_ARCHITECTURE["communities"][0]) == (
+        "sync-real | 6605 nodes | typescript | tests/worker 21%, tests 14%"
+    )
+
+
+def test_architecture_connection_row_is_undirected_and_flags_coupling():
+    # Pairs are aggregated in canonical order, so "source" and "target" are
+    # not a direction; the row must not claim one.
+    assert compact.connection_row(_MINIMAL_ARCHITECTURE["cross_community_edges"][0]) == (
+        "shared-server <-> sync-real | 5024 edges | CALLS, REFERENCES | high coupling"
+    )
+    calm = dict(_MINIMAL_ARCHITECTURE["cross_community_edges"][0], high_coupling=False)
+    assert compact.connection_row(calm).endswith("| CALLS, REFERENCES")
+
+
+def test_compact_architecture_drops_what_rows_restate():
+    import copy
+
+    out = compact.compact("architecture", copy.deepcopy(_MINIMAL_ARCHITECTURE))
+    assert out == {
+        "summary": "Architecture: 2 communities, 1 community pairs, 1 warning(s)",
+        "communities": [
+            "sync-real | 6605 nodes | typescript | tests/worker 21%, tests 14%",
+            "shared-server | 3719 nodes | typescript | src/services 52%",
+        ],
+        "cross_community_edges": [
+            "shared-server <-> sync-real | 5024 edges | CALLS, REFERENCES | high coupling",
+        ],
+    }
+
+
+def test_standard_architecture_rows_keep_the_members_asked_for():
+    community = {"id": 1, "name": "a", "size": 3, "members": ["x.py::f"]}
+    edge = {"source_community": 1, "target_community": 2, "edge_kind": "CALLS",
+            "source": "x.py::f", "target": "y.py::g"}
+    assert compact.architecture_community_row(community) == community
+    assert compact.connection_row(edge) == edge
+    out = compact.compact("architecture", {
+        "summary": "s", "communities": [community], "cross_community_edges": [edge],
+        "warnings": ["High coupling (12 edges) between 'a' and 'b'"],
+    })
+    # Per-edge rows carry no coupling flag, so the warnings stay.
+    assert out["warnings"] == ["High coupling (12 edges) between 'a' and 'b'"]
 
 
 # --------------------------------------------------------------------------

@@ -44,7 +44,7 @@ _EXAMPLES = {
     "flow": "carto flow --name checkout",
     "communities": "carto communities --min-size 5",
     "community": "carto community --name auth",
-    "architecture": "carto architecture --detail-level standard",
+    "architecture": "carto architecture",
     "large-functions": "carto large-functions --min-lines 80",
     "refactor": "carto refactor rename --old-name foo --new-name bar",
     "build": "carto build",

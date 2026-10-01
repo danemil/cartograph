@@ -1017,6 +1017,17 @@ def _is_test_community(name: str) -> bool:
     return bool(_TEST_COMMUNITY_RE.search(name))
 
 
+def is_high_coupling(name1: str, name2: str, edge_count: int) -> bool:
+    """Whether a community pair earns a coupling warning.
+
+    Pairs where either side is test-dominated are skipped: coupling between
+    test and production code is expected, not architectural.
+    """
+    return edge_count > 10 and not (
+        _is_test_community(name1) or _is_test_community(name2)
+    )
+
+
 def get_architecture_overview(store: GraphStore) -> dict[str, Any]:
     """Generate an architecture overview based on community structure.
 
@@ -1069,13 +1080,9 @@ def get_architecture_overview(store: GraphStore) -> dict[str, Any]:
     warnings: list[str] = []
     comm_name_map = {c.get("id", 0): c["name"] for c in communities}
     for (c1, c2), count in cross_counts.most_common():
-        if count > 10:
-            name1 = comm_name_map.get(c1, f"community-{c1}")
-            name2 = comm_name_map.get(c2, f"community-{c2}")
-            # Skip pairs where either community is test-dominated — coupling
-            # between test and production code is expected, not architectural.
-            if _is_test_community(name1) or _is_test_community(name2):
-                continue
+        name1 = comm_name_map.get(c1, f"community-{c1}")
+        name2 = comm_name_map.get(c2, f"community-{c2}")
+        if is_high_coupling(name1, name2, count):
             warnings.append(
                 f"High coupling ({count} edges) between "
                 f"'{name1}' and '{name2}'"

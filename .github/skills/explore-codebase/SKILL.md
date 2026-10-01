@@ -1,6 +1,6 @@
 ---
 name: explore-codebase
-description: How a repository is structured — its main components and how they connect — and where a concept lives. Use when onboarding or asked how the repo works. Not for who calls a symbol or what a change breaks (refactor-safely).
+description: How a repository is structured — its main components and how they connect, in one call — and where a concept lives. Use when onboarding or asked how the repo works. Not for who calls a symbol or what a change breaks (refactor-safely).
 ---
 
 ## Explore a codebase
@@ -30,24 +30,26 @@ architecture.
 
 ### Steps
 
-1. **Start at the top.** One call, bounded, gives the shape of the whole repo.
+1. **The overview is one call.** For "how is this repo structured / what are
+   its main components and how do they connect", this is the whole answer:
    ```
-   carto architecture --detail-level standard --format json --max-tokens 3000
+   carto architecture --format json
    ```
-   Use `--detail-level minimal` first on a very large repo.
+   One row per component (community): its name, size, language and the
+   directories it lives in; one row per connected pair: edge count, edge kinds,
+   and `high coupling` where it is. Answer from it. Do not follow it with
+   `communities` or `flows` by reflex — every later call re-sends this one.
 
-2. **Find the clusters** — which parts belong together.
+2. **Drill into one area** only when the question names it:
    ```
-   carto communities --sort size --min-size 5 --format json
+   carto community --name <name> --format json
    ```
-   Then read one in detail: `carto community --name <name> --format json`.
 
-3. **Follow the important paths.** Flows are execution paths, not files —
-   this is the part a directory listing cannot tell you.
+3. **Execution paths**, only when asked how something runs end to end:
    ```
    carto flows --sort criticality --limit 10 --format json
    ```
-   Then: `carto flow --name <name> --format json`.
+   Then: `carto flow --id <id> --format json`.
 
 4. **Locate a concept** when you do not know its symbol name:
    ```
@@ -75,9 +77,11 @@ Add `--detail full` only when you need a field the row leaves out.
 
 ### Budget
 
-- Steps 1–3 answer most questions in three calls. Do not run all five by
-  reflex — pick what the question needs.
-- Pass `--max-tokens` on `architecture`; it grows with the repo.
+- An overview question is one call: step 1. Each step after it is for a
+  question the overview does not answer.
+- `--detail-level standard` adds member samples and every cross-community
+  edge — 8 to 22 times the size on a 991-file repository, rarely what an
+  overview needs.
 
 ### If it fails
 
@@ -86,8 +90,8 @@ Exit `2` means there is no graph yet — run `error.remediation`, or use the
 
 ### Report
 
-Lead with the shape: the major clusters and what each is for. Then the flows
-that matter. Name specific files and symbols — a summary the reader cannot
+Lead with the shape: the major components, where each lives and what it is
+for, and which of them are coupled. Name specific files and symbols — a summary the reader cannot
 act on is not worth the tokens.
 
 ### Reference

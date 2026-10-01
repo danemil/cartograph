@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from ..communities import get_architecture_overview, get_communities
+from ..communities import get_architecture_overview, get_communities, is_high_coupling
 from ..context_savings import attach_context_savings
 from ..graph import node_to_dict
 from ..hints import generate_hints, get_session
@@ -211,7 +211,29 @@ def get_community_func(
 _MINIMAL_COMMUNITY_FIELDS = ("id", "name", "size", "cohesion", "dominant_language")
 
 
-def _minimal_overview(overview: dict[str, Any]) -> dict[str, Any]:
+#: Directories named per community, and how deep. Two levels tells
+#: ``src/services`` from ``src/server``; more is a file listing.
+_TOP_DIRS = 2
+_DIR_DEPTH = 2
+
+
+def _top_dirs(members: list[str], root: str | None) -> list[list[Any]]:
+    """The directories most of a community's members live in, with each
+    one's share in percent, largest first."""
+    prefix = f"{str(root).replace(chr(92), '/').rstrip('/')}/" if root else None
+    counts: Counter[str] = Counter()
+    for qualified in members:
+        path = qualified.split("::", 1)[0].replace(chr(92), "/")
+        if prefix and path.startswith(prefix):
+            path = path[len(prefix):]
+        counts["/".join(path.split("/")[:-1][:_DIR_DEPTH]) or "."] += 1
+    total = sum(counts.values())
+    return [
+        [d, round(100 * n / total)] for d, n in counts.most_common(_TOP_DIRS)
+    ] if total else []
+
+
+def _minimal_overview(overview: dict[str, Any], root: str | None = None) -> dict[str, Any]:
     """Compress overview for ``detail_level="minimal"``.
 
     The full overview can exceed 600KB on medium repos because it embeds
@@ -221,7 +243,10 @@ def _minimal_overview(overview: dict[str, Any]) -> dict[str, Any]:
     enough to spot coupling smells without exploding token budgets.
     """
     communities = [
-        {k: c[k] for k in _MINIMAL_COMMUNITY_FIELDS if k in c}
+        {
+            **{k: c[k] for k in _MINIMAL_COMMUNITY_FIELDS if k in c},
+            "top_dirs": _top_dirs(c.get("members", []), root),
+        }
         for c in overview.get("communities", [])
     ]
     id_to_name = {c["id"]: c["name"] for c in communities if "id" in c}
@@ -235,15 +260,18 @@ def _minimal_overview(overview: dict[str, Any]) -> dict[str, Any]:
         edge_pair_counts[pair] += 1
         edge_pair_kinds.setdefault(pair, Counter())[e["edge_kind"]] += 1
 
-    cross_pairs = [
-        {
-            "source_community": id_to_name.get(a, f"community-{a}"),
-            "target_community": id_to_name.get(b, f"community-{b}"),
+    cross_pairs = []
+    for (a, b), count in edge_pair_counts.most_common():
+        name_a = id_to_name.get(a, f"community-{a}")
+        name_b = id_to_name.get(b, f"community-{b}")
+        cross_pairs.append({
+            "source_community": name_a,
+            "target_community": name_b,
             "edge_count": count,
             "top_kinds": [k for k, _ in edge_pair_kinds[(a, b)].most_common(3)],
-        }
-        for (a, b), count in edge_pair_counts.most_common()
-    ]
+            # The warnings' own rule, per pair, so a compact row can say it.
+            "high_coupling": is_high_coupling(name_a, name_b, count),
+        })
     return {
         "communities": communities,
         "cross_community_edges": cross_pairs,
@@ -290,7 +318,7 @@ def get_architecture_overview_func(
         full_overview = get_architecture_overview(store)
         overview = full_overview
         if detail_level == "minimal":
-            overview = _minimal_overview(full_overview)
+            overview = _minimal_overview(full_overview, str(root))
         else:
             overview = dict(full_overview)
             overview["communities"] = [

@@ -70,7 +70,7 @@ own rows; it now prints `compact.node_row`.
 | Command | Compact rows | Why |
 |---|---|---|
 | large-functions, query, search, impact, dead-code, flows, communities, review-context | yes | measured below; `impact` has its own section |
-| architecture | no | not a list; 4,211 chars on claude-mem already |
+| architecture | yes, since 2026-10-01 | the first call of an overview; see "`architecture`: the overview in one call" |
 | refactor | no | its rows are distinct prose fields with no repeated path, and `rename` edits are applied, so a lossy row is a risk; not measured |
 | flow, community | no | single-object drill-downs, not lists |
 | detect-changes | no | no pageable collection, and no non-empty response to measure on either repo (claude-mem has one commit) |
@@ -311,3 +311,47 @@ Conformance gained one op, `impact` (`--limit 3` on this repository's
 paths in `data`. It fails on the previous CLI (no `--limit`: exit 1, no page
 block), with `affected_files` rows left unrelativised (absolute-path check),
 and with `has_more` forced false.
+
+## `architecture`: the overview in one call
+
+A measured Copilot CLI run (gpt-5.4-mini, three runs a side) asked "Give me a
+short overview of how this repository is structured: its main components and
+how they connect." With carto it cost 118,915 tokens a run against 63,059
+without (+89%). Every run called `architecture`, `communities` and `flows`,
+as the explore-codebase skill said to, and each early response is re-sent on
+every later model call, so its size multiplies. The skill's first call was
+`architecture --detail-level standard --max-tokens 3000`, mostly member
+samples (test names) and a hundred individual cross-community edges.
+
+### What changed
+
+- `architecture` gets compact rows. A community row names where it lives —
+  generated names like `acr-up-detect` say little on their own:
+  `shared-server | 3719 nodes | typescript | src/services 52%, src/server 10%`
+  (`top_dirs`: the two directories, two levels deep, most of its members are
+  in). A connection row is undirected, because pairs are aggregated in
+  canonical order: `scripts-fetch <-> shared-server | 103 edges | CALLS,
+  REFERENCES | high coupling`. `high_coupling` is the warnings' own rule
+  (`communities.is_high_coupling`), so `warnings` goes when every connection
+  row is compact; `cross_community_edges_total` (in the summary), `_hints` and
+  the `context_savings` estimate go too. `--detail-level standard` rows carry
+  the members asked for and are left whole, and so are their warnings.
+- The explore-codebase skill answers an overview with that one call, and
+  drills into `community` or `flows` only for a question the overview does
+  not answer.
+
+### Measured
+
+claude-mem at `ade13f3`, stdout characters of `--format json`, tokens as
+chars/4. Before is `3caae27`.
+
+| Overview path the skill gives | Calls | Chars | Tokens |
+|---|---|---:|---:|
+| Before: `architecture --detail-level standard --max-tokens 3000`, `communities --sort size --min-size 5`, `flows --sort criticality --limit 10` | 3 | 13,996 + 1,157 + 1,438 = 16,591 | 4,149 |
+| After: `architecture` | 1 | 1,671 | 418 |
+
+`architecture` on its own default: 4,211 → 1,671 chars (−60%); `--detail
+full` 6,037; `--detail-level standard` 37,734. The after response names all
+13 communities with their directories and the 3 coupled pairs with edge
+counts and kinds — what the before path gave, less member samples, cohesion
+and the per-edge list. Not re-measured: the end-to-end Copilot run.

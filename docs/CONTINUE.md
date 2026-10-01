@@ -1,6 +1,6 @@
 ---
 tags: [handoff, cartograph]
-updated: 2026-09-30
+updated: 2026-10-01
 next-task: Linux .vsix acceptance on the user's machine, then transcript-aware summaries
 ---
 
@@ -389,6 +389,30 @@ Memory says so. Fields and limits: `docs/memory-design.md`, "When a session
 has finished". Tests: `engine/tests/test_mem_settle.py` (16, each seen failing
 under 11 mutations) and `node extension/test/waiting.js` after compiling.
 Not yet seen on the VM.
+
+## Done — 2026-10-01, four findings from a user-run A/B (Copilot CLI, gpt-5.4-mini)
+
+- **Version** (`fix(version)`): `carto --version` prints `cartograph 0.8.4
+  (engine fork of code-review-graph 2.3.8)`. The release comes from
+  `extension/package.json` (`engine/cartograph/release.py`); `build-payload.py`
+  stamps it into the bundle (`cartograph/RELEASE`) and `PAYLOAD.json`,
+  `build-vsix.sh` refuses a payload stamped otherwise, `ci_smoke.py` asserts
+  it, the skew check compares the release word exactly
+  (`node extension/test/version.js`). Proven on a frozen darwin-arm64 build.
+- **Stale skills** (`fix(install)`): install and uninstall remove the copies
+  pre-0.6.0 releases wrote to `.claude/skills`/`.agents/skills` only when
+  provably Cartograph's (pack name, SKILL.md only, text one of the shipped
+  versions in `engine/cartograph/skills_shipped.json`, which
+  `install-skills.py` builds from git history); anything else is kept and
+  named. `engine/tests/test_legacy_skills.py`, 6 mutations each caught.
+- **Routing** (`fix(skills)`): "who calls X / what would break" now routes to
+  refactor-safely (callers_of, references_to, tests_for, impact). Descriptions
+  1,849 → 1,332 chars in total; tests pin routing and a 1,400 ceiling.
+- **Overview cost** (`perf(architecture)`): compact `architecture` rows with
+  each community's directories and coupled pairs; the skill answers an
+  overview with that one call. claude-mem: the skill's overview path 16,591 →
+  1,671 chars (4,149 → 418 tokens). `docs/design/compact-output.md`.
+- **Not re-measured:** the A/B itself. T1 recall (+20%) was not addressed.
 
 ## NEXT TASK
 
