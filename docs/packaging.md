@@ -21,7 +21,7 @@ that matters; this is a summary.
 
 ```
 payload/
-  PAYLOAD.json                   target, engine version, grammar pack version
+  PAYLOAD.json                   target, release (engine_version), upstream engine, grammar pack version
   runtime/carto[.exe]            the frozen engine (PyInstaller onedir)
   runtime/_internal/…            its libraries
   grammars/tree-sitter-language-pack/v<x.y.z>/libs/…
@@ -212,7 +212,14 @@ Stated plainly, because a confident claim here would be worth less than nothing.
 ## Where the design record disagrees with the shipped CLI
 
 - **`carto version --json` does not exist** (T16 §6). The binary identifies
-  itself through `carto --version`, which prints `cartograph <x.y.z>` as text.
+  itself through `carto --version`, which prints text:
+  `cartograph 0.8.4 (engine fork of code-review-graph 2.3.8)`. The first
+  version is the Cartograph release — `extension/package.json`, the one file a
+  release bump edits; `build-payload.py` stamps it into the frozen bundle
+  (`cartograph/RELEASE`) and into `PAYLOAD.json` as `engine_version`, and
+  `build-vsix.sh` refuses a payload stamped with another release. The second is
+  the upstream release the engine forked from (`cartograph.__version__`,
+  `pyproject.toml`). Releases up to 0.8.4 printed only the upstream version.
 - **`carto install` is interactive** unless `-y` is passed. Both consumers call
   `carto install --platform copilot --no-instructions -y`, which places
   `.github/skills` and `.github/hooks/cartograph.json` and touches no home

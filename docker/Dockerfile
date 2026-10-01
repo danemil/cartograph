@@ -41,6 +41,8 @@ WORKDIR /work
 # layer on every unrelated edit, and the payload takes minutes to rebuild.
 COPY engine /work/engine
 COPY scripts /work/scripts
+# The release the payload is stamped with; see engine/cartograph/release.py.
+COPY extension/package.json /work/extension/package.json
 
 # Writes dist/payload/<target>, where target is derived from this container's
 # own architecture — linux-x64 under an amd64 platform, linux-arm64 under an

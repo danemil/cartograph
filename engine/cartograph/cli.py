@@ -43,8 +43,6 @@ import json
 import logging
 import os
 from functools import partial
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Iterable, TypedDict
 
@@ -64,28 +62,10 @@ class _EmbeddingRefreshKwargs(TypedDict, total=False):
 
 
 def _get_version() -> str:
-    """Get the installed package version.
+    """The Cartograph release, as the banner and the catalogue report it."""
+    from .release import release_version
 
-    Tries ``importlib.metadata`` first (canonical source from the installed
-    dist-info), falling back to the package's ``__version__`` attribute if
-    metadata is unavailable or corrupt. This matters for editable installs
-    on filesystems where iCloud / OneDrive can leave orphan dist-info dirs
-    behind that confuse importlib.metadata's lookup.
-    """
-    try:
-        v = pkg_version("cartograph")
-        if v:
-            return v
-    except PackageNotFoundError as exc:
-        logger.debug("Package metadata unavailable: %s", exc)
-    # Fallback: read __version__ directly from the package.
-    try:
-        from . import __version__ as fallback_version
-        if fallback_version:
-            return fallback_version
-    except ImportError:
-        pass
-    return "dev"
+    return release_version()
 
 
 def _supports_color() -> bool:
@@ -1859,7 +1839,9 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.version:
-        print(f"cartograph {_get_version()}")
+        from .release import version_line
+
+        print(version_line())
         return
 
     _normalise_output_format(args)

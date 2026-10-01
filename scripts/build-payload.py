@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -262,6 +263,7 @@ def freeze(python: Path, out: Path) -> None:
             # data), so the package is collected wholesale rather than left to
             # import-graph analysis.
             "--collect-all", "cartograph",
+            "--add-data", f"{write_release_stamp(BUILD / 'release')}{os.pathsep}cartograph",
             "--collect-all", "tree_sitter_language_pack",
             "--collect-all", "tree_sitter",
             # sqlite-vec is a shared library the package loads by path, which
@@ -488,12 +490,35 @@ def seed_grammars(python: Path, payload: Path) -> str:
     return version
 
 
+def _release_module():
+    """The engine's own reader, loaded by path: the payload must report the
+    release exactly as a source checkout does, and importing the engine
+    package here would need its dependencies in this interpreter."""
+    spec = importlib.util.spec_from_file_location(
+        "_cartograph_release", ROOT / "engine" / "cartograph" / "release.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def engine_version() -> str:
-    text = (ROOT / "engine" / "pyproject.toml").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        if line.startswith("version = "):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise SystemExit("could not read version from engine/pyproject.toml")
+    """The Cartograph release (extension/package.json), which the frozen
+    engine reports and the extension's skew check compares against."""
+    rel = _release_module()
+    version = rel.read_package_version(ROOT / "extension" / "package.json")
+    if not version:
+        raise SystemExit("could not read version from extension/package.json")
+    return version
+
+
+def write_release_stamp(directory: Path) -> Path:
+    """Write the file the frozen engine reads its release from; a payload has
+    no checkout beside it to read package.json out of."""
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = directory / _release_module().STAMP_NAME
+    stamp.write_text(engine_version() + "\n", encoding="utf-8")
+    return stamp
 
 
 def main() -> int:
@@ -538,6 +563,7 @@ def main() -> int:
             {
                 "target": target,
                 "engine_version": engine_version(),
+                "upstream_engine": "{0.UPSTREAM_NAME} {0.UPSTREAM_VERSION}".format(_release_module()),
                 "grammar_pack_version": grammar_version,
                 "embedding_model": MODEL["name"],
                 "executable": "runtime/carto.exe" if target.startswith("win32") else "runtime/carto",

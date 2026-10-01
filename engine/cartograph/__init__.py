@@ -8,7 +8,9 @@ from .context_savings import (
     format_context_savings,
 )
 
-__version__ = "2.3.8"
+# The upstream code-review-graph release this engine forked from, not the
+# Cartograph release; that is `release.release_version()`.
+from .release import UPSTREAM_VERSION as __version__
 
 __all__ = [
     "__version__",

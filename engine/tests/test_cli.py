@@ -2,9 +2,7 @@
 
 import io
 import json
-import logging
 import sys
-from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -33,44 +31,12 @@ def test_main_handles_legacy_stdio_encoding(monkeypatch):
     assert "Commands:" in output
 
 
-def test_get_version_falls_back_to_package_attr_when_metadata_missing(
-    monkeypatch, caplog,
-):
-    """When importlib.metadata can't find the dist, fall back to __version__.
+def test_get_version_is_the_release():
+    """The banner and the catalogue report the release, not the upstream
+    package version that importlib.metadata would find on a pip install."""
+    from cartograph.release import release_version
 
-    This matters on filesystems where iCloud / OneDrive leave orphan
-    dist-info dirs that confuse the metadata lookup. Before v2.3.5 the
-    fallback returned the literal string "dev", which produced confusing
-    output for installed users whose lookup happened to fail.
-    """
-    def _raise_package_not_found(_dist_name: str) -> str:
-        raise PackageNotFoundError("cartograph")
-
-    monkeypatch.setattr(cli, "pkg_version", _raise_package_not_found)
-
-    with caplog.at_level(logging.DEBUG, logger="cartograph.cli"):
-        version = cli._get_version()
-
-    # Falls back to the package's __version__, not "dev"
-    from cartograph import __version__ as expected
-    assert version == expected
-    assert "Package metadata unavailable" in caplog.text
-
-
-def test_get_version_returns_dev_when_both_sources_fail(monkeypatch, caplog):
-    """The literal "dev" fallback still fires when __version__ also fails."""
-    def _raise_package_not_found(_dist_name: str) -> str:
-        raise PackageNotFoundError("cartograph")
-
-    monkeypatch.setattr(cli, "pkg_version", _raise_package_not_found)
-
-    import cartograph
-    monkeypatch.delattr(cartograph, "__version__", raising=False)
-
-    with caplog.at_level(logging.DEBUG, logger="cartograph.cli"):
-        version = cli._get_version()
-
-    assert version == "dev"
+    assert cli._get_version() == release_version()
 
 
 class TestWatchInteraction:

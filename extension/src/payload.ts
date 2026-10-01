@@ -27,7 +27,7 @@ export interface Payload {
   readonly grammars: string;
   /** Memory search's embedding model, passed the same way. */
   readonly model: string;
-  /** Engine version this payload was built from, for the skew check. */
+  /** Cartograph release this payload was stamped with, for the skew check. */
   readonly engineVersion: string;
 }
 
@@ -65,6 +65,18 @@ export function readPayload(extensionPath: string): Payload | string {
     model: path.join(root, "model"),
     engineVersion: manifest.engine_version,
   };
+}
+
+/**
+ * Whether `carto --version` names this release.
+ *
+ * The line is `cartograph <release> (engine fork of code-review-graph
+ * <upstream>)`. Only the second word is compared: a substring match would let
+ * the upstream version, or 0.8.41, pass for 0.8.4.
+ */
+export function sameRelease(versionLine: string, release: string): boolean {
+  const words = versionLine.trim().split(/\s+/);
+  return words[0] === "cartograph" && words[1] === release;
 }
 
 /** `~/.cartograph` unless the user has said otherwise. */

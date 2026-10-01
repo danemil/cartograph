@@ -328,7 +328,15 @@ def main(argv: list[str]) -> int:
             root = (Path("dist/payload") / args.target).resolve()
         manifest = json.loads((root / "PAYLOAD.json").read_text())
         carto = root / manifest["executable"]
-        subprocess.run([str(carto), "--version"], check=True)
+        line = subprocess.run([str(carto), "--version"], check=True,
+                              capture_output=True, text=True).stdout.strip()
+        print(line)
+        # The release is stamped into the bundle at build time; a frozen engine
+        # that cannot find the stamp reports something else, and the
+        # extension's skew check would warn on every activation.
+        if line.split()[1:2] != [manifest["engine_version"]]:
+            raise SystemExit(f"--version says {line!r}; PAYLOAD.json says "
+                             f"{manifest['engine_version']}")
         check_graph(carto, root)
         check_memory(carto, root, args.target)
     return 0

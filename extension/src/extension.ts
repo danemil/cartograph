@@ -16,7 +16,7 @@ import * as vscode from "vscode";
 import { Carto, GraphState } from "./carto";
 import * as log from "./log";
 import { Companion, MemorySync, noticeHooksState } from "./memory";
-import { cartoHome, placeLaunchers, readPayload } from "./payload";
+import { cartoHome, placeLaunchers, readPayload, sameRelease } from "./payload";
 import { waitingNotice } from "./waiting";
 
 /** Bumped whenever activation must redo work it would otherwise skip. */
@@ -170,7 +170,7 @@ async function checkVersionSkew(
     vscode.window.showErrorMessage(`Cartograph: the bundled engine did not run: ${err}`);
     return;
   }
-  if (!reported.includes(expected)) {
+  if (!sameRelease(reported, expected)) {
     vscode.window.showWarningMessage(
       `Cartograph: bundled engine reports "${reported}", but this extension was ` +
         `packaged against ${expected}. Reinstalling the .vsix is the fix.`,
