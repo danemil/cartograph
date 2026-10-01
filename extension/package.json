@@ -2,7 +2,7 @@
   "name": "cartograph",
   "displayName": "Cartograph",
   "description": "A code knowledge graph for AI coding agents, as a CLI and a skills pack. No MCP server.",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "publisher": "cartograph",
   "license": "Apache-2.0",
   "engines": {
