@@ -780,12 +780,50 @@ def _run_graph_tool_command(
             repo_root=root,
             max_results=args.max_results,
         )
+    if args.command in _COVERAGE_COMMANDS:
+        _attach_coverage(result, repo_root)
     _emit_tool_result(
         args, result,
         offset=offset, page_limit=page_limit,
         query=query, snapshot=snapshot, provenance=provenance,
         repo_root=root,
     )
+
+
+#: List and search commands whose answer is "everything in the graph that
+#: matched". The graph is not every file in the working tree, so each says
+#: which files it covered — an agent that cannot tell a partial list from a
+#: complete one reports the partial one as complete.
+_COVERAGE_COMMANDS = frozenset({
+    "large-functions", "search", "query", "dead-code", "refactor",
+})
+
+
+def _attach_coverage(result: dict, repo_root: Path, store=None) -> None:
+    """Add ``coverage`` to a result, and a clause to its summary when partial."""
+    from . import layout
+    from .graph import GraphStore
+    from .incremental import get_db_path
+
+    if not isinstance(result, dict) or result.get("status") == "error":
+        return
+    own = store is None
+    if own:
+        db_path = get_db_path(Path(repo_root), read_only=True)
+        if not db_path.exists():
+            return
+        store = GraphStore(db_path)
+    try:
+        paths = store.get_file_marker_paths()
+    finally:
+        if own:
+            store.close()
+    line = layout.coverage(Path(repo_root), paths)
+    result["coverage"] = line
+    clause = layout.uncovered(line)
+    if clause and isinstance(result.get("summary"), str):
+        # The summary is the line an agent reads first, and sometimes alone.
+        result["summary"] = f"{result['summary'].rstrip('.')}; {clause}"
 
 
 def _impact_see_all(args, result: dict, repo_root: Path) -> "str | None":
@@ -845,6 +883,7 @@ _PAGEABLE_COLLECTION: dict[str, tuple[str, ...]] = {
 #: holding every row at exactly the limit says `has_more` when there is none.
 _PAGE_TOTAL: dict[str, tuple[str, ...]] = {
     "impact": ("totals", "items"),
+    "large-functions": ("matching",),
 }
 
 #: Where argparse puts a result cap. The flag is spelled `--limit` on some
@@ -1682,7 +1721,13 @@ def main() -> None:
     large_cmd = sub.add_parser(
         "large-functions", help="Find oversized functions and methods",
     )
-    large_cmd.add_argument("--min-lines", type=_positive_int, default=50)
+    # No threshold unless asked for: with one, "--limit 10" could return six
+    # rows on a small repository, and an agent reported those six as the top
+    # ten. --min-lines is for "every function over N lines".
+    large_cmd.add_argument(
+        "--min-lines", type=_positive_int, default=None,
+        help="Only functions at least this long (default: no threshold)",
+    )
     large_cmd.add_argument(
         "--kind",
         choices=["Function", "Class", "File", "Test", "Type"],
@@ -1700,7 +1745,10 @@ def main() -> None:
         help="Also rank generated, vendored and declaration (.d.ts) files",
     )
     large_cmd.add_argument("--path", default=None, help="File-path substring filter")
-    large_cmd.add_argument("--limit", type=_positive_int, default=50)
+    large_cmd.add_argument(
+        "--limit", type=_positive_int, default=20,
+        help="How many of the largest to list (default: 20)",
+    )
     large_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
 
     refactor_cmd = sub.add_parser("refactor", help="Preview graph-backed refactors")
@@ -2255,25 +2303,30 @@ def main() -> None:
             )
             total = len(items)
             shown = items[: args.limit] if args.limit else items
+            # A caller in a file the graph never parsed makes "dead" code live.
+            dead = {
+                "status": "ok",
+                "summary": f"Found {total} dead code symbol(s)"
+                           + (f", showing {len(shown)}" if len(shown) < total else "")
+                           + ".",
+                "items": shown,
+                "total": total,
+                "truncated": len(shown) < total,
+            }
+            _attach_coverage(dead, repo_root, store)
             if getattr(args, "output_format", "text") == "json":
                 # Was a bare JSON array, which the envelope schema does not
                 # permit as `data` and which carried no size, provenance or
                 # paging. `items` is the conventional collection name, so the
                 # shared emit path pages it without a special case.
-                _emit_tool_result(args, {
-                    "status": "ok",
-                    "summary": f"Found {total} dead code symbol(s)"
-                               + (f", showing {len(shown)}" if len(shown) < total else "")
-                               + ".",
-                    "items": shown,
-                    "total": total,
-                    "truncated": len(shown) < total,
-                }, repo_root=repo_root)
+                _emit_tool_result(args, dead, repo_root=repo_root)
             else:
                 from . import compact as _compact
                 from . import repo_paths as _paths
 
                 print(f"Dead code: {total} item(s); showing {len(shown)}")
+                if dead.get("coverage"):
+                    print(f"Coverage: {dead['coverage']}")
                 for item in _paths.relativise_result(shown, repo_root):
                     print(f"  {_compact.node_row(item)}")
 

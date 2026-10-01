@@ -840,13 +840,20 @@ def resolve_incremental_base(repo_root: Path, store: "GraphStore") -> str | None
     return None
 
 
-def get_changed_files(repo_root: Path, base: str = "HEAD~1") -> list[str]:
+def get_changed_files(
+    repo_root: Path, base: str = "HEAD~1", include_untracked: bool = True,
+) -> list[str]:
     """Get list of changed files via git diff or svn status.
 
     For SVN working copies the *base* parameter is ignored; modified/added/
     deleted files are detected from ``svn status``.  Pass an SVN revision
     range (e.g. ``"r100:HEAD"``) as *base* to compare against a specific
     revision instead.
+
+    With git, untracked files git does not ignore are changes too: ``git
+    diff`` compares the working tree with *base* but never lists a file it
+    does not track, so a new file was invisible to detect-changes and review
+    until it was added.
     """
     if detect_vcs(repo_root) == "svn":
         return _get_svn_changed_files(repo_root, base if _SAFE_SVN_REV.match(base) else None)
@@ -876,7 +883,11 @@ def get_changed_files(repo_root: Path, base: str = "HEAD~1") -> list[str]:
         if result.returncode != 0:
             logger.warning("git diff failed while discovering changed files")
             return []
-        return _decode_name_status_paths(result.stdout)
+        changed = _decode_name_status_paths(result.stdout)
+        if include_untracked:
+            seen = set(changed)
+            changed += [f for f in get_untracked_files(repo_root) if f not in seen]
+        return changed
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
 
@@ -1001,6 +1012,66 @@ def get_all_tracked_files(
     except (FileNotFoundError, subprocess.TimeoutExpired, UnicodeDecodeError):
         return []
 
+def get_untracked_files(repo_root: Path) -> list[str]:
+    """Untracked files git does not ignore: new work not yet added.
+
+    An agent asked about "this repository" means the working tree, and new
+    scripts or skills often sit untracked for a while. Leaving them out of the
+    graph made a ranking silently miss them. ``--exclude-standard`` applies
+    ``.gitignore``, ``.git/info/exclude`` and the global excludes file, so what
+    the user has chosen to ignore stays out. Not called with
+    ``--recurse-submodules``: git supports that only for tracked files.
+    Returns ``[]`` outside a git work tree.
+    """
+    # Not gated on a .git marker at the root: a registered subdirectory of a
+    # monorepo gets its tracked files from git, so it gets these too (git
+    # lists both relative to, and only under, the working directory).
+    if detect_vcs(repo_root) == "svn":
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            capture_output=True,
+            cwd=str(repo_root),
+            timeout=_GIT_TIMEOUT,
+            stdin=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    # An untracked nested repository is listed as "dir/"; it is not a file.
+    return [
+        os.fsdecode(f) for f in result.stdout.split(b"\0")
+        if f and not f.endswith(b"/")
+    ]
+
+
+def _git_ignored(repo_root: Path, rel_paths: list[str]) -> set[str]:
+    """Which of ``rel_paths`` git now ignores. Tracked files are never reported.
+
+    One ``git check-ignore`` call for the lot. An untracked file in the graph
+    that the user has since added to ``.gitignore`` is no longer part of the
+    working tree an answer should cover.
+    """
+    if not rel_paths or detect_vcs(repo_root) == "svn":
+        return set()
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "--stdin", "-z"],
+            input=b"\0".join(os.fsencode(p) for p in rel_paths) + b"\0",
+            capture_output=True,
+            cwd=str(repo_root),
+            timeout=_GIT_TIMEOUT,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return set()
+    # Exit 1 means none are ignored; anything else but 0 is an error.
+    if result.returncode not in (0, 1):
+        return set()
+    return {os.fsdecode(f) for f in result.stdout.split(b"\0") if f}
+
+
 def _get_svn_all_tracked_files(repo_root: Path) -> list[str]:
     """Return SVN-versioned files by walking the working copy.
 
@@ -1033,15 +1104,20 @@ def repository_files(
     repo_root: Path,
     recurse_submodules: bool | None = None,
 ) -> tuple[list[str], bool]:
-    """Every file in the repository, and whether git (or svn) listed them.
+    """Every file in the working tree, and whether git (or svn) listed them.
 
-    Tracked files when there is version control, otherwise a directory walk.
-    The build filters these down to parseable files; ``carto architecture``
-    counts all of them, so both start from this one list.
+    Tracked files plus untracked ones git does not ignore, when there is
+    version control; otherwise a directory walk. The build filters these down
+    to parseable files; ``carto architecture`` and the coverage line count all
+    of them, so every one of them starts from this one list.
     """
     tracked = get_all_tracked_files(repo_root, recurse_submodules)
-    if tracked:
-        return tracked, True
+    # Asked even when nothing is tracked yet: a fresh `git init` with work in
+    # it is still a repository whose ignore rules apply.
+    untracked = get_untracked_files(repo_root)
+    if tracked or untracked:
+        seen = set(tracked)
+        return tracked + [f for f in untracked if f not in seen], True
     return [
         str(p.relative_to(repo_root)) for p in repo_root.rglob("*") if p.is_file()
     ], False
@@ -1106,6 +1182,7 @@ def _reconcile_stale_files(
         ignore_patterns = _load_ignore_patterns(repo_root)
         parser = CodeParser(repo_root)
         current_paths = set()
+        relatives: dict[str, str] = {}
         for stored_file in stored_files:
             path = Path(stored_file)
             try:
@@ -1120,6 +1197,11 @@ def _reconcile_stale_files(
                 and not _is_binary(path)
             ):
                 current_paths.add(stored_file)
+                relatives[relative] = stored_file
+        # The graph now holds untracked files; one the user has since told git
+        # to ignore has left the working tree an answer should cover.
+        for relative in _git_ignored(repo_root, sorted(relatives)):
+            current_paths.discard(relatives.get(relative, ""))
     stale_files = sorted(stored_files - current_paths)
     if stale_files:
         store.remove_files_permanently(stale_files)
@@ -1257,6 +1339,33 @@ def _parse_single_file(
         return (rel_path, nodes, edges, None, fhash)
     except Exception as e:
         return (rel_path, [], [], str(e), "")
+
+
+def _untracked_needing_parse(
+    repo_root: Path, store: GraphStore, parser: CodeParser,
+) -> list[str]:
+    """Untracked, not-ignored files that are new to the graph or edited since.
+
+    ``git diff <base>`` never lists them, so an update would otherwise keep a
+    graph built before they existed. Unchanged ones are left out here rather
+    than in the hash check below, because every changed file also queues its
+    dependents for re-parsing, and a long-lived untracked directory would pay
+    for that on every update.
+    """
+    pending: list[str] = []
+    for rel_path in get_untracked_files(repo_root):
+        abs_path = repo_root / rel_path
+        if parser.detect_language(abs_path) is None:
+            continue
+        try:
+            fhash = hashlib.sha256(abs_path.read_bytes()).hexdigest()
+        except (OSError, PermissionError):
+            continue
+        existing = store.get_nodes_by_file(str(abs_path))
+        if existing and existing[0].file_hash == fhash:
+            continue
+        pending.append(rel_path)
+    return pending
 
 
 def _canonical_repo_root(repo_root: Path) -> Path:
@@ -1416,7 +1525,12 @@ def incremental_update(
 
     # Determine changed files
     if changed_files is None:
-        changed_files = get_changed_files(repo_root, base)
+        changed_files = get_changed_files(repo_root, base, include_untracked=False)
+        seen = set(changed_files)
+        changed_files += [
+            f for f in _untracked_needing_parse(repo_root, store, parser)
+            if f not in seen
+        ]
     stale_files = _reconcile_stale_files(repo_root, store) if reconcile_stale else []
 
     if not changed_files and not stale_files:

@@ -131,7 +131,7 @@ def summarise(files: list[str], graph_files: set[str]) -> dict[str, Any]:
     non_code = total - by_kind["code"]
     if total and _pct(by_kind["code"], total) < CODE_MAJORITY:
         # `by_kind` carries the breakdown; the note says only what it means.
-        note = (f"{_pct(non_code, total)}% of tracked files are not code; "
+        note = (f"{_pct(non_code, total)}% of files are not code; "
                 f"the code graph covers {_pct(in_graph, total)}%. "
                 "Communities below describe only that part; read ")
         layout["note"] = note + (", ".join(notable) if notable
@@ -146,8 +146,9 @@ def _ordered(counts: Counter[str]) -> dict[str, int]:
 def repository_layout(root: Path, graph_paths: Iterable[str]) -> dict[str, Any]:
     """The layout of the repository at ``root``.
 
-    Tracked files are counted whole: a tracked ``dist/`` is still part of the
-    repository a reader is asking about. Only a walk without version control
+    What git lists — tracked files, and untracked ones it does not ignore —
+    is counted whole: a tracked ``dist/`` is still part of the repository a
+    reader is asking about. Only a walk without version control
     applies the ignore patterns, which is what keeps ``.git`` out of it.
     """
     files, tracked = repository_files(root)
@@ -174,3 +175,110 @@ def _relative(path: str, root: Path) -> Optional[str]:
             return p.resolve().relative_to(root.resolve()).as_posix()
         except (ValueError, OSError):
             return None
+
+
+#: Extensions named per reason in the coverage line; the count is the answer.
+MAX_COVERAGE_EXAMPLES = 3
+
+#: Why a code file in the working tree is not in the graph, in the order the
+#: coverage line names them.
+_REASONS = (
+    ("no_parser", "no parser"),
+    ("generated", "generated or vendored"),
+    ("ignored", "excluded by ignore rules"),
+    ("symlink", "symlinks"),
+    # New since the last build, usually; a file that failed to parse lands
+    # here too, which is why the label does not promise that update fixes it.
+    ("pending", "not in the graph (run carto update)"),
+)
+
+
+def coverage(root: Path, graph_paths: Iterable[str]) -> str:
+    """One line saying which code files an answer from the graph covered.
+
+    The denominator is every code file in the working tree (by name, as in
+    the layout) plus anything else the graph parsed. A file the graph does
+    not hold is counted against one reason, so an agent can say what its
+    answer did not see instead of presenting a partial list as complete.
+    Decided from names and the graph alone; no file is read, except the
+    first line of an extension-less file the parser would sniff.
+    """
+    from .incremental import is_generated_file
+    from .parser import CodeParser
+
+    files, tracked = repository_files(root)
+    files = [f.replace("\\", "/") for f in files]
+    ignore = _load_ignore_patterns(root)
+    if not tracked:
+        files = [f for f in files if not _should_ignore(f, ignore)]
+    in_graph: set[str] = set()
+    for path in graph_paths:
+        rel = _relative(path, root)
+        if rel:
+            in_graph.add(rel)
+
+    parser = CodeParser(root)
+    present = set(files)
+    searched = 0
+    total = 0
+    missing: dict[str, Counter[str]] = {key: Counter() for key, _ in _REASONS}
+    removed = 0
+    for path in files:
+        if path in in_graph:
+            searched += 1
+            total += 1
+            continue
+        if kind_of(path) != "code":
+            continue
+        total += 1
+        missing[_reason(root, path, ignore, parser, is_generated_file)][
+            PurePosixPath(path).suffix.lower() or PurePosixPath(path).name
+        ] += 1
+    for path in in_graph - present:
+        # Parsed, and no longer in the working tree: it was searched, and the
+        # answer may name it.
+        if not (root / path).exists():
+            removed += 1
+
+    gaps = []
+    for key, label in _REASONS:
+        counts = missing[key]
+        n = sum(counts.values())
+        if not n:
+            continue
+        if key == "no_parser":
+            ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+            names = [ext for ext, _ in ranked[:MAX_COVERAGE_EXAMPLES]]
+            label = f"{label} ({', '.join(names)})"
+        gaps.append(f"{n} {label}")
+    line = (f"searched {searched} of {total} code files; not covered: "
+            + ", ".join(gaps)) if gaps else (
+        f"searched all {searched} code files" if searched
+        else "no code files in the working tree")
+    if removed:
+        line += f"; {removed} more in the graph since deleted (run carto update)"
+    return line
+
+
+def _reason(root: Path, path: str, ignore: list[str], parser: Any,
+            is_generated: Any) -> str:
+    if is_generated(path):
+        return "generated"
+    if _should_ignore(path, ignore):
+        return "ignored"
+    full = root / path
+    if full.is_symlink():
+        return "symlink"
+    if parser.detect_language(full) is None:
+        return "no_parser"
+    return "pending"
+
+
+def uncovered(line: str) -> Optional[str]:
+    """The summary clause for a coverage line that is not complete, or None."""
+    head, sep, _ = line.partition("; not covered: ")
+    if not sep:
+        return None
+    searched, _, total = head.removeprefix("searched ").partition(" of ")
+    total_n = int(total.split()[0])
+    return f"{total_n - int(searched)} of {total} not covered (see coverage)"

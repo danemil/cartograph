@@ -3,7 +3,7 @@
 A measured Copilot run asked "how is this repository structured" of a kit that
 is mostly documentation and templates; from `architecture` alone it described
 the few Python scripts as the repository, five times out of five. These pin
-the layout section that answers that: every tracked file, by top-level
+the layout section that answers that: every working-tree file, by top-level
 directory and kind, and a note when most of it is not code.
 """
 
@@ -53,7 +53,7 @@ def test_docs_heavy_repository_says_the_graph_is_a_small_part():
         "docs/", "template/", "scripts/", ".github/", "dashboard/",
     ]
     assert out["note"] == (
-        "92% of tracked files are not code; the code graph covers 5%. "
+        "92% of files are not code; the code graph covers 5%. "
         "Communities below describe only that part; read README.md, AGENTS.md "
         "for the rest."
     )
@@ -133,7 +133,7 @@ def test_architecture_leads_with_the_layout(docs_kit, capsys):
         "(root) | 4 files | docs 3, config 1 | read first: README.md, AGENTS.md"
     )
     assert "docs/ | 20 files | docs 20" in found["dirs"]
-    assert found["note"].startswith("92% of tracked files are not code")
+    assert found["note"].startswith("92% of files are not code")
     # The graph parsed the code and nothing else: two scripts, the JS file,
     # and the workflow YAML at most.
     assert 2 <= found["graph_files"] <= 4

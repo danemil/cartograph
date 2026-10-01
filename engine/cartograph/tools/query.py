@@ -970,30 +970,33 @@ def list_graph_stats(repo_root: str | None = None) -> dict[str, Any]:
 
 
 def find_large_functions(
-    min_lines: int = 50,
+    min_lines: int | None = None,
     kind: str | list[str] | tuple[str, ...] | None = None,
     file_path_pattern: str | None = None,
-    limit: int = 50,
+    limit: int = 20,
     repo_root: str | None = None,
     include_generated: bool = False,
 ) -> dict[str, Any]:
-    """Find functions (methods included) exceeding a line-count threshold.
+    """The largest functions (methods included), largest first.
 
     Useful for identifying decomposition targets, code-quality audits,
     and enforcing size limits during code review.
 
     Args:
-        min_lines: Minimum line count to flag (default: 50).
+        min_lines: Only nodes at least this long. None (default) applies no
+            threshold, so ``limit`` alone decides how many come back: a
+            "top 10" is ten rows whenever there are ten functions.
         kind: Node kind or kinds to rank: Function, Class, File, Test, Type.
             Defaults to Function, which covers methods — the graph has no
             separate Method kind; a method is a Function with a parent.
         file_path_pattern: Filter by file path substring (e.g. "components/").
-        limit: Maximum results (default: 50).
+        limit: Maximum results (default: 20).
         repo_root: Repository root path. Auto-detected if omitted.
         include_generated: Rank generated, vendored and declaration files too.
 
     Returns:
-        Oversized nodes with line counts, ordered largest first.
+        Nodes with line counts, ordered largest first, and ``matching``: how
+        many qualified before the limit.
     """
     kinds = [kind] if isinstance(kind, str) else list(kind or LARGE_DEFAULT_KINDS)
     store, root = _get_store(repo_root)
@@ -1002,7 +1005,7 @@ def find_large_functions(
         # would return a short page whenever a generated file ranked high,
         # and could not say how many were set aside.
         nodes = store.get_nodes_by_size(
-            min_lines=min_lines,
+            min_lines=min_lines if min_lines is not None else 1,
             kind=kinds,
             file_path_pattern=file_path_pattern,
             limit=None,
@@ -1010,11 +1013,13 @@ def find_large_functions(
 
         results = []
         excluded = 0
+        matching = 0
         for n in nodes:
             rel = relativise(n.file_path, root)
             if not include_generated and is_generated_file(rel):
                 excluded += 1
                 continue
+            matching += 1
             if len(results) >= limit:
                 continue
             d = node_to_dict(n)
@@ -1030,23 +1035,39 @@ def find_large_functions(
 
         noun = "functions" if kinds == ["Function"] else "/".join(kinds) + " nodes"
         scope = f" matching '{file_path_pattern}'" if file_path_pattern else ""
-        # One line. The rows are the list; a summary that restates them costs
-        # as much again and says nothing the rows do not.
+        largest = ""
         if results:
             top = results[0]
-            summary = (
-                f"{len(results)} {noun} >= {min_lines} lines{scope}; largest: "
-                f"{display_name(top) or top['relative_path']} ({top['line_count']} lines)"
+            largest = (
+                f"; largest: {display_name(top) or top['relative_path']} "
+                f"({top['line_count']} lines)"
             )
+        # One line, saying exactly what was applied. An agent asked for a top
+        # 10 that got 6 rows back reported 6 as the top 10, because a 50-line
+        # floor it never asked for was applied silently.
+        if min_lines is None:
+            if not results:
+                summary = f"No {noun}{scope} in the graph"
+            else:
+                head = (f"All {matching}" if len(results) == matching
+                        else f"Top {len(results)} of {matching}")
+                summary = (f"{head} {noun}{scope} by line count "
+                           f"(--limit {limit}, no --min-lines){largest}")
+        elif results:
+            shown = (f"; showing {len(results)} (--limit {limit})"
+                     if len(results) < matching else "")
+            summary = f"{matching} {noun} >= {min_lines} lines{scope}{shown}{largest}"
         else:
             summary = f"No {noun} >= {min_lines} lines{scope}"
         response: dict[str, Any] = {
             "status": "ok",
             "summary": summary,
             "total_found": len(results),
-            "min_lines": min_lines,
+            "matching": matching,
             "results": results,
         }
+        if min_lines is not None:
+            response["min_lines"] = min_lines
         if excluded:
             summary += (
                 f"; {excluded} in generated or declaration files not shown "

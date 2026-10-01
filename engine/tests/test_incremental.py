@@ -506,7 +506,9 @@ class TestGitOperations:
             returncode=0,
             stdout=b"M\0src/a.py\0A\0src/b.py\0",
         )
-        result = get_changed_files(tmp_path)
+        # The diff alone: untracked files are a second git call, covered in
+        # test_working_tree_coverage.py against a real repository.
+        result = get_changed_files(tmp_path, include_untracked=False)
         assert result == ["src/a.py", "src/b.py"]
         mock_run.assert_called_once()
         call_args = mock_run.call_args
@@ -522,7 +524,7 @@ class TestGitOperations:
             MagicMock(returncode=1, stdout=b""),
             MagicMock(returncode=0, stdout=b"A\0staged.py\0"),
         ]
-        result = get_changed_files(tmp_path)
+        result = get_changed_files(tmp_path, include_untracked=False)
         assert result == ["staged.py"]
         assert mock_run.call_count == 2
         assert "-z" in mock_run.call_args_list[1].args[0]
@@ -1740,7 +1742,7 @@ class TestRenamePurgeParity:
             returncode=0,
             stdout=b"R100\0old.py\0new.py\0",
         )
-        assert get_changed_files(tmp_path) == ["old.py", "new.py"]
+        assert get_changed_files(tmp_path, include_untracked=False) == ["old.py", "new.py"]
 
     def test_rename_purges_old_path_end_to_end(self, tmp_path):
         self._git(tmp_path, "init", "-q")
@@ -1757,7 +1759,9 @@ class TestRenamePurgeParity:
             self._git(tmp_path, "commit", "-qm", "rename")
 
             changed = get_changed_files(tmp_path, base="HEAD~1")
-            assert set(changed) == {"a.py", "b.py"}
+            # The graph database sits untracked in this repository, and
+            # untracked files are changes too; only the rename is at issue.
+            assert {p for p in changed if p.endswith(".py")} == {"a.py", "b.py"}
 
             incremental_update(tmp_path, store, changed_files=changed)
             # Old path fully purged, new path present — full-rebuild parity.

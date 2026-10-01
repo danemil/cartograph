@@ -275,6 +275,8 @@ def test_compacting_keeps_what_the_envelope_reads_from_data(tmp_path, monkeypatc
     assert env["data"] == {
         "summary": "Found 1 node(s) matching 'login'",
         "results": ["Function | login | auth.py:3"],
+        # Attached by the CLI; this graph's paths name no file on disk.
+        "coverage": "no code files in the working tree",
     }
     assert env["search_mode"] == "keyword"
     assert env["truncated"] is True
