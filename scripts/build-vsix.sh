@@ -39,8 +39,10 @@ if [ -n "$STALE" ]; then
 fi
 # The frozen engine reports the release it was stamped with. A bump after the
 # payload was built would ship a .vsix whose own skew check warns on first run.
-PAYLOAD_RELEASE=$(node -p "require('$PAYLOAD/PAYLOAD.json').engine_version")
-PACKAGE_RELEASE=$(node -p "require('$ROOT/extension/package.json').version")
+# Read from inside each directory: on Windows, Git Bash hands node a /d/a/...
+# path it cannot open, and only a relative require resolves the same everywhere.
+PAYLOAD_RELEASE=$(cd "$PAYLOAD" && node -p "require('./PAYLOAD.json').engine_version")
+PACKAGE_RELEASE=$(cd "$ROOT/extension" && node -p "require('./package.json').version")
 if [ "$PAYLOAD_RELEASE" != "$PACKAGE_RELEASE" ]; then
     echo "The $TARGET payload was stamped $PAYLOAD_RELEASE; extension/package.json is $PACKAGE_RELEASE."
     echo "Rebuild it first:"
