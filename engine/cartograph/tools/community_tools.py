@@ -9,6 +9,7 @@ from ..communities import get_architecture_overview, get_communities, is_high_co
 from ..context_savings import attach_context_savings
 from ..graph import node_to_dict
 from ..hints import generate_hints, get_session
+from ..layout import repository_layout
 from ._common import _bounded, _get_store, _shown_of, _validate_positive_int
 
 # ---------------------------------------------------------------------------
@@ -352,6 +353,9 @@ def get_architecture_overview_func(
                 + _shown_of(n_cross, cross_total) + ", "
                 f"{n_warnings} warning(s)"
             ),
+            # Ahead of the communities: what the repository is made of
+            # decides how much of it they describe.
+            "layout": repository_layout(root, store.get_all_files()),
             **overview,
             "cross_community_edges_total": cross_total,
             "truncated": truncated,

@@ -355,3 +355,65 @@ full` 6,037; `--detail-level standard` 37,734. The after response names all
 13 communities with their directories and the 3 coupled pairs with edge
 counts and kinds — what the before path gave, less member samples, cohesion
 and the per-edge list. Not re-measured: the end-to-end Copilot run.
+
+## `architecture`: the layout, because the graph is not the repository
+
+The one-call overview above was cheap and, on the wrong repository, wrong. A
+second user-run A/B (Copilot CLI, gpt-5.4-mini, five alternating rounds) asked
+the same overview question of an "AI-SDLC bootstrap kit" — docs, templates,
+workflows, AGENTS.md, a few Python scripts. With carto the answer was wrong
+5/5: the agent ran `architecture`, as the skill said, and described the
+scripts' communities as the repository. Without carto it read the README and
+was right 4/4. Before the one-call change, the agent also read files and got
+it right. The graph covers parsed code; nothing in the response said so.
+
+### What changed
+
+`architecture` leads with `layout`, built from every tracked file
+(`incremental.repository_files`, the list the build itself starts from;
+a walk with the ignore patterns where there is no version control). Kinds are
+decided by file name alone (`layout.kind_of`), so the overview never reads a
+file to count it:
+
+```
+"layout": {
+  "files": 51,
+  "by_kind": {"code": 7, "docs": 38, "config": 5, "other": 1},
+  "graph_files": 5,
+  "dirs": [
+    "(root) | 4 files | docs 3, config 1 | read first: README.md, AGENTS.md",
+    "docs/ | 24 files | docs 24",
+    "template/ | 13 files | docs 11, config 1, other 1",
+    "scripts/ | 4 files | code 4",
+    ".github/ | 3 files | config 3",
+    "dashboard/ | 3 files | code 3"
+  ],
+  "note": "86% of tracked files are not code; the code graph covers 10%. Communities below describe only that part; read README.md, AGENTS.md for the rest."
+}
+```
+
+That is the docs-heavy fixture built to the A/B repository's shape. The
+`note` appears only when under half the tracked files are code. At most 12
+top-level directories are listed, largest first; the rest are summed in
+`dirs_omitted`. The root row names up to four root documents to read first
+(README, AGENTS, CLAUDE, ARCHITECTURE, CONTRIBUTING, in that order). Rows
+are compact by `layout_dir_row`; `--detail full` keeps them as objects.
+
+The explore-codebase skill now says the graph covers parsed code only, and
+that when `layout.note` is present the agent reads the files under `read
+first:` and describes the repository from its layout and those docs.
+
+### Measured
+
+Stdout characters of `architecture --format json`; before is `1097ccc`.
+
+| Repository | Before | After | Note |
+|---|---:|---:|---|
+| docs-heavy fixture (51 files, 5 in the graph) | 518 | 1,178 | yes |
+| claude-mem at `ade13f3` (1,534 tracked, 991 in the graph) | 1,671 | 2,819 | no, 65% code |
+
+claude-mem's layout is 13 rows (root plus 12 directories, 17 more summed).
+The overview path is still a sixth of the three-call path it replaced
+(16,591 chars). Not measured: whether the agent now reads the README on the
+user's repository — that needs the A/B re-run.
+

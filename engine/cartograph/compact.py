@@ -237,6 +237,23 @@ def connection_row(pair: dict[str, Any]) -> Any:
     return " | ".join(parts)
 
 
+def layout_dir_row(entry: dict[str, Any]) -> Any:
+    """``<dir> | <n> files | <kind> <n>, ...[ | read first: <files>]``.
+
+    The root row names the documents a reader would open first, because on a
+    repository that is mostly not code they are where its structure is told.
+    """
+    if "dir" not in entry or "files" not in entry:
+        return entry
+    parts = [entry["dir"], f"{entry['files']} files"]
+    kinds = entry.get("kinds") or {}
+    if kinds:
+        parts.append(", ".join(f"{k} {n}" for k, n in kinds.items()))
+    if entry.get("notable"):
+        parts.append("read first: " + ", ".join(entry["notable"]))
+    return " | ".join(parts)
+
+
 def _with_metric(field_name: str, unit: str) -> Callable[[dict[str, Any]], Any]:
     return lambda node: node_row(node, metric=(field_name, unit))
 
@@ -295,6 +312,7 @@ _SPECS: dict[str, _Spec] = {
         rows={
             ("communities",): architecture_community_row,
             ("cross_community_edges",): connection_row,
+            ("layout", "dirs"): layout_dir_row,
         },
         drop=("cross_community_edges_total", "context_savings"),
         # Per-edge rows (standard) carry no coupling flag, so there the

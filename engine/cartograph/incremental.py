@@ -1029,6 +1029,24 @@ def _get_svn_all_tracked_files(repo_root: Path) -> list[str]:
     return []
 
 
+def repository_files(
+    repo_root: Path,
+    recurse_submodules: bool | None = None,
+) -> tuple[list[str], bool]:
+    """Every file in the repository, and whether git (or svn) listed them.
+
+    Tracked files when there is version control, otherwise a directory walk.
+    The build filters these down to parseable files; ``carto architecture``
+    counts all of them, so both start from this one list.
+    """
+    tracked = get_all_tracked_files(repo_root, recurse_submodules)
+    if tracked:
+        return tracked, True
+    return [
+        str(p.relative_to(repo_root)) for p in repo_root.rglob("*") if p.is_file()
+    ], False
+
+
 def collect_all_files(
     repo_root: Path,
     recurse_submodules: bool | None = None,
@@ -1044,13 +1062,7 @@ def collect_all_files(
     parser = CodeParser(repo_root)
     files = []
 
-    # Prefer git ls-files for tracked files
-    tracked = get_all_tracked_files(repo_root, recurse_submodules)
-    if tracked:
-        candidates = tracked
-    else:
-        # Fallback: walk directory
-        candidates = [str(p.relative_to(repo_root)) for p in repo_root.rglob("*") if p.is_file()]
+    candidates, _ = repository_files(repo_root, recurse_submodules)
 
     for rel_path in candidates:
         if _should_ignore(rel_path, ignore_patterns):
