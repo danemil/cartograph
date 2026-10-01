@@ -37,7 +37,7 @@ architecture.
    ```
    carto architecture --format json
    ```
-   `layout` comes first: every tracked file, counted by top-level directory
+   `layout` comes first: every file git lists, counted by top-level directory
    and kind (code, docs, config, other), and how many of them the graph
    parsed. Then one row per code component (community): its name, size,
    language and the directories it lives in; one row per connected pair: edge
@@ -72,14 +72,26 @@ architecture.
    `keyword` means lexical matching only, so trust it less for near-misses
    and try the literal term.
 
-5. **Spot the rough edges**, when sizing up quality or planning work:
+5. **The largest functions**, or the rough edges when sizing up quality:
    ```
-   carto large-functions --min-lines 80 --limit 20 --format json
+   carto large-functions --limit 10 --format json
    ```
-   Functions and methods only, generated and `.d.ts` files left out (the
-   summary says how many). `--kind` widens and repeats, e.g.
+   The N largest functions and methods, with no size threshold — "top 10" is
+   `--limit 10`. Add `--min-lines 80` only for "every function over 80
+   lines". Generated and `.d.ts` files are left out (the summary says how
+   many). `--kind` widens and repeats, e.g.
    `carto large-functions --kind Function --kind Class --include-generated`.
    For the largest *files*, use `wc -l` instead.
+
+### Coverage: say what the answer did not see
+
+`large-functions`, `search`, `query` and `dead-code` carry `data.coverage`,
+e.g. `searched 70 of 73 code files; not covered: 2 no parser (.bat), 1
+generated or vendored`. When it says anything is not covered, say so in the
+answer — name the counts and kinds — rather than presenting the list as
+complete; if the uncovered files could hold the answer (a `.bat` cannot hold
+the largest Python function; a file `not in the graph` can), check them with
+the shell or run `carto update` and ask again.
 
 ### Reading the rows
 

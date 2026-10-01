@@ -56,6 +56,10 @@ without reading the whole call path by hand.
 
 6. **Now read the code** — the specific functions steps 1–5 identified.
 
+`search` and `query` carry `data.coverage`. When it says code files are not
+covered, the path you are tracing may run through one of them: say so, and
+`grep` them before ruling a caller out.
+
 ### Useful patterns
 
 `carto query` takes the pattern as a positional argument, then the target:

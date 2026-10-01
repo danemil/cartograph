@@ -369,7 +369,8 @@ it right. The graph covers parsed code; nothing in the response said so.
 
 ### What changed
 
-`architecture` leads with `layout`, built from every tracked file
+`architecture` leads with `layout`, built from every tracked file — and,
+since the change in the last section, every untracked one git does not ignore
 (`incremental.repository_files`, the list the build itself starts from;
 a walk with the ignore patterns where there is no version control). Kinds are
 decided by file name alone (`layout.kind_of`), so the overview never reads a
@@ -388,7 +389,7 @@ file to count it:
     ".github/ | 3 files | config 3",
     "dashboard/ | 3 files | code 3"
   ],
-  "note": "86% of tracked files are not code; the code graph covers 10%. Communities below describe only that part; read README.md, AGENTS.md for the rest."
+  "note": "86% of files are not code; the code graph covers 10%. Communities below describe only that part; read README.md, AGENTS.md for the rest."
 }
 ```
 
@@ -417,3 +418,122 @@ The overview path is still a sixth of the three-call path it replaced
 (16,591 chars). Not measured: whether the agent now reads the README on the
 user's repository — that needs the A/B re-run.
 
+
+## `large-functions`: top N means N, and every list says what it covered
+
+A third user-run A/B (Copilot CLI, gpt-5.4-mini, five rounds) asked "Which
+are the largest functions in this repository, by line count? List the top 10
+with their file and line count." With carto 0/5 answers were fully right (four
+matched 7 of 10, one listed only 6); without, 2/5 — although carto cut the
+cost by 83%. Two causes, both a partial answer presented as complete:
+
+1. `--min-lines` defaulted to 50. `--limit 10` on a small repository returned
+   6 rows, and the agent reported those 6 as the top 10.
+2. The graph was built from `git ls-files`, tracked files only. The user's
+   repository had an untracked, not-ignored `.github/skills/…/scripts/`
+   directory; the reference answer, built from the working tree, included its
+   functions, and nothing in carto's response said any file had been left out.
+
+### What changed
+
+- **The working tree.** `incremental.repository_files` — the one list the
+  build, `architecture`'s layout and the coverage line start from — is now
+  tracked files plus `git ls-files --others --exclude-standard`
+  (`get_untracked_files`): `.gitignore`, `.git/info/exclude` and the global
+  excludes still keep files out, and the build's own generated/vendored
+  patterns still apply on top. A second git call rather than one
+  `--cached --others` call, because `--recurse-submodules` works only for
+  tracked files; submodule handling is unchanged.
+- **Update.** `git diff <base>` never lists an untracked file, so
+  `incremental_update` adds the untracked files that are new to the graph or
+  whose hash differs from the stored one (`_untracked_needing_parse`);
+  unchanged ones are not queued, since every queued file also re-parses its
+  dependents. A deleted untracked file goes through the existing stale-file
+  reconciliation; one the user has since git-ignored is removed by one
+  `git check-ignore --stdin` over the graph's files (tracked files are never
+  reported by it). `get_changed_files` includes untracked files by default,
+  so `detect-changes`, `review-context` and `impact`'s default change set see
+  new files; update asks for the diff alone and adds its filtered set.
+- **Top N.** `large-functions` has no threshold unless `--min-lines` is
+  given; `--limit` (default 20, was 50) alone decides how many rows come
+  back. Default when neither is given: the 20 largest — the question it
+  answers is a ranking, and 20 rows is ~2.8 KB on claude-mem. The summary
+  says what was applied: `Top 10 of 7481 functions by line count (--limit
+  10, no --min-lines); largest: …`, or `12 functions >= 80 lines; showing 10
+  (--limit 10); …`. `data.matching` is the exact count before the limit and
+  feeds `page.total_estimated`, so `has_more` is exact.
+- **Coverage.** `large-functions`, `search`, `query`, `refactor` and
+  `dead-code` carry `data.coverage` (`layout.coverage`): every code file in
+  the working tree (by name, `layout.kind_of`) plus anything else the graph
+  parsed, and those it does not hold counted by reason, extensions capped at
+  three:
+
+  ```
+  searched 70 of 73 code files; not covered: 2 no parser (.bat, .html), 1 generated or vendored
+  ```
+
+  Reasons: `no parser`, `generated or vendored` (`is_generated_file`),
+  `excluded by ignore rules` (`.cartographignore`, nested build output),
+  `symlinks`, `not in the graph (run carto update)` — new since the build, or
+  failed to parse. Graph files since deleted are a separate trailing clause.
+  When anything is not covered the summary ends `N of M code files not
+  covered (see coverage)`, because the summary is sometimes all an agent
+  reads. No file is read to compute it (bar a shebang sniff for an
+  extension-less one); docs and config are not counted as gaps.
+- **Skills.** explore-codebase step 5 is `large-functions --limit 10`, with
+  `--min-lines` only for "every function over N lines"; a new "Coverage"
+  section, and short notes in refactor-safely and debug-issue, tell the agent
+  to say what was not covered rather than present the list as complete.
+  Descriptions unchanged.
+
+### Measured
+
+claude-mem at `ade13f3`, in two copies of the checkout; before is `3f9c4e5`
+(v0.8.7). It has no untracked files, so the graph is the same: full build
+14.8 s → 14.4 s, 16,967 nodes and 991 files both sides. `git ls-files
+--others --exclude-standard` takes ~0.01–0.02 s there; `layout.coverage`
+0.05–0.06 s. With one untracked `.github/skills/deck/scripts/render.py`
+(a 1,202-line function) added to both copies: `carto update` before — 0
+files updated, `large-functions` still topped by a 988-line function; after —
+1 file updated (4.9 s with post-processing), `render_deck` first. A no-change
+update after it: 0.27 s before, 0.32 s after.
+
+Stdout characters of `--format json`:
+
+| Command | Before | After |
+|---|---:|---:|
+| `large-functions` (default) | 5,548 (50 rows, ≥ 50 lines) | 2,803 (20 rows) |
+| `large-functions --limit 10` | 1,572 | 1,798 |
+| `large-functions --min-lines 80 --limit 20` | 2,577 | 2,784 |
+| `search session --limit 20` | 3,029 | 3,168 |
+| `dead-code --limit 20 --format json` | 1,918 | 2,049 |
+| `query callers_of …SessionStore.createSDKSession --limit 20` | 7,210 | 7,356 |
+
+The coverage field there is `searched 991 of 996 code files; not covered: 5
+no parser (.html)` — 64 characters, plus the summary clause.
+
+**Not measured.** A repository with a large untracked, not-ignored tree
+(say, an unignored `node_modules`): `ls-files --others` then walks it, and
+the build parses whatever in it has a parser — the generated/vendored
+patterns still drop `node_modules`, `dist`, `vendor` and the like. The A/B
+itself has not been re-run.
+
+### Tests, and that they can fail
+
+`engine/tests/test_working_tree_coverage.py` (20 tests, real `git init`
+repositories). Each behaviour was removed on purpose and the suite run:
+
+| Removed | Fails |
+|---|---|
+| untracked files from `repository_files` | build, listing, submodule-recursion build, coverage (4), deleted-untracked removal, no-requeue |
+| `--exclude-standard` | ignored-not-built, listing, detect-changes set |
+| untracked files from update | new untracked picked up, edited untracked re-parsed |
+| the hash filter on untracked | unchanged untracked not queued |
+| `git check-ignore` in reconciliation | removed once ignored |
+| stale reconciliation | deleted untracked removed, removed once ignored |
+| untracked in `get_changed_files` | detect-changes set |
+| `--min-lines` default 50 / `--limit` default 50 | top-N, default top 20 |
+| explicit `--min-lines` ignored | explicit threshold filters |
+| "no --min-lines" in the summary | top-N |
+| generated / ignore-rule / pending reasons, example cap, summary clause | counts-by-reason, example cap |
+| coverage on search/query/refactor, on dead-code | the per-command test |

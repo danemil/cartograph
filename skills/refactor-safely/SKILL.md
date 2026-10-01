@@ -62,6 +62,11 @@ Cartograph reports the sites, you make the edits with your normal tools.
 Steps 1 and 4 answer most "what would break" questions; add 2 and 3 when the
 change is a removal or the symbol is not only called.
 
+`query`, `refactor` and `dead-code` carry `data.coverage`. When it says
+code files are not covered, a caller may sit in one of them: say so in the
+answer, and `grep` those files for the symbol before calling a list complete,
+a rename finished or a symbol dead.
+
 ### Renaming
 
 1. **Preview the rename.** Modes are `rename`, `dead_code`, `suggest`.
@@ -86,8 +91,9 @@ change is a removal or the symbol is not only called.
 - Suggestions: `carto refactor suggest --format json --max-tokens 3000` —
   it can return hundreds, so budget it.
 - Oversized functions and methods: `carto large-functions --min-lines 80 --format json`
-  (generated files left out; `--kind Class` widens). For the largest files,
-  `wc -l` is cheaper.
+  (every one over 80 lines; `--limit N` alone gives the N largest; generated
+  files left out; `--kind Class` widens). For the largest files, `wc -l` is
+  cheaper.
 
 ### Care
 

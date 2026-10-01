@@ -14,7 +14,7 @@ below, then pick up **Next task**.
 ```bash
 cd /Users/emidan/work/cartograph
 ./scripts/verify.sh
-# expect: 378 envelope checks, 280 skills checks, 13/13 files, "all green"
+# expect: 378 envelope checks, 276 skills checks, 13/13 files, "all green"
 ```
 
 If that passes, everything described here is true. If it does not, trust the
@@ -437,6 +437,34 @@ regressions from v0.8.6:
   (`TestSkillRouting::test_ab_tasks_*` in `engine/tests/test_skills.py`).
 - **Not re-measured:** the A/B itself. T1 and T5 are pinned by the routing
   tests, not re-run.
+
+## Done — 2026-10-01, the third A/B: top 10 means ten, and the working tree
+
+The user's A/B on T3 ("the largest functions … top 10 with their file and
+line count", Copilot CLI, gpt-5.4-mini, 5 rounds): with carto 0/5 fully right
+(four 7/10, one listed only 6), without 2/5, though carto cut cost 83%. A
+hidden `--min-lines 50` turned `--limit 10` into 6 rows, and the graph held
+tracked files only, so an untracked skill directory's scripts were invisible.
+
+- **Working tree.** Build, layout and coverage list tracked files plus
+  untracked ones git does not ignore (`get_untracked_files`, `git ls-files
+  --others --exclude-standard`). `carto update` and the Stop-hook refresh add
+  untracked files that are new or edited (hash-checked), drop deleted ones
+  through the existing reconciliation, and drop ones since git-ignored (one
+  `git check-ignore`); `get_changed_files` lists untracked files, so
+  `detect-changes` sees them. Existing graphs gain them on the next update.
+- **Top N.** `large-functions` applies no threshold unless `--min-lines` is
+  given; `--limit` defaults to 20; the summary names what was applied and
+  `page.total_estimated` is the exact count.
+- **Coverage.** `large-functions`, `search`, `query`, `refactor`,
+  `dead-code` carry `data.coverage` (`layout.coverage`), e.g. `searched 991
+  of 996 code files; not covered: 5 no parser (.html)`, and the summary says
+  when it is partial. Skills tell the agent to say so in the answer.
+- Design, measurements and the mutation table:
+  `docs/design/compact-output.md`, last section. Tests:
+  `engine/tests/test_working_tree_coverage.py` (20, 18 mutations each caught).
+- **Not re-measured:** the A/B itself; a repository with a large untracked,
+  not-ignored tree.
 
 ## NEXT TASK
 
