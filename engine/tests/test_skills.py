@@ -424,6 +424,104 @@ class TestSkillRouting:
                        "blast radius", "impact of", "signature"):
             assert phrase in description, phrase
 
+    # The task phrasings of the user's A/B (Copilot CLI, gpt-5.4-mini, five
+    # rounds), each with the skill that should take it, the command that skill
+    # must run to answer it, and the words of the question its description
+    # has to carry. T3 lost its route when the descriptions were trimmed and
+    # Copilot answered it without carto five times out of five.
+    _AB_TASKS = {
+        "T1": (
+            "Have we already decided which format to use for the tool's config "
+            "file, and what was ruled out?",
+            "recall-context", "carto mem search", ("already decided", "ruled out"),
+        ),
+        "T2": (
+            "Give me a short overview of how this repository is structured: its "
+            "main components and how they connect.",
+            "explore-codebase", "carto architecture",
+            ("structured", "main components", "how they connect"),
+        ),
+        "T3": (
+            "Which are the largest functions in this repository, by line count? "
+            "List the top 10 with their file and line count.",
+            "explore-codebase", "carto large-functions",
+            ("largest functions", "line count"),
+        ),
+        "T5": (
+            "Who calls parse_doc, and what would break if its signature changed?",
+            "refactor-safely", "carto query callers_of",
+            ("who calls", "would break", "signature"),
+        ),
+    }
+
+    _STOPWORDS = frozenset(
+        "a an the and or of to in on for is are was be by it its this that "
+        "these which what who how we have has if with as at from use not when "
+        "you they would do does give me list top short already".split()
+    )
+
+    @classmethod
+    def _content_words(cls, text: str) -> set[str]:
+        import re
+
+        out = set()
+        for word in re.findall(r"[a-z]+", text.lower()):
+            if word in cls._STOPWORDS or len(word) < 3:
+                continue
+            for suffix in ("ing", "ed", "es", "s"):
+                if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+                    word = word[: -len(suffix)]
+                    break
+            out.add(word)
+        return out
+
+    def test_ab_tasks_name_their_skill_in_its_description(self):
+        # Copilot chooses a skill from the frontmatter descriptions alone, so
+        # that is what is checked; the body is only read once chosen. The
+        # phrases are the question's own words, picked by hand, and none may
+        # appear in another skill's description, or two skills claim it — except
+        # in its closing "Not for ..." clause, which exists to send it away.
+        descriptions = {
+            slug: fm["description"].lower() for slug, fm in self._frontmatter().items()
+        }
+        claims = {slug: d.split("not for ")[0] for slug, d in descriptions.items()}
+        for task, (_, owner, _, phrases) in self._AB_TASKS.items():
+            for phrase in phrases:
+                assert phrase in claims[owner], (task, owner, phrase)
+            others = [s for s, d in claims.items()
+                      if s != owner and any(p in d for p in phrases)]
+            assert others == [], (task, others)
+
+    def test_ab_tasks_overlap_their_skill_most(self):
+        # A check that does not depend on the phrases above: by plain word
+        # overlap with the whole question, the owner's description ranks
+        # strictly first. A crude stand-in for a model's choice — it cannot
+        # prove Copilot picks the skill, only that nothing in the descriptions
+        # points it elsewhere.
+        descriptions = {
+            slug: self._content_words(fm["description"])
+            for slug, fm in self._frontmatter().items()
+        }
+        for task, (question, owner, _, _) in self._AB_TASKS.items():
+            asked = self._content_words(question)
+            scores = {slug: len(asked & words) for slug, words in descriptions.items()}
+            best_other = max(v for s, v in scores.items() if s != owner)
+            assert scores[owner] > best_other, (task, scores)
+
+    def test_ab_tasks_owner_runs_the_answering_command(self):
+        docs = skills_module.skill_documents()
+        for task, (_, owner, command, _) in self._AB_TASKS.items():
+            body = docs[owner].split("---", 2)[2]
+            assert command in body, (task, owner, command)
+
+    def test_overview_reads_the_docs_when_most_of_the_repo_is_not_code(self):
+        # T2 was answered wrongly 5/5 when the skill said the overview was one
+        # `architecture` call: on a mostly-docs repository that call describes
+        # a few scripts. The skill must send the agent to the docs it names.
+        body = skills_module.skill_documents()["explore-codebase"].split("---", 2)[2]
+        for phrase in ("layout.note", "read first:", "covers parsed code only"):
+            assert phrase in body, phrase
+
     def test_descriptions_stay_small(self):
         # 1,849 characters before the routing fix; every one is paid per request.
         total = sum(len(fm["description"]) for fm in self._frontmatter().values())

@@ -414,6 +414,30 @@ Not yet seen on the VM.
   1,671 chars (4,149 → 418 tokens). `docs/design/compact-output.md`.
 - **Not re-measured:** the A/B itself. T1 recall (+20%) was not addressed.
 
+## Done — 2026-10-01, the second A/B: an accurate overview, and T3's route back
+
+The user's next A/B (Copilot CLI, gpt-5.4-mini, 5 alternating rounds, isolated
+COPILOT_HOME) on a repository that is mostly docs and templates found two
+regressions from v0.8.6:
+
+- **T2 overview wrong 5/5 with carto** (4/4 right without): the skill said the
+  overview was one `architecture` call, which describes only parsed code — a
+  few Python scripts here. `architecture` now leads with `layout`: every
+  tracked file by top-level directory and kind (code/docs/config/other), the
+  graph's share, the root docs to read first, and a note when under half is
+  code (`engine/cartograph/layout.py`, rows in `compact.py`, file list shared
+  with the build via `incremental.repository_files`). The skill says the graph
+  covers parsed code only and, when the note is present, to read the docs it
+  names. claude-mem: 1,671 → 2,819 chars, no note (65% code).
+- **T3 "largest functions" never used carto** (0/5; 2/3 before v0.8.6): the
+  trim had dropped it from every description. explore-codebase's description
+  names it again, and its body says largest *functions* are not a shell
+  question. Descriptions 1,332 → 1,348 chars.
+- Routing tests now hold each A/B phrasing to its skill
+  (`TestSkillRouting::test_ab_tasks_*` in `engine/tests/test_skills.py`).
+- **Not re-measured:** the A/B itself. T1 and T5 are pinned by the routing
+  tests, not re-run.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the

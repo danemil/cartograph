@@ -1,6 +1,6 @@
 ---
 name: explore-codebase
-description: How a repository is structured — its main components and how they connect, in one call — and where a concept lives. Use when onboarding or asked how the repo works. Not for who calls a symbol or what a change breaks (refactor-safely).
+description: How a repository is structured — its main components and how they connect — where a concept lives, and the largest functions by line count. Use when onboarding. Not for who calls a symbol or what a change breaks (refactor-safely).
 ---
 
 ## Explore a codebase
@@ -20,7 +20,9 @@ you open twenty files to find the three that matter.
 
 ### When NOT to use carto at all
 File-level questions are cheaper with the shell, and just as exact:
-- Largest files, line counts → `wc -l`, e.g. `git ls-files '*.ts' | xargs wc -l | sort -n | tail`.
+- Largest *files* → `wc -l`, e.g. `git ls-files '*.ts' | xargs wc -l | sort -n | tail`.
+  Largest *functions* are not a file question: the shell cannot see where a
+  function ends, so use `carto large-functions` (step 5).
 - Which files mention a string → `grep -rln` (or `rg -l`).
 - Listing or counting files → `find`, `git ls-files`.
 
@@ -30,15 +32,26 @@ architecture.
 
 ### Steps
 
-1. **The overview is one call.** For "how is this repo structured / what are
-   its main components and how do they connect", this is the whole answer:
+1. **Start the overview with one call.** For "how is this repo structured /
+   what are its main components and how do they connect":
    ```
    carto architecture --format json
    ```
-   One row per component (community): its name, size, language and the
-   directories it lives in; one row per connected pair: edge count, edge kinds,
-   and `high coupling` where it is. Answer from it. Do not follow it with
-   `communities` or `flows` by reflex — every later call re-sends this one.
+   `layout` comes first: every tracked file, counted by top-level directory
+   and kind (code, docs, config, other), and how many of them the graph
+   parsed. Then one row per code component (community): its name, size,
+   language and the directories it lives in; one row per connected pair: edge
+   count, edge kinds, and `high coupling` where it is.
+
+   **The graph covers parsed code only.** When `layout.note` is present, most
+   of the repository is not code and the communities describe only its code
+   part. Then read the files the root row names under `read first:` (the
+   README, AGENTS.md) and the top-level docs they point to, and describe the
+   repository from its layout and those docs — the communities are one part
+   of it, not its structure. When there is no note, the code is most of the
+   repository and the overview can be answered from this call. Either way, do
+   not follow it with `communities` or `flows` by reflex — every later call
+   re-sends this one.
 
 2. **Drill into one area** only when the question names it:
    ```
@@ -77,7 +90,8 @@ Add `--detail full` only when you need a field the row leaves out.
 
 ### Budget
 
-- An overview question is one call: step 1. Each step after it is for a
+- An overview of a code-heavy repository is one call: step 1. A mostly
+  non-code one is step 1 plus the docs it names. Each later step is for a
   question the overview does not answer.
 - `--detail-level standard` adds member samples and every cross-community
   edge — 8 to 22 times the size on a 991-file repository, rarely what an
@@ -91,7 +105,9 @@ Exit `2` means there is no graph yet — run `error.remediation`, or use the
 ### Report
 
 Lead with the shape: the major components, where each lives and what it is
-for, and which of them are coupled. Name specific files and symbols — a summary the reader cannot
+for, and which of them are coupled. Where most of the repository is docs or
+templates, those are major components too; say what they are from reading
+them, not from their file counts. Name specific files and symbols — a summary the reader cannot
 act on is not worth the tokens.
 
 ### Reference

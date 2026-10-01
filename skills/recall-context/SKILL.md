@@ -1,6 +1,6 @@
 ---
 name: recall-context
-description: Search what earlier sessions decided about this repository, and record decisions worth keeping. Use for "have we already decided/tried X", before re-deriving a choice, and after settling one. Not for what the code itself shows.
+description: Search what earlier sessions decided about this repository, and record decisions worth keeping. Use for "have we already decided/tried X, what was ruled out", before re-deriving a choice, and after settling one. Not for what the code itself shows.
 ---
 
 ## Recall what was learned before
