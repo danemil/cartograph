@@ -438,6 +438,18 @@ def _process_repo(
             dry_run=dry_run,
         )
 
+    # Copies releases before 0.6.0 wrote beside .github/skills; the same
+    # recognition install uses, so a person's own skill survives both.
+    from .legacy_skills import sweep
+
+    legacy = sweep(repo_root, dry_run=dry_run)
+    for rel in legacy.removed:
+        _record_remove(report, repo_root / rel, "remove stale skill copy", dry_run)
+    for rel in legacy.pruned:
+        _record_remove(report, repo_root / rel, "remove emptied skills directory", dry_run)
+    for rel, reason in legacy.kept:
+        report.skipped_paths.append(f"{repo_root / rel} ({reason}; left unchanged)")
+
     # Every variant is matched per file, so which section a given path was
     # written with no longer has to be worked out here.
     for relative in (skills.INSTRUCTION_FILE, skills.LEGACY_INSTRUCTION_FILE):

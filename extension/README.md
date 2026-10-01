@@ -18,6 +18,9 @@ On activation, in order:
    `.cartograph/` in the repository's local `.git/info/exclude`, so they do
    not appear in `git status`; the tracked `.gitignore` is not edited, and
    files the repository already tracks are left as they are.
+   Skill copies a release before 0.6.0 left in `.claude/skills` or
+   `.agents/skills` are removed when they are provably Cartograph's, and kept
+   otherwise; either way the **Cartograph** output channel says which.
 4. Reads `carto status` and shows the graph state in the status bar.
 
 The hooks are what make memory automatic: every prompt is recorded, each

@@ -179,7 +179,7 @@ async function checkVersionSkew(
 }
 
 /**
- * Put the skills pack in the three directories the hosts read.
+ * Put the skills pack in `.github/skills`, where both Copilot hosts read it.
  *
  * `carto install` already does this, including the byte-for-byte guarantee
  * that the installed pack matches the canonical one, so it is called rather
@@ -209,6 +209,14 @@ async function installIntoWorkspace(
     return;
   }
   await context.workspaceState.update(PLACEMENT_KEY, stamp);
+  // Copies an earlier release left in .claude/skills or .agents/skills, removed
+  // or (when they are not provably Cartograph's) kept: worth a trace, since
+  // the person never asked for either.
+  for (const line of result.output.split("\n")) {
+    if (line.startsWith("Removed skill copies") || line.startsWith("Left ")) {
+      log.info(line);
+    }
+  }
   if (opts.force) {
     vscode.window.showInformationMessage(
       "Cartograph: skills and hooks installed for Copilot Chat and Copilot CLI.",

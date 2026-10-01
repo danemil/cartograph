@@ -284,7 +284,13 @@ def _handle_init(args: argparse.Namespace) -> None:
         for t in instr_targets:
             print(f"  {t}")
 
+    from .legacy_skills import describe as _describe_legacy
+    from .legacy_skills import sweep as _sweep_legacy
+
     if dry_run:
+        if not getattr(args, "no_skills", False):
+            for line in _describe_legacy(_sweep_legacy(repo_root, dry_run=True), dry_run=True):
+                print(line)
         print("\n[dry-run] Would add the files written to the repository's info/exclude.")
         print("[dry-run] No files were modified.")
         return
@@ -312,6 +318,8 @@ def _handle_init(args: argparse.Namespace) -> None:
         # One line per skill rather than the whole directory: a team's own
         # skills in .github/skills must stay visible to git.
         written.extend(f"{HOST_SKILL_DIR}/{slug}/" for slug in skill_documents())
+        for line in _describe_legacy(_sweep_legacy(repo_root)):
+            print(line)
 
     # Confirm before writing instruction files (#173). --yes skips the
     # prompt; --no-instructions skips the whole block.

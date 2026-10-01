@@ -104,6 +104,15 @@ of the block and named in install's output — exclusion has no effect on a
 tracked file. Outside a git repository the step is skipped with a note.
 `carto uninstall` removes the block and nothing else in that file.
 
+Releases before 0.6.0 also wrote the pack to `.claude/skills/` and
+`.agents/skills/`, which Copilot reads too. `carto install` and `carto
+uninstall` remove such a copy only when it is provably Cartograph's: one of the
+six skill names, a directory holding only `SKILL.md`, and that file's text a
+version the pack has shipped (`engine/cartograph/skills_shipped.json`, built
+from git history; line endings aside). A skill of the same name with any other
+content is kept and named in the output. `.claude/skills` or `.agents/skills`
+is removed only when this emptied it.
+
 ## Layout
 
 | Path | What |
