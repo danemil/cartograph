@@ -210,7 +210,7 @@ def test_limit_without_min_lines_returns_the_top_n(twelve_small, capsys):
     assert rows[0].split(" | ")[2] == "f11"
     assert env["page"]["has_more"] is True
     summary = env["data"]["summary"]
-    assert summary.startswith("Top 10 of 13 functions by line count")
+    assert summary.startswith("Top 10 of 13 functions (tests included) by line count")
     assert "no --min-lines" in summary
 
 
@@ -230,7 +230,7 @@ def test_explicit_min_lines_still_filters(twelve_small, capsys):
     )
     # f07..f11 are 10..14 lines (def + body + return).
     assert len(env["data"]["results"]) == 5
-    assert env["data"]["summary"].startswith("5 functions >= 10 lines")
+    assert env["data"]["summary"].startswith("5 functions (tests included) >= 10 lines")
 
 
 # --------------------------------------------------------------------------

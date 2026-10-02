@@ -3,8 +3,8 @@
 A measurement on a 70-file repository found `carto large-functions` costing
 ~6x what `find | xargs wc -l | sort` did for the same question, and returning
 no functions at all: every row was a File, Class or Test node, one of them a
-generated 14,726-line `.d.ts`. These tests pin the fix — functions and
-methods by default, generated files out and counted, one line of summary.
+generated 14,726-line `.d.ts`. These tests pin the fix — functions,
+methods and test functions by default, generated files out and counted, one line of summary.
 """
 
 from __future__ import annotations
@@ -62,6 +62,7 @@ def sized_repo(tmp_path):
 
 
 def test_default_returns_functions_and_methods_only(sized_repo):
+    # The 80-line `describe` block is a Test node, and a suite, not a function.
     result = find_large_functions(min_lines=50, repo_root=str(sized_repo))
     kinds = {r["kind"] for r in result["results"]}
     names = [r["name"] for r in result["results"]]
@@ -109,7 +110,9 @@ def test_summary_is_one_line_naming_the_largest(sized_repo):
     result = find_large_functions(min_lines=50, repo_root=str(sized_repo))
     summary = result["summary"]
     assert "\n" not in summary
-    assert summary.startswith("2 functions >= 50 lines; largest: Store.migrate (301 lines)")
+    assert summary.startswith(
+        "2 functions (tests included) >= 50 lines; largest: Store.migrate (301 lines)"
+    )
     # The exclusion is said where an agent reads first, with the way back.
     assert "--include-generated" in summary
 
@@ -118,7 +121,7 @@ def test_summary_when_nothing_qualifies(sized_repo):
     result = find_large_functions(min_lines=5000, repo_root=str(sized_repo))
     assert result["results"] == []
     assert "\n" not in result["summary"]
-    assert result["summary"].startswith("No functions >= 5000 lines")
+    assert result["summary"].startswith("No functions (tests included) >= 5000 lines")
 
 
 @pytest.mark.parametrize(
@@ -216,3 +219,112 @@ def test_review_context_summary_does_not_repeat_its_guidance(sized_repo):
         )
         assert "\n" not in result["summary"], detail
         assert "Review guidance" not in result["summary"], detail
+
+
+# --------------------------------------------------------------------------
+# Test functions rank too (the fourth A/B: two of ten reference entries were
+# test methods, and the default left out every Test node)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def tested_repo(tmp_path):
+    """Functions, a Python test method larger than some of them, a JS `it`
+    block, and a `describe` suite that wraps a whole file."""
+    repo = tmp_path / "tested"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    store = GraphStore(get_db_path(repo))
+    app = str(repo / "app.py")
+    tests = str(repo / "tests" / "test_app.py")
+    spec = str(repo / "web" / "app.test.ts")
+    nodes = [
+        NodeInfo(kind="Function", name="compute", file_path=app, line_start=1,
+                 line_end=40, language="python"),
+        NodeInfo(kind="Function", name="helper", file_path=app, line_start=50,
+                 line_end=59, language="python"),
+        NodeInfo(kind="Test", name="test_main_runs", file_path=tests,
+                 line_start=10, line_end=77, language="python",
+                 parent_name="AppSmokeTest", is_test=True),
+        NodeInfo(kind="Test", name="it:renders@L5", file_path=spec,
+                 line_start=5, line_end=34, language="typescript", is_test=True),
+        NodeInfo(kind="Test", name="describe:App@L1", file_path=spec,
+                 line_start=1, line_end=200, language="typescript", is_test=True),
+    ]
+    for node in nodes:
+        store.upsert_node(node)
+    store.commit()
+    store.close()
+    return repo
+
+
+def test_default_ranks_test_functions_with_functions(tested_repo):
+    result = find_large_functions(repo_root=str(tested_repo))
+    ranked = [(r["kind"], r["name"]) for r in result["results"]]
+    assert ranked == [
+        ("Test", "test_main_runs"),
+        ("Function", "compute"),
+        ("Test", "it:renders@L5"),
+        ("Function", "helper"),
+    ]
+    assert result["matching"] == 4
+
+
+def test_suite_blocks_are_not_functions(tested_repo):
+    """A `describe` block wraps the tests in it, as a class wraps methods."""
+    result = find_large_functions(repo_root=str(tested_repo))
+    assert "describe:App@L1" not in [r["name"] for r in result["results"]]
+
+
+def test_kind_test_still_lists_every_test_node(tested_repo):
+    result = find_large_functions(kind="Test", repo_root=str(tested_repo))
+    assert [r["name"] for r in result["results"]] == [
+        "describe:App@L1", "test_main_runs", "it:renders@L5",
+    ]
+
+
+def test_kind_function_narrows_to_functions(tested_repo):
+    result = find_large_functions(kind="Function", repo_root=str(tested_repo))
+    assert [r["name"] for r in result["results"]] == ["compute", "helper"]
+    assert "functions by line count" in result["summary"]
+
+
+def test_summary_says_tests_are_included(tested_repo):
+    result = find_large_functions(repo_root=str(tested_repo))
+    assert result["summary"].startswith(
+        "All 4 functions (tests included) by line count"
+    )
+
+
+def test_cli_rows_label_test_functions(tested_repo, capsys):
+    env = _run(["large-functions", "--limit", "2", "--repo", str(tested_repo)], capsys)
+    assert env["data"]["results"] == [
+        "68 lines | Test | AppSmokeTest.test_main_runs | tests/test_app.py:10",
+        "40 lines | Function | compute | app.py:1",
+    ]
+
+
+def test_parsed_test_methods_rank(tmp_path, capsys):
+    """End to end through the parser: unittest methods and pytest functions
+    are Test nodes, and the default ranks them."""
+    import subprocess
+
+    repo = tmp_path / "parsed"
+    (repo / "tests").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    body = "".join(f"        x{i} = {i}\n" for i in range(30))
+    (repo / "app.py").write_text(
+        "def small():\n    return 1\n\n\n"
+        "def medium():\n" + body.replace("        ", "    ") + "    return 0\n"
+    )
+    (repo / "tests" / "test_app.py").write_text(
+        "import unittest\n\n\nclass AppSmokeTest(unittest.TestCase):\n"
+        "    def test_big(self):\n" + body + body + "        self.assertTrue(True)\n"
+    )
+    from cartograph.tools.build import build_or_update_graph
+
+    build_or_update_graph(full_rebuild=True, repo_root=str(repo), postprocess="none")
+    env = _run(["large-functions", "--limit", "3", "--repo", str(repo)], capsys)
+    rows = env["data"]["results"]
+    assert rows[0].startswith("62 lines | Test | AppSmokeTest.test_big |"), rows
+    assert rows[1].startswith("32 lines | Function | medium |"), rows

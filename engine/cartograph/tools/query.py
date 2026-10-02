@@ -43,8 +43,16 @@ logger = logging.getLogger(__name__)
 #: What `large-functions` ranks unless told otherwise. Methods are Function
 #: nodes with a parent, so they are included; File and Class nodes are not,
 #: because a file or class always outranks the functions inside it and the
-#: question asked was about functions.
-LARGE_DEFAULT_KINDS = ("Function",)
+#: question asked was about functions. Test functions and methods are Test
+#: nodes, and they are functions too: a user's reference top 10 held two test
+#: methods that the Function-only default could never return.
+LARGE_DEFAULT_KINDS = ("Function", "Test")
+
+#: Test nodes that group other tests — JS/TS ``describe``/``suite`` blocks —
+#: rather than being one. They wrap a whole spec file the way a class wraps its
+#: methods, and on claude-mem they held 18 of the 20 largest Test nodes. Left
+#: out of the default only; ``--kind Test`` lists them.
+_SUITE_BLOCK = re.compile(r"^(describe|suite)(:|@L)")
 
 _QUERY_PATTERNS = {
     "callers_of": "Find all functions that call a given function",
@@ -987,8 +995,10 @@ def find_large_functions(
             threshold, so ``limit`` alone decides how many come back: a
             "top 10" is ten rows whenever there are ten functions.
         kind: Node kind or kinds to rank: Function, Class, File, Test, Type.
-            Defaults to Function, which covers methods — the graph has no
-            separate Method kind; a method is a Function with a parent.
+            Defaults to Function and Test, which cover methods and test
+            functions — the graph has no separate Method kind; a method is a
+            Function with a parent. The default leaves out describe/suite
+            blocks, which group tests rather than being one.
         file_path_pattern: Filter by file path substring (e.g. "components/").
         limit: Maximum results (default: 20).
         repo_root: Repository root path. Auto-detected if omitted.
@@ -998,6 +1008,7 @@ def find_large_functions(
         Nodes with line counts, ordered largest first, and ``matching``: how
         many qualified before the limit.
     """
+    default_kinds = not kind
     kinds = [kind] if isinstance(kind, str) else list(kind or LARGE_DEFAULT_KINDS)
     store, root = _get_store(repo_root)
     try:
@@ -1015,6 +1026,8 @@ def find_large_functions(
         excluded = 0
         matching = 0
         for n in nodes:
+            if default_kinds and n.kind == "Test" and _SUITE_BLOCK.match(n.name):
+                continue
             rel = relativise(n.file_path, root)
             if not include_generated and is_generated_file(rel):
                 excluded += 1
@@ -1033,7 +1046,13 @@ def find_large_functions(
             d["relative_path"] = rel
             results.append(d)
 
-        noun = "functions" if kinds == ["Function"] else "/".join(kinds) + " nodes"
+        if kinds == ["Function"]:
+            noun = "functions"
+        elif sorted(kinds) == ["Function", "Test"]:
+            # Said, so a row labelled Test is not read as a stray.
+            noun = "functions (tests included)"
+        else:
+            noun = "/".join(kinds) + " nodes"
         scope = f" matching '{file_path_pattern}'" if file_path_pattern else ""
         largest = ""
         if results:

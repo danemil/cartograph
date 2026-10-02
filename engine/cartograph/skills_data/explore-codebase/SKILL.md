@@ -76,10 +76,11 @@ architecture.
    ```
    carto large-functions --limit 10 --format json
    ```
-   The N largest functions and methods, with no size threshold — "top 10" is
-   `--limit 10`. Add `--min-lines 80` only for "every function over 80
-   lines". Generated and `.d.ts` files are left out (the summary says how
-   many). `--kind` widens and repeats, e.g.
+   The N largest functions and methods, test functions included (their rows
+   say `Test`), with no size threshold — "top 10" is `--limit 10`. Add
+   `--min-lines 80` only for "every function over 80 lines". Generated and
+   `.d.ts` files are left out (the summary says how many). `--kind` replaces
+   the default and repeats: `--kind Function` for non-test code only, or
    `carto large-functions --kind Function --kind Class --include-generated`.
    For the largest *files*, use `wc -l` instead.
 

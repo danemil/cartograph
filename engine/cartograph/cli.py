@@ -1736,7 +1736,7 @@ def main() -> None:
         # default: argparse appends to a mutable default instead of replacing it.
         action="append",
         default=None,
-        help="Kind to rank; repeat to widen (default: Function, methods included)",
+        help="Kind to rank; repeat to widen or narrow (default: Function and Test — methods and test functions, not describe/suite blocks)",
     )
     large_cmd.add_argument(
         "--include-generated",
