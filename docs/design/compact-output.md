@@ -537,3 +537,165 @@ repositories). Each behaviour was removed on purpose and the suite run:
 | "no --min-lines" in the summary | top-N |
 | generated / ignore-rule / pending reasons, example cap, summary clause | counts-by-reason, example cap |
 | coverage on search/query/refactor, on dead-code | the per-command test |
+
+## The fourth A/B: test functions, a moved checkout, and `--format` on writes
+
+The user re-ran T3 on 0.8.8 (Copilot CLI, gpt-5.4-mini, five alternating
+rounds, the repository copied to `/tmp/carto-ab4/with` and `…/without`).
+Three defects, none of them a cost problem:
+
+1. **Test methods were not functions.** 4/5 runs with carto ran
+   `large-functions --limit 10` and missed the same two reference entries,
+   both test methods (`AppSmokeTest.test_main_runs_with_tz_aware_commit`, 68
+   lines; `IssueChainTests.test_issue_links_to_commit_code_and_story`, 47).
+   The graph stores them as kind `Test`, and 0.6.0 made the default `Function`.
+2. **A moved checkout reported itself uncovered.** The graph's paths were
+   absolute, from where it was built; `coverage` compared them with the
+   working tree at the new path and said `searched 0 of 71 code files` over
+   results that were complete. All four answers warned the user the ranking
+   was partial. The mechanism worked; the data was wrong.
+3. **`carto update --format json`** was a usage error, though the README said
+   every command takes `--format`.
+
+### Why the 0.6.0 default changes
+
+0.6.0 chose `Function` because the measured failure was rows that were not
+functions at all: 15 File, 4 Class and 1 Test node in a top 20. The reasoning
+was about File and Class nodes — a file or class always outranks what it
+contains. A test method is not a container; it is a function that happens to
+be a test, and the question "the largest functions" includes it. What *is* a
+container among Test nodes is a JS/TS `describe`/`suite` block: it wraps a
+spec file the way a class wraps methods, and on claude-mem those blocks were
+18 of the 20 largest Test nodes (up to 1,718 lines). So the default is now
+`Function` and `Test` minus `describe`/`suite` blocks; `it`/`test` blocks,
+Python test functions and methods, JUnit `@Test` methods are ranked. Rows
+already carry the kind (`68 lines | Test | AppSmokeTest.test_main… | …`); the
+summary says `functions (tests included)`; `--kind Test` lists every Test node
+including suites, `--kind Function` excludes tests.
+
+Other commands checked for the same exclusion: `search`, `query` and `impact`
+never filtered Test out. The Function-only filters that remain are deliberate:
+`dead-code` and `refactor dead_code` (a test has no callers by design),
+`refactor suggest` (cross-community moves), and review guidance's "changed
+functions lacking tests" (a test is not a gap in its own coverage). None
+changed.
+
+### A moved or remounted checkout
+
+The same failure hits a Dev Container that mounts a checkout at
+`/workspaces/<name>` while the host built the graph at its own path. What a
+copy did before the fix, on a two-file fixture with the original path gone
+(`<old>` is the build path):
+
+| Command | 0.8.8 | Now |
+|---|---|---|
+| `status` | correct | correct |
+| `large-functions` | results right; `coverage: searched 0 of 2`, summary "2 of 2 code files not covered"; rows `<old>/pkg/core.py:5` | `searched all 2 code files`; rows `pkg/core.py:5` |
+| `search` | same false coverage; absolute old paths | full coverage; relative |
+| `query callers_of pkg/core.py::compute` | answered (search fallback found it), false coverage, absolute rows | exact, relative |
+| `query importers_of pkg/a.py` | empty | found |
+| `impact --files pkg/core.py` | answered (suffix match), absolute old paths in every row | relative |
+| `architecture` | `layout.graph_files: 0` | `2` |
+| `detect-changes` (after an edit) | "0 changed function(s)" | the edited functions |
+| `review-context` | changed nodes right, old absolute paths | relative |
+| `flow --source` | no source (read from the old path; or another checkout's copy if it still exists) | this checkout's source |
+| `mem search` | correct — observations store repo-relative paths | unchanged |
+| `update` | refused: "built with a different repository root" (exit 1, text only) | rebases, then updates |
+
+**Reads** compare repo-relative paths. `repo_paths.register_anchor` works out,
+once per graph and root, which root the stored paths are under: none if any
+stored File path is under the current root; otherwise the prefix that,
+removed from a stored path, leaves a file that exists here, voted over 200
+File paths and accepted only if at least half agree — so the graph of some
+other repository that shares a few file names is never adopted. `relativise`,
+`layout` (coverage and the architecture layout), query targets,
+`changes.analyze_changes` and flow source reads consult it. Nothing is
+written on a read: two mounts of one `.cartograph/` would otherwise rewrite
+the graph back and forth on every query.
+
+**Writes** (`update`, `build`) first move the stored paths to the root they
+run at — `GraphStore.rebase_paths`, a prefix `REPLACE` over every text column
+of every table (node and edge identity, File signatures, `extra`, flow and
+risk snapshots, embedding keys) in one transaction, then an FTS rebuild — so
+new rows and old rows share one spelling. The schema is unchanged; existing
+graphs need no migration step, they are rebased by the first write. A graph
+that does not map onto the tree is still refused, as before.
+
+### `--format` on the commands that write
+
+`build`, `update`, `postprocess` and `embed` take `--format json|text`
+(default text, as `status` does) and `--max-tokens`. In json mode stdout is
+the envelope alone — anything printed during the run is redirected to stderr
+— and `data` is the summary plus counts and the files touched (`build_type`,
+`files_parsed`/`files_updated`, `total_nodes`, `total_edges`,
+`changed_files`, `dependent_files`, `base_resolved`, `errors`, `warnings`);
+postprocess and embed carry their result whole. Exit codes: `0` ok; `2`
+precondition with a remediation for no git repository (`update`), no graph
+(`postprocess`, `embed`), a graph of another repository, and an embedding
+provider that is not configured; `3` anything else. Text mode is unchanged.
+
+Not given `--format`: `visualize`, whose `--format` already chooses an export
+format (html, json, graphml, …) — an envelope flag would collide with it —
+and `wiki`, `forget` and `repos`, which print for a person and which no skill
+runs. The README and the `carto capabilities` convention now name these
+instead of claiming every command.
+
+### Measured
+
+claude-mem at `ade13f3`, graph from the earlier session (16,967 nodes, 991
+files). Stdout characters of `large-functions --format json`, 0.8.8 → now:
+`--limit 10` 1,798 → 1,818; default 2,803 → 2,823; `--min-lines 80 --limit
+20` 2,784 → 2,801. The rows are identical — no test function is in claude-mem's
+top 20 once suites are left out — and the +17–20 characters are
+"(tests included)". The count of candidates went 7,481 → 12,880.
+
+A full copy of the same checkout at a new path: `large-functions --limit 10`
+1.06 s at the original, 1.23 s in the copy (the anchor inference, one
+`stat` per sampled path); coverage `searched 991 of 996 code files; not
+covered: 5 no parser (.html)`, identical to the original. The first `update`
+in the copy, which rebases, took 9.7 s; the next 0.33 s. Afterwards `sqlite3
+.dump` holds no occurrence of the old prefix and FTS answers.
+
+**Not measured.** The A/B itself has not been re-run. The rebase cost is paid
+again each time a *write* happens at the other mount (host and container both
+updating one shared `.cartograph/`): ~10 s on claude-mem per switch. Nothing
+was run in a real Dev Container.
+
+### Tests, and that they can fail
+
+`engine/tests/test_large_functions.py` (7 new), `engine/tests/test_moved_checkout.py`
+(14, real `git init` repositories copied with `shutil.copytree`, the original
+deleted unless the test is about two mounts), `engine/tests/test_build_update_envelope.py`
+(11, the CLI as a subprocess, envelopes validated against the schema), and
+conformance cases `build`, `update`, `postprocess`. Each behaviour was removed
+and the suite run:
+
+| Removed | Fails |
+|---|---|
+| `Test` from the default kinds | default ranks tests, summary says so, CLI rows, parsed test methods, and the two older summary tests |
+| the describe/suite filter | suites are not functions, default ranking, CLI rows, two pre-existing default tests |
+| "(tests included)" in the summary | three summary tests here, two in `test_working_tree_coverage.py` |
+| the anchor in `layout` | coverage after a move, coverage with both paths, architecture layout, two mounts |
+| the anchor in `relativise` | relative rows, impact, review-context, two mounts |
+| the anchor for query targets | importers_of after a move |
+| `register_anchor` in `_get_store` | importers_of, architecture, impact, review-context, flow source |
+| `register_anchor` for the non-tool commands | detect-changes |
+| the rebase before writing | update after a move, unchanged files keep edges, two mounts |
+| the half-must-agree rule | another repository's graph is not adopted |
+| the anchor in `analyze_changes` | detect-changes |
+| the working-tree path for flow source | flow source |
+| stdout redirected during a build | anything printed goes to stderr |
+| RuntimeError → precondition | another repository's graph (update) |
+| no-git → precondition | update outside git |
+| an error result → precondition | embed with an unconfigured provider |
+| the no-graph checks | postprocess / embed without a graph |
+| `--format` on update / the json branch of postprocess | every update / postprocess test |
+
+Edits made while working that no test could make fail were taken out again,
+because existing paths already covered them: anchored candidates in `impact
+--files` (its suffix match finds the file), in `importers_of` with an
+unresolved node, in `review-context`'s and the minimal-context tool's own path
+joins (both go through `analyze_changes`), anchor registration in the
+graph-tool dispatcher and in `_attach_coverage` (every tool opens through
+`_get_store`), and relativising build results (their paths are already
+repo-relative).

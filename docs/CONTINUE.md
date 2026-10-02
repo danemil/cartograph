@@ -1,6 +1,6 @@
 ---
 tags: [handoff, cartograph]
-updated: 2026-10-01
+updated: 2026-10-02
 next-task: Linux .vsix acceptance on the user's machine, then transcript-aware summaries
 ---
 
@@ -14,7 +14,7 @@ below, then pick up **Next task**.
 ```bash
 cd /Users/emidan/work/cartograph
 ./scripts/verify.sh
-# expect: 378 envelope checks, 276 skills checks, 13/13 files, "all green"
+# expect: 399 envelope checks, 276 skills checks, 13/13 files, "all green"
 ```
 
 If that passes, everything described here is true. If it does not, trust the
@@ -465,6 +465,32 @@ tracked files only, so an untracked skill directory's scripts were invisible.
   `engine/tests/test_working_tree_coverage.py` (20, 18 mutations each caught).
 - **Not re-measured:** the A/B itself; a repository with a large untracked,
   not-ignored tree.
+
+## Done — 2026-10-02, the fourth A/B: test methods, a moved checkout, `--format` on writes
+
+The user's T3 re-check on 0.8.8 (Copilot CLI, gpt-5.4-mini, 5 alternating
+rounds, the repo copied to `/tmp/carto-ab4/…`): 4/5 carto runs missed the same
+two reference entries, both test methods; every answer warned, wrongly, that
+the ranking was partial (`searched 0 of 71 code files`); `carto update
+--format json` was a usage error.
+
+- **Test functions rank.** `large-functions` defaults to `Function` and
+  `Test`, minus JS/TS `describe`/`suite` blocks (containers, like classes).
+  Rows say `Test`; the summary says `(tests included)`. Other Function-only
+  filters (dead-code, refactor suggest, review's test gaps) are deliberate.
+- **Moved or remounted checkouts.** Reads compare repo-relative paths against
+  the root the graph was built at (`repo_paths.register_anchor`, inferred,
+  half the sampled paths must agree); `update`/`build` rebase stored paths in
+  one transaction first. Fixed beyond coverage: absolute old paths in rows,
+  `importers_of`, `architecture`'s graph share, `detect-changes`, flow source,
+  `update` refusing. Schema unchanged. Rebase costs ~10 s on claude-mem, paid
+  at each write after a mount switch.
+- **`--format json|text`** on build, update, postprocess, embed, with
+  precondition exits; visualize/wiki/forget/repos still text-only, and the
+  README and capabilities convention say so.
+- Before/after table, measurements and the mutation table:
+  `docs/design/compact-output.md`, last section.
+- **Not re-measured:** the A/B itself; no real Dev Container run.
 
 ## NEXT TASK
 
