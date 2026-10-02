@@ -531,6 +531,37 @@
         "0"
       ],
       "expect": "usage"
+    },
+    "build": {
+      "args": [
+        "build",
+        "--repo",
+        "{tmpdir}",
+        "--skip-flows"
+      ],
+      "expect": "ok",
+      "expect_page": false
+    },
+    "update": {
+      "args": [
+        "update",
+        "--repo",
+        "{tmpdir}",
+        "--skip-flows"
+      ],
+      "expect": "ok",
+      "expect_page": false
+    },
+    "postprocess": {
+      "args": [
+        "postprocess",
+        "--repo",
+        "{tmpdir}",
+        "--no-flows",
+        "--no-communities"
+      ],
+      "expect": "ok",
+      "expect_page": false
     }
   }
 }

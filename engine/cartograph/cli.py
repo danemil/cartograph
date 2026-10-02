@@ -380,6 +380,98 @@ def _handle_data_dir_option(args, repo_root: Path) -> None:
             sys.exit(1)
 
 
+#: What a build or update reports in json, beyond its summary. Counts and the
+#: files touched; the parse errors are listed because a file that failed to
+#: parse is a file every later answer silently does not cover.
+_BUILD_FIELDS = (
+    "build_type", "files_parsed", "files_updated", "total_nodes", "total_edges",
+    "changed_files", "dependent_files", "base_resolved", "errors", "warnings",
+)
+
+
+def _emit_build_envelope(
+    args, command: str, repo_root: Path, run, *,
+    fields: "tuple[str, ...] | None" = _BUILD_FIELDS,
+    error_remediation: "str | None" = None,
+) -> int:
+    """Run a graph-maintenance command and answer with one envelope on stdout.
+
+    Shared by build, update, postprocess and embed. Anything they print goes
+    to stderr, as their logs already do: in json mode stdout carries the
+    envelope and nothing else. A graph that belongs to another repository is
+    a precondition — the remedy is a build here — as is a result the command
+    itself reports as an error (embed without a model), with
+    ``error_remediation``; any other failure is internal. ``fields`` None
+    keeps every field of the result.
+    """
+    import contextlib
+
+    from . import envelope as _env
+
+    previous_disable = logging.root.manager.disable
+    if getattr(args, "quiet", False):
+        logging.disable(logging.INFO)
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            result = run()
+    except RuntimeError as exc:
+        env = _env.error(command, _env.Exit.PRECONDITION, str(exc),
+                         remediation=f"carto build --repo {repo_root}")
+        return _env.emit(env, "json")
+    except Exception as exc:  # noqa: BLE001 — the envelope is the error channel
+        logging.exception("%s failed", command)
+        env = _env.error(command, _env.Exit.INTERNAL, f"{type(exc).__name__}: {exc}")
+        return _env.emit(env, "json")
+    finally:
+        logging.disable(previous_disable)
+    if result.get("status") == "error":
+        env = _env.error(
+            command, _env.Exit.PRECONDITION, str(result.get("error") or "failed"),
+            remediation=error_remediation or f"carto build --repo {repo_root}",
+        )
+        return _env.emit(env, "json")
+    data = {"summary": result.get("summary", "")}
+    keys = fields if fields is not None else tuple(
+        k for k in result if k not in ("status", "summary", "_hints")
+    )
+    data.update({k: result[k] for k in keys if result.get(k) is not None})
+    from .graph import GraphStore
+    from .incremental import get_db_path
+
+    provenance = None
+    db_path = get_db_path(repo_root, read_only=True)
+    if db_path.exists():
+        with GraphStore(db_path) as store:
+            provenance = {
+                "graph_sha": store.get_metadata("git_head_sha"),
+                "built_at": store.get_metadata("last_updated"),
+            }
+    env = _env.ok(command, data=data, provenance=provenance)
+    return _env.emit(env, "json", getattr(args, "max_tokens", None))
+
+
+def _add_format_args(command) -> None:
+    """``--format`` and ``--max-tokens`` for a command that is text first.
+
+    Text stays the default for the commands a person runs in a terminal; an
+    agent passes ``--format json`` and gets the envelope like everywhere else.
+    """
+    command.add_argument(
+        "--format",
+        choices=["json", "text"],
+        default="text",
+        dest="output_format",
+        help="Output format; 'json' emits the Cartograph capability envelope",
+    )
+    command.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        dest="max_tokens",
+        help="Token budget for the response",
+    )
+
+
 def _add_embedding_refresh_args(command) -> None:
     """Add explicit, provider-scoped refresh options to a CLI command."""
     command.add_argument(
@@ -1204,6 +1296,7 @@ def main() -> None:
         help="External directory to store graph database (useful for network shares)"
     )
     _add_embedding_refresh_args(build_cmd)
+    _add_format_args(build_cmd)
 
     # update
     update_cmd = sub.add_parser("update", help="Incremental update (only changed files)")
@@ -1248,6 +1341,7 @@ def main() -> None:
         help="External directory to store graph database (useful for network shares)"
     )
     _add_embedding_refresh_args(update_cmd)
+    _add_format_args(update_cmd)
 
     # postprocess
     pp_cmd = sub.add_parser(
@@ -1264,6 +1358,7 @@ def main() -> None:
         help="External directory to store graph database (useful for network shares)"
     )
     _add_embedding_refresh_args(pp_cmd)
+    _add_format_args(pp_cmd)
 
     # embed
     embed_cmd = sub.add_parser(
@@ -1288,6 +1383,7 @@ def main() -> None:
         default=None,
         help="External directory to store graph database (useful for network shares)"
     )
+    _add_format_args(embed_cmd)
 
     # watch
     watch_cmd = sub.add_parser("watch", help="Watch for changes and auto-update")
@@ -2172,6 +2268,23 @@ def main() -> None:
         repo_root = Path(args.repo) if args.repo else find_project_root()
         _handle_data_dir_option(args, repo_root)
         db_path = get_db_path(repo_root)
+        if args.output_format == "json":
+            from .tools.build import run_postprocess
+
+            if not db_path.exists():
+                _precondition_exit("postprocess", f"No graph found at {db_path}.",
+                                   "carto build", fmt="json")
+            raise SystemExit(_emit_build_envelope(
+                args, "postprocess", repo_root,
+                lambda: run_postprocess(
+                    flows=not getattr(args, "no_flows", False),
+                    communities=not getattr(args, "no_communities", False),
+                    fts=not getattr(args, "no_fts", False),
+                    repo_root=str(repo_root),
+                    **embedding_refresh_kwargs,
+                ),
+                fields=None,
+            ))
         store = GraphStore(db_path)
         try:
             from .tools.build import run_postprocess
@@ -2200,6 +2313,25 @@ def main() -> None:
         _handle_data_dir_option(args, repo_root)
         from .tools.docs import embed_graph
 
+        if args.output_format == "json":
+            db_path = get_db_path(repo_root, read_only=True)
+            if not db_path.exists():
+                _precondition_exit("embed", f"No graph found at {db_path}.",
+                                   "carto build", fmt="json")
+            raise SystemExit(_emit_build_envelope(
+                args, "embed", repo_root,
+                lambda: embed_graph(
+                    repo_root=str(repo_root), model=args.model, provider=args.provider,
+                ),
+                fields=None,
+                # The installed launcher points the engine at the model the
+                # payload carries; a bare interpreter has none.
+                error_remediation=(
+                    "run carto through the installed launcher (it sets "
+                    "CARTO_EMBEDDING_MODEL_DIR), or pass --provider with its "
+                    "environment configured"
+                ),
+            ))
         result = embed_graph(
             repo_root=str(repo_root),
             model=args.model,
@@ -2215,6 +2347,13 @@ def main() -> None:
         # update and detect-changes require git for diffing
         repo_root = Path(args.repo) if args.repo else find_repo_root()
         if not repo_root:
+            if args.command == "update" and args.output_format == "json":
+                _precondition_exit(
+                    "update",
+                    "Not in a git repository; 'update' diffs against git.",
+                    "carto build",
+                    fmt="json",
+                )
             logging.error(
                 "Not in a git repository. '%s' requires git for diffing.",
                 args.command,
@@ -2343,6 +2482,16 @@ def main() -> None:
             )
             from .tools.build import build_or_update_graph
 
+            if args.output_format == "json":
+                raise SystemExit(_emit_build_envelope(
+                    args, "build", repo_root,
+                    lambda: build_or_update_graph(
+                        full_rebuild=True,
+                        repo_root=str(repo_root),
+                        postprocess=pp,
+                        **embedding_refresh_kwargs,
+                    ),
+                ))
             previous_disable = logging.root.manager.disable
             if args.quiet:
                 logging.disable(logging.INFO)
@@ -2374,6 +2523,17 @@ def main() -> None:
             )
             from .tools.build import build_or_update_graph
 
+            if args.output_format == "json":
+                raise SystemExit(_emit_build_envelope(
+                    args, "update", repo_root,
+                    lambda: build_or_update_graph(
+                        full_rebuild=False,
+                        repo_root=str(repo_root),
+                        base=args.base,
+                        postprocess=pp,
+                        **embedding_refresh_kwargs,
+                    ),
+                ))
             previous_disable = logging.root.manager.disable
             if args.quiet:
                 logging.disable(logging.INFO)

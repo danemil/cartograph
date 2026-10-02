@@ -145,7 +145,9 @@ host — there is no per-host adapter on the query path.
 }
 ```
 
-- `--format json|text` on every command; `text` for humans, `json` for agents.
+- `--format json|text` on every command an agent runs; `text` for humans,
+  `json` for agents. The exceptions print for a person: `visualize` (its
+  `--format` picks an export format), `wiki`, `forget` and `repos`.
 - `--max-tokens N` everywhere. Truncation is **semantic** — lowest-ranked
   results are dropped, never a byte cut.
 - Exit codes: `0` success (**empty results are success**) · `1` usage ·

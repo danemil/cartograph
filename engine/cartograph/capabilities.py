@@ -212,7 +212,14 @@ def build_catalogue(
         "binary": "carto",
         "version": version,
         "conventions": {
-            "format": "Every command accepts --format json|text. Agents should always pass json.",
+            # Said exactly: a convention an agent relies on and then finds
+            # false costs it a failed call. visualize's --format picks an
+            # export format; wiki, forget and repos print for a person.
+            "format": (
+                "Every command accepts --format json|text, except visualize "
+                "(--format picks its export format), wiki, forget and repos, "
+                "which print text for a person. Agents should always pass json."
+            ),
             "budget": (
                 "--max-tokens bounds the response. Truncation is semantic, never a byte "
                 "cut: supporting context is dropped first, then the tail of the result "
