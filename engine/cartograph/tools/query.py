@@ -20,7 +20,7 @@ from ..incremental import (
     is_generated_file,
 )
 from ..parser import normalize_file_path
-from ..repo_paths import relativise
+from ..repo_paths import graph_path as _graph_path, relativise
 from ..search import hybrid_search
 from ..uncertainty import (
     empty_impact_confidence,
@@ -407,7 +407,7 @@ def query_graph(
         if pattern != "file_summary" and not raw_config_target:
             node = store.get_node(target)
             if not node:
-                abs_target = normalize_file_path(root / target)
+                abs_target = _graph_path(target, root)
                 node = store.get_node(abs_target)
             if not node:
                 java_candidates = _java_fqn_candidates(store, target)

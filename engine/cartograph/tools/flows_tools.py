@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..flows import get_flow_by_id, get_flows
+from ..repo_paths import working_path
 from ..hints import generate_hints, get_session
 from ._common import _bounded, _get_store, _shown_of, _validate_positive_int
 
@@ -181,6 +182,10 @@ def get_flow(
                 fp = Path(step["file"]) if step.get("file") else None
                 if fp is not None and not fp.is_absolute():
                     fp = root / fp
+                elif fp is not None:
+                    # Read this checkout's copy, not one at the root the
+                    # graph was built at, which may be gone or another tree.
+                    fp = working_path(str(fp), root)
                 file_path = fp
                 if file_path and file_path.is_file():
                     try:

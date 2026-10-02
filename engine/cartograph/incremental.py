@@ -1208,6 +1208,26 @@ def _reconcile_stale_files(
     return stale_files
 
 
+def _rebase_moved_graph(repo_root: Path, store: GraphStore) -> None:
+    """Move a graph built at another path onto ``repo_root`` before writing.
+
+    A checkout copied elsewhere, or mounted at another path, keeps a graph
+    whose paths name the old root. Writing new rows under the new root beside
+    them would leave two copies of every changed file, and reconciliation
+    would drop every unchanged one as missing. Reads cope without this (see
+    ``repo_paths.register_anchor``); writes need one spelling. Only when the
+    graph maps onto this working tree — otherwise the refusal below stands.
+    """
+    from .repo_paths import forget_anchors, infer_anchor
+
+    anchor = infer_anchor(store.get_file_marker_paths(), repo_root)
+    if anchor is None:
+        return
+    changed = store.rebase_paths(normalize_file_path(anchor), normalize_file_path(repo_root))
+    forget_anchors()
+    logger.info("Graph was built at %s; moved %d row(s) to %s", anchor, changed, repo_root)
+
+
 def _assert_graph_matches_root(repo_root: Path, store: GraphStore) -> None:
     """Refuse an incremental reconciliation anchored to a different root.
 
@@ -1392,6 +1412,8 @@ def full_build(
             When *None*, falls back to ``CRG_RECURSE_SUBMODULES`` env var.
     """
     repo_root = _canonical_repo_root(repo_root)
+    # Keeps embeddings and hashes keyed to rows that survive the rebuild.
+    _rebase_moved_graph(repo_root, store)
     parser = CodeParser(repo_root)
     files = collect_all_files(repo_root, recurse_submodules)
     stale_files = _reconcile_stale_files(repo_root, store, files)
@@ -1494,6 +1516,7 @@ def incremental_update(
 ) -> dict:
     """Incremental update: re-parse changed + dependent files only."""
     repo_root = _canonical_repo_root(repo_root)
+    _rebase_moved_graph(repo_root, store)
     if reconcile_stale:
         _assert_graph_matches_root(repo_root, store)
     parser = CodeParser(repo_root)

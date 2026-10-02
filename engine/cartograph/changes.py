@@ -17,6 +17,7 @@ from .constants import SECURITY_KEYWORDS as _SECURITY_KEYWORDS
 from .flows import get_affected_flows
 from .graph import GraphNode, GraphStore, _sanitize_name, node_to_dict
 from .parser import normalize_file_path
+from .repo_paths import graph_path
 
 logger = logging.getLogger(__name__)
 
@@ -441,7 +442,7 @@ def analyze_changes(
     if repo_root is not None:
         _root = Path(repo_root)
         changed_files = [
-            normalize_file_path(_root / fp) for fp in changed_files
+            graph_path(fp, _root) for fp in changed_files
         ]
 
     # Map changes to nodes.

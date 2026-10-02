@@ -2290,6 +2290,11 @@ def main() -> None:
             fmt="json" if want_json else "text",
         )
     store = GraphStore(db_path)
+    if args.command not in ("build", "update"):
+        # build and update move the stored paths to this root instead.
+        from .repo_paths import register_anchor
+
+        register_anchor(store, repo_root)
 
     try:
         if args.command == "dead-code":

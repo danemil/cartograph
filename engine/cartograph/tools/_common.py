@@ -195,9 +195,13 @@ def _get_store(repo_root: str | None = None) -> tuple[GraphStore, Path]:
     Callers own the returned store and must close it (try/finally or
     context manager) to avoid leaking SQLite file descriptors.
     """
+    from ..repo_paths import register_anchor
+
     root = _resolve_root(repo_root)
     db_path = get_db_path(root)
-    return GraphStore(db_path), root
+    store = GraphStore(db_path)
+    register_anchor(store, root)
+    return store, root
 
 
 def _resolve_graph_file_paths(

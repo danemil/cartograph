@@ -424,6 +424,52 @@ class GraphStore:
         ).fetchone()
         return row is not None
 
+    def rebase_paths(self, old_root: str, new_root: str) -> int:
+        """Move every stored path from under ``old_root`` to under ``new_root``.
+
+        For a checkout that was moved or is mounted at another path. Paths are
+        identity here — node and edge names, the File signature, flow and
+        risk snapshots, embeddings keys, resolver candidates inside ``extra``
+        — so every text column of every table is rewritten, in one
+        transaction, by prefix. Returns the number of rows changed.
+        """
+        old = old_root.rstrip("/") + "/"
+        new = new_root.rstrip("/") + "/"
+        if old == new:
+            return 0
+        tables = [
+            r[0] for r in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'nodes_fts%'"
+            )
+        ]
+        changed = 0
+        self._begin_immediate()
+        try:
+            for table in tables:
+                cols = [
+                    c[1] for c in self._conn.execute(f'PRAGMA table_info("{table}")')
+                    if "TEXT" in (c[2] or "").upper()
+                ]
+                for col in cols:
+                    cur = self._conn.execute(
+                        f'UPDATE "{table}" SET "{col}" = REPLACE("{col}", ?, ?) '
+                        f'WHERE instr("{col}", ?) > 0',
+                        (old, new, old),
+                    )
+                    changed += cur.rowcount
+            # External-content FTS keeps its own copy of the indexed text.
+            if self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'nodes_fts'"
+            ).fetchone():
+                self._conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._invalidate_cache()
+        return changed
+
     def commit(self) -> None:
         self._conn.commit()
 

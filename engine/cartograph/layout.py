@@ -171,10 +171,21 @@ def _relative(path: str, root: Path) -> Optional[str]:
     try:
         return p.relative_to(root).as_posix()
     except ValueError:
+        pass
+    # Built at another path (a moved checkout, another mount): the stored
+    # paths are under that root, and are still this tree's files.
+    from .repo_paths import anchor_of
+
+    anchor = anchor_of(root)
+    if anchor is not None:
         try:
-            return p.resolve().relative_to(root.resolve()).as_posix()
-        except (ValueError, OSError):
-            return None
+            return p.relative_to(anchor).as_posix()
+        except ValueError:
+            pass
+    try:
+        return p.resolve().relative_to(root.resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
 
 
 #: Extensions named per reason in the coverage line; the count is the answer.
