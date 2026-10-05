@@ -1607,6 +1607,7 @@ def incremental_update(
             "total_nodes": 0,
             "total_edges": 0,
             "changed_files": [],
+            "ignored_changes": [],
             "dependent_files": [],
             "stale_files_removed": 0,
             "errors": [],
@@ -1632,6 +1633,14 @@ def incremental_update(
     errors = []
     missing_paths: set[str] = set()
 
+    # The changed files this update applies to the graph: re-parsed, or
+    # removed because they were deleted. Every other changed file (ignored,
+    # not code, content unchanged) is reported apart, so an update that
+    # applied nothing does not list files as if it had.
+    changed_set = set(changed_files)
+    stale_set = set(stale_files)
+    removed_changes: set[str] = set()
+
     # Separate deleted/unparseable files from files that need re-parsing
     to_parse: list[str] = []
     for rel_path in all_files:
@@ -1639,8 +1648,13 @@ def incremental_update(
             continue
         abs_path = repo_root / rel_path
         if not abs_path.is_file():
-            if normalize_file_path(abs_path) not in stale_files:
-                missing_paths.add(normalize_file_path(abs_path))
+            graph_path = normalize_file_path(abs_path)
+            if graph_path in stale_set:
+                removed_changes.add(rel_path)
+            else:
+                missing_paths.add(graph_path)
+                if rel_path in changed_set and store.get_nodes_by_file(graph_path):
+                    removed_changes.add(rel_path)
             continue
         if parser.detect_language(abs_path) is None:
             continue
@@ -1659,6 +1673,7 @@ def incremental_update(
     # explicit transaction — avoids nested transaction errors.
     use_serial = os.environ.get("CRG_SERIAL_PARSE", "") == "1"
     parsed_files = 0
+    parsed_paths: set[str] = set()
 
     if use_serial or len(to_parse) < 8:
         for rel_path in to_parse:
@@ -1669,6 +1684,7 @@ def incremental_update(
                 nodes, edges = parser.parse_bytes(abs_path, source)
                 store.store_file_nodes_edges(str(abs_path), nodes, edges, fhash)
                 parsed_files += 1
+                parsed_paths.add(rel_path)
                 total_nodes += len(nodes)
                 total_edges += len(edges)
             except (OSError, PermissionError) as e:
@@ -1696,10 +1712,12 @@ def incremental_update(
                     fhash,
                 )
                 parsed_files += 1
+                parsed_paths.add(rel_path)
                 total_nodes += len(nodes)
                 total_edges += len(edges)
 
     removed_files = store.remove_files_permanently(sorted(missing_paths)) if missing_paths else 0
+    error_paths = {e["file"] for e in errors}
     files_updated = parsed_files + len(stale_files) + removed_files
     if files_updated:
         store.set_metadata("last_updated", time.strftime("%Y-%m-%dT%H:%M:%S"))
@@ -1743,7 +1761,17 @@ def incremental_update(
         "files_updated": files_updated,
         "total_nodes": total_nodes,
         "total_edges": total_edges,
-        "changed_files": list(changed_files),
+        "changed_files": [
+            f for f in changed_files if f in parsed_paths or f in removed_changes
+        ],
+        # Changed, but nothing in the graph changed for them: ignored by the
+        # ignore patterns, not code, or the same content. A file that failed
+        # to parse is in neither list; it is in ``errors``.
+        "ignored_changes": [
+            f for f in changed_files
+            if f not in parsed_paths and f not in removed_changes
+            and f not in error_paths
+        ],
         "dependent_files": list(dependent_files),
         "stale_files_removed": len(stale_files),
         "errors": errors,

@@ -39,6 +39,7 @@ _PATH_FIELDS = frozenset(
         # Bare path or qualified-name lists.
         "file_paths",  # the files an observation was recorded about
         "changed_files",
+        "ignored_changes",
         "impacted_files",
         "members",
         "symbols",

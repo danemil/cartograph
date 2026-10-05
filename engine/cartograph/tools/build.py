@@ -522,12 +522,9 @@ def build_or_update_graph(
                 "status": "ok",
                 "build_type": "full",
                 "base_resolved": None,
-                "summary": (
-                    f"Full build complete: parsed {result['files_parsed']} files, "
-                    f"created {result['total_nodes']} nodes and "
-                    f"{result['total_edges']} edges."
-                ),
             }
+            # Written once the totals are final, after post-processing.
+            full_summary = "Full build complete"
         else:
             result = incremental_update(root, store, base=base_resolved)
 
@@ -546,12 +543,8 @@ def build_or_update_graph(
                 "status": "ok",
                 "build_type": "full",
                 "base_resolved": None,
-                "summary": (
-                    f"{why}; rebuilt in full: parsed {result['files_parsed']} "
-                    f"files, created {result['total_nodes']} nodes and "
-                    f"{result['total_edges']} edges."
-                ),
             }
+            full_summary = f"{why}; rebuilt in full"
         elif not full_rebuild:
             # incremental_update counts what it re-parsed under total_*. Here
             # total_* is the whole graph, as it is for a full build: an agent
@@ -607,6 +600,13 @@ def build_or_update_graph(
         stats = store.get_stats()
         build_result["total_nodes"] = stats.total_nodes
         build_result["total_edges"] = stats.total_edges
+        if full_rebuild:
+            # From the same final totals: the parse's own counts differ from
+            # them once resolution and post-processing merge and drop edges.
+            build_result["summary"] = (
+                f"{full_summary}: parsed {build_result['files_parsed']} files, "
+                f"created {stats.total_nodes} nodes and {stats.total_edges} edges."
+            )
         return build_result
     finally:
         store.close()

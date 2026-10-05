@@ -631,8 +631,13 @@ the envelope alone — anything printed during the run is redirected to stderr
 older parser built the graph, `parser_version`, or an older C++ identity
 format, `cpp_identity`; `build_type` is then `full` —
 `files_parsed`/`files_updated`, `total_nodes`, `total_edges` — the whole
-graph after the run, for update as for build — `nodes_updated`/`edges_updated`
-(what an update re-parsed), `changed_files`, `dependent_files`, `base_resolved`, `errors`, `warnings`);
+graph after the run, for update as for build, and the build summary quotes
+the same final totals — `nodes_updated`/`edges_updated`
+(what an update re-parsed), `changed_files` — the changed files the update
+applied to the graph, re-parsed or removed as deleted, not the raw diff —
+`ignored_changes` — changed files it left alone: ignored, not code, or the
+same content; a file that failed to parse is in `errors` instead —
+`dependent_files`, `base_resolved`, `errors`, `warnings`);
 postprocess and embed carry their result whole. Exit codes: `0` ok; `2`
 precondition with a remediation for no git repository (`update`), no graph
 (`postprocess`, `embed`), a graph of another repository, and an embedding

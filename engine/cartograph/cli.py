@@ -396,7 +396,8 @@ def _handle_data_dir_option(args, repo_root: Path) -> None:
 #: parse is a file every later answer silently does not cover.
 _BUILD_FIELDS = (
     "build_type", "rebuild_reason", "files_parsed", "files_updated", "total_nodes", "total_edges",
-    "nodes_updated", "edges_updated", "changed_files", "dependent_files", "base_resolved", "errors", "warnings",
+    "nodes_updated", "edges_updated", "changed_files", "ignored_changes", "dependent_files",
+    "base_resolved", "errors", "warnings",
 )
 
 
