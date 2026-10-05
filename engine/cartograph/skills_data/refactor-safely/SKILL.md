@@ -1,6 +1,6 @@
 ---
 name: refactor-safely
-description: Who calls or uses a symbol, and what would break if it changed — callers, where it is used, blast radius, impact of a signature change, rename or removal — from the call graph, more completely than grep. Also dead code. Not for an existing diff (review-changes).
+description: Who calls or uses a symbol, and what would break if it changed — callers, where it is used, blast radius, impact of a signature change, rename or removal — from the call graph, with less noise than grep. Also dead code. Not for an existing diff (review-changes).
 ---
 
 ## Refactor safely
@@ -8,7 +8,10 @@ description: Who calls or uses a symbol, and what would break if it changed — 
 Answers "who calls this, and what breaks if I change it?" from the call graph,
 and previews a rename before you make it. The graph resolves calls through
 imports, aliases and methods, which a text search confuses with comments,
-strings and same-named symbols in other files.
+strings and same-named symbols in other files. It does not type-check, so a
+caller it could not pin to this exact symbol ends with how it was found: `unresolved`
+(by name), `ambiguous` (one of several candidates) or `via_supertype` (a call
+through the interface or base class it overrides).
 
 ### When to use this
 - "Who calls X?", "Where is X used?"
@@ -46,8 +49,8 @@ changed?" — two calls answer it. Answer from them:
    parameters and the failure shows up later, or never. Say so rather than
    promising a TypeError.
    A target is a name, or `path/to/file.py::Name` when the name is ambiguous
-   (the response's `disambiguation` rows carry the names to pass back). If `truncated` is true, pass
-   `page.next_cursor` back with `--cursor` until it is not.
+   (the response's `disambiguation` rows carry the names to pass back). If `page.has_more` is
+   true, pass `page.next_cursor` back with `--cursor` until it is not.
 
 2. **Tests** that call it or cover it, to update in the same commit:
    ```
@@ -94,7 +97,7 @@ callers:
 
 `query`, `refactor` and `dead-code` carry `data.coverage`. When it says
 code files are not covered, a caller may sit in one of them: say so in the
-answer, and `grep` those files for the symbol before calling a list complete,
+answer. Either way, `grep` for the symbol before calling a list complete,
 a rename finished or a symbol dead.
 
 ### Renaming

@@ -69,13 +69,13 @@ covered, the path you are tracing may run through one of them: say so, and
 `carto capabilities --command query`.
 
 A target is a symbol name, or `path/to/file.py::name` when the name is
-ambiguous. Result rows read `kind | name | path:line`; join path and name
-with `::` to pass a row back as the next target.
+ambiguous. Result rows read `kind | name | path:line[ | resolution]`; join
+path and name with `::` to pass a row back as the next target.
 
 ### Budget
 
-- An empty result is a real answer, not a failure — if nothing calls a
-  function, that is a finding.
+- An empty result is a real answer, not a failure — but `grep` for the name
+  before reporting that nothing calls a function.
 - Stop walking the graph once you have a hypothesis you can check by reading
   one or two functions. The graph narrows the search; it does not diagnose.
 

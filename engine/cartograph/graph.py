@@ -1151,6 +1151,7 @@ class GraphStore:
 
         resolved = 0
         changed = False
+        index = None
         for edge in bare_edges:
             try:
                 edge_extra = json.loads(edge["extra"] or "{}")
@@ -1171,11 +1172,27 @@ class GraphStore:
 
             context_file = edge["file_path"]
             imported_files = import_targets.get(context_file, set())
+            caller = edge[
+                "source_qualified" if endpoint == "target_qualified" else "target_qualified"
+            ]
             supported = [
                 qualified
                 for qualified, candidate_file in candidates
-                if candidate_file == context_file or candidate_file in imported_files
+                if (candidate_file == context_file or candidate_file in imported_files)
+                and not receiver_rules_out(edge_extra, caller, qualified)
             ]
+            java_call = kind == "CALLS" and endpoint == "target_qualified"
+            if java_call and context_file.endswith(".java"):
+                # The class hierarchy and a variable's declared type decide
+                # before import evidence: a parent in the same package needs no
+                # import, and a class may arrive by wildcard.
+                index = index or self.class_index()
+                supported = [
+                    q for q in supported
+                    if self.receiver_type_admits(edge_extra, q, index, caller)
+                ]
+                nearest = self.java_binding(edge_extra, caller, bare_name, candidates, index)
+                supported = nearest or supported
             ambiguous_files = ambiguous_import_targets.get(context_file, set())
             ambiguity_supported = [
                 qualified
@@ -1419,6 +1436,146 @@ class GraphStore:
                             seeds.add(ns)
         return seeds
 
+    def class_index(self) -> tuple[dict, dict, dict]:
+        """Classes by name and by qualified name, and each class's INHERITS targets."""
+        by_name: dict[str, list[tuple[str, str, str]]] = {}
+        by_qn: dict[str, tuple[str, str, str]] = {}
+        for row in self._conn.execute(
+            "SELECT qualified_name, file_path, name FROM nodes WHERE kind = 'Class'"
+        ):
+            cls = (row["qualified_name"], row["file_path"], row["name"])
+            by_name.setdefault(row["name"], []).append(cls)
+            by_qn[row["qualified_name"]] = cls
+        parents: dict[str, list[str]] = {}
+        for row in self._conn.execute(
+            "SELECT source_qualified, target_qualified FROM edges WHERE kind = 'INHERITS'"
+        ):
+            parents.setdefault(row["source_qualified"], []).append(row["target_qualified"])
+        return by_name, by_qn, parents
+
+    def class_chain(
+        self, file_path: str, class_name: str, index=None,
+    ) -> list[tuple[str, str, str]]:
+        """A class, then its supertypes nearest first, as ``(qualified, file, name)``.
+
+        The class is found by file and name because a nested class's methods
+        record only the inner name. INHERITS edges usually name the supertype
+        bare and may carry type arguments (``RowMapper<GLClosureData>``), so
+        every class of that simple name counts, one in the same package first.
+        """
+        by_name, by_qn, parents = index or self.class_index()
+        chain = [c for c in by_name.get(class_name, []) if c[1] == file_path]
+        seen = {c[0] for c in chain}
+        for qn, file, _ in chain:  # grows while walked: breadth first
+            for target in parents.get(qn, []):
+                named = [by_qn[target]] if target in by_qn else by_name.get(
+                    _simple_type(target), []
+                )
+                package = os.path.dirname(file)
+                for cls in [c for c in named if os.path.dirname(c[1]) == package] or named:
+                    if cls[0] not in seen:
+                        seen.add(cls[0])
+                        chain.append(cls)
+        return chain
+
+    def supertype_methods(
+        self, file_path: str, class_name: str, names: set[str], index=None,
+    ) -> list[str]:
+        """Methods named in ``names`` that the supertypes of a class declare, nearest first.
+
+        A call through one of them can run the class's override at runtime.
+        """
+        placeholders = ", ".join("?" for _ in names)
+        return [
+            r[0]
+            for _, f, c in self.class_chain(file_path, class_name, index)
+            if (f, c) != (file_path, class_name)
+            for r in self._conn.execute(  # nosec B608
+                "SELECT qualified_name FROM nodes WHERE kind = 'Function' "
+                f"AND file_path = ? AND parent_name = ? AND name IN ({placeholders})",
+                (f, c, *names),
+            )
+        ]
+
+    def java_binding(self, extra: dict, caller: str, name: str, candidates, index) -> list[str]:
+        """Where a Java call binds through the class hierarchy: the nearest declaration.
+
+        ``super.m()`` looks above the caller's class, ``m()`` and ``this.m()``
+        from it, and a call on a variable of a declared type from that type,
+        wherever its class is imported from. Empty when the hierarchy has no say.
+        """
+        receiver = extra.get("receiver") or ""
+        declared = _declared_type(extra)
+        if declared:
+            starts = [(f, n) for _, f, n in index[0].get(declared, [])]
+        elif receiver in ("", "this", "super"):
+            starts = [(caller.split("::", 1)[0], _caller_class(caller))]
+        else:
+            return []
+        names = {qualified for qualified, _ in candidates}
+        found: list[str] = []
+        for file_path, class_name in starts:
+            for _, f, c in self.class_chain(file_path, class_name, index):
+                if receiver == "super" and (f, c) == (file_path, class_name):
+                    continue
+                if f"{f}::{c}.{name}" in names:
+                    found.append(f"{f}::{c}.{name}")
+                    break
+        return found
+
+    def receiver_type_admits(
+        self, extra: dict, candidate_qn: str, index, caller_qn: str = "",
+    ) -> bool:
+        """Whether a call on a variable of a declared type can reach ``candidate_qn``.
+
+        Only when the two classes are related by inheritance, either way. A
+        library type (``StringBuilder``) reaches no project class but those
+        extending it: a ``Runnable``'s ``run``. A Java ``super.m()`` reaches
+        only the caller's supertypes, so none when its parent is a library class.
+        """
+        declared = _declared_type(extra)
+        owner = _symbol_scope(candidate_qn).rsplit(".", 1)[-1]
+        file_path = candidate_qn.split("::", 1)[0]
+        if extra.get("receiver") == "super" and caller_qn.split("::", 1)[0].endswith(".java"):
+            caller_file, caller_class = caller_qn.split("::", 1)[0], _caller_class(caller_qn)
+            return any(
+                (f, c) == (file_path, owner) and (f, c) != (caller_file, caller_class)
+                for _, f, c in self.class_chain(caller_file, caller_class, index)
+            )
+        if not declared or owner == declared:
+            return True
+        parents = index[2]
+        if any(
+            _simple_type(t) == declared
+            for qn, _, _ in self.class_chain(file_path, owner, index)
+            for t in parents.get(qn, [])
+        ):
+            return True
+        return any(
+            (f, c) == (file_path, owner)
+            for _, df, dn in index[0].get(declared, [])
+            for _, f, c in self.class_chain(df, dn, index)
+        )
+
+    def _impact_bridge_qns(self, changed_files: list[str]) -> set[str]:
+        """Supertype methods the changed classes override.
+
+        Callers reach an implementation through its interface (Spring injects
+        the interface), so the traversal starts there too. These are reported
+        as affected, never as changed.
+        """
+        names_by_class: dict[tuple[str, str], set[str]] = {}
+        for f in changed_files:
+            for n in self.get_nodes_by_file(f):
+                if n.kind == "Function" and n.parent_name:
+                    names_by_class.setdefault((n.file_path, n.parent_name), set()).add(n.name)
+        index = self.class_index()
+        return {
+            qn
+            for (file_path, class_name), names in names_by_class.items()
+            for qn in self.supertype_methods(file_path, class_name, names, index)
+        }
+
     def get_impact_radius(
         self,
         changed_files: list[str],
@@ -1658,7 +1815,16 @@ class GraphStore:
             "INSERT INTO _impact_frontier (node_qn, score) "
             "SELECT qn, 1.0 FROM _impact_seeds"
         )
+        bridges = [(qn,) for qn in self._impact_bridge_qns(changed_files) - seeds]
+        for table in ("_impact_best", "_impact_frontier"):
+            self._conn.executemany(  # nosec B608
+                f"INSERT OR IGNORE INTO {table} (node_qn, score) VALUES (?, 1.0)",
+                bridges,
+            )
 
+        # CROSS JOIN keeps SQLite on this order: the graph has no statistics,
+        # and left to choose it scans every edge per hop instead of seeking
+        # the frontier's by index (18 s against 1 ms on a 712k-edge graph).
         candidate_sql = """
         INSERT INTO _impact_next (node_qn, score)
         SELECT node_qn, MAX(score)
@@ -1666,14 +1832,14 @@ class GraphStore:
             SELECT e.target_qualified AS node_qn,
                    f.score * COALESCE(p.weight, ?) * ? AS score
             FROM _impact_frontier f
-            JOIN edges e ON e.source_qualified = f.node_qn
+            CROSS JOIN edges e ON e.source_qualified = f.node_qn
             LEFT JOIN _impact_policies p ON p.kind = e.kind
             WHERE COALESCE(p.direction, ?) = ?
             UNION ALL
             SELECT e.source_qualified AS node_qn,
                    f.score * COALESCE(p.weight, ?) * ? AS score
             FROM _impact_frontier f
-            JOIN edges e ON e.target_qualified = f.node_qn
+            CROSS JOIN edges e ON e.target_qualified = f.node_qn
             LEFT JOIN _impact_policies p ON p.kind = e.kind
             WHERE COALESCE(p.direction, ?) = ?
         ) candidates
@@ -1770,8 +1936,8 @@ class GraphStore:
         )
         edge_counts = {
             row[0]: int(row[1]) for row in self._conn.execute(
-                "SELECT e.kind, COUNT(*) FROM edges e "
-                "JOIN _impact_members ms ON ms.qn = e.source_qualified "
+                "SELECT e.kind, COUNT(*) FROM _impact_members ms "
+                "CROSS JOIN edges e ON e.source_qualified = ms.qn "
                 "JOIN _impact_members mt ON mt.qn = e.target_qualified "
                 "GROUP BY e.kind ORDER BY e.kind"
             )
@@ -1834,6 +2000,7 @@ class GraphStore:
         seeds = self._impact_seed_qns(changed_files)
 
         best: dict[str, float] = dict.fromkeys(seeds, 1.0)
+        best.update(dict.fromkeys(self._impact_bridge_qns(changed_files) - seeds, 1.0))
         frontier = dict(best)
 
         direct: set[str] = set()
@@ -2478,6 +2645,64 @@ class GraphStore:
             confidence=confidence,
             confidence_tier=confidence_tier,
         )
+
+
+def _symbol_scope(qn: str) -> str:
+    symbol = qn.rsplit("::", 1)[-1]
+    return symbol.rsplit(".", 1)[0] if "." in symbol else ""
+
+
+def _caller_class(qn: str) -> str:
+    """The class of a Java caller: a method's class, or the class itself when
+    the call sits in a field initialiser or static block."""
+    return (_symbol_scope(qn) or qn.split("::", 1)[-1]).rsplit(".", 1)[-1]
+
+
+def _simple_type(name: str) -> str:
+    """``java.util.List<Foo>`` -> ``List``."""
+    return name.split("<", 1)[0].rsplit(".", 1)[-1]
+
+
+def _declared_type(extra: dict) -> str | None:
+    """A receiver's declared type. One letter is a type parameter; ``var`` names none."""
+    if extra.get("receiver_resolution") != "typed_receiver":
+        return None
+    declared = extra.get("receiver_type") or ""
+    return declared if len(declared) > 1 and declared != "var" else None
+
+
+def receiver_rules_out(
+    extra: dict, caller_qn: str, candidate_qn: str, binding: bool = True,
+) -> bool:
+    """Whether a call's receiver says it cannot reach ``candidate_qn``.
+
+    A call on another object is no evidence for binding to a namesake in the
+    caller's own class: ``cpr.decodePosition()`` inside ``decodePosition`` is
+    not recursion. When only listing candidates, it rules out just the caller
+    itself: that object may be of the caller's class (``secure().next()``).
+    In Java a receiver naming a type (``Arrays.toString()``) reaches only
+    that type's method; C# properties and Kotlin companions are PascalCase
+    too, so that rule stops at Java. ALL_CAPS are constants, and a declared
+    variable (``Rlat0L``) is no type however it is spelled.
+    """
+    receiver = extra.get("receiver") or ""
+    caller_file = caller_qn.split("::", 1)[0]
+    if (
+        receiver not in ("", "this", "self", "cls", "$this", "$self")
+        and not extra.get("go_method_receiver")
+        and candidate_qn.split("::", 1)[0] == caller_file
+        and _symbol_scope(candidate_qn) == _symbol_scope(caller_qn)
+        and (binding or candidate_qn == caller_qn)
+    ):
+        return True
+    return (
+        caller_file.endswith(".java")
+        and receiver.isidentifier()
+        and receiver[:1].isupper()
+        and not receiver.isupper()
+        and extra.get("receiver_resolution") != "typed_receiver"
+        and _symbol_scope(candidate_qn).rsplit(".", 1)[-1] != receiver
+    )
 
 
 def _sanitize_name(s: str, max_len: int = 256) -> str:

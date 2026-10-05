@@ -1160,6 +1160,9 @@ def _emit_tool_result(
     # shortening for the commands that have no shaper of their own. Before
     # paging, so the rows a cursor is minted from are the rows emitted.
     _paths.relativise_result(result, repo_root)
+    if isinstance(result, dict):
+        # Hints name the MCP tools this CLI replaced; the other path drops them too.
+        result.pop("_hints", None)
     # The tool reports its own truncation and search mode; surface them rather
     # than inventing either. Read before compacting, which drops the copies in
     # `data` because the envelope carries both.

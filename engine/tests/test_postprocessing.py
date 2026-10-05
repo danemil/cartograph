@@ -460,7 +460,11 @@ class TestToolBuildUsesSharedPipeline:
                     target=f"{runner.as_posix()}::render_thing",
                     repo_root=str(tmp_path),
                 )
-                assert callers["results"] == []
+                # A candidate of each module, never claimed as resolved.
+                assert [
+                    (row["name"], row["target_resolution"])
+                    for row in callers["results"]
+                ] == [("test_pipeline", "ambiguous")]
         finally:
             store.close()
 

@@ -716,6 +716,24 @@ class TestImpactRadiusSql:
         assert result["impacted_nodes"] == []
         assert result["total_impacted"] == 0
 
+    def test_edges_are_sought_by_index_not_scanned(self):
+        # Fails if a hop or the edge count lets SQLite read `edges` first: with
+        # no statistics it then scans every edge, about 18 s a hop on a
+        # 712k-edge graph, instead of seeking the frontier's few by index.
+        executed: list[str] = []
+        conn = self.store._conn
+        conn.set_trace_callback(executed.append)
+        try:
+            self.store.get_impact_radius_sql(["/a.py"], max_depth=2)
+        finally:
+            conn.set_trace_callback(None)
+        plans = [
+            " | ".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + sql))
+            for sql in executed if "edges e" in sql
+        ]
+        assert len(plans) >= 2
+        assert [p for p in plans if "SCAN e " in p + " "] == []
+
 
 def test_impact_radius_real_build_includes_importer_not_imported_dependency(
     tmp_path: Path,
