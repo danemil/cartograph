@@ -533,6 +533,22 @@ class TestSkillRouting:
                        "coupling counts say only that code shares"):
             assert phrase in body, phrase
 
+    def test_signature_questions_answer_from_callers_and_tests_first(self):
+        # report6, T5: one answer read impact's import blast radius as call
+        # sites. The skill must route a signature change through callers_of
+        # and tests_for first, and say how impact's rows are read.
+        body = " ".join(
+            skills_module.skill_documents()["refactor-safely"].split("---", 2)[2].split())
+        callers = body.index("carto query callers_of")
+        tests = body.index("carto query tests_for")
+        impact = body.index("carto impact --files")
+        assert callers < impact and tests < impact
+        for phrase in ("Answer from them", "`direct | calls add_node",
+                       "`direct | imports graph_store.py",
+                       "not broken by a signature change",
+                       "its own command, not a `query` pattern"):
+            assert phrase in body, phrase
+
     def test_descriptions_stay_small(self):
         # 1,849 characters before the routing fix; every one is paid per request.
         total = sum(len(fm["description"]) for fm in self._frontmatter().values())

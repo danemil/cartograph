@@ -104,24 +104,33 @@ def node_row(
 
 
 def impact_row(node: dict[str, Any]) -> Any:
-    """``<direct|transitive> | <node row>``.
+    """``<direct|transitive> | <relation> | <node row>``.
 
     Direct means one hop from the change. It leads because it is the ranking's
-    first key and the thing an agent weighs first: a direct dependent breaks
-    when a signature changes; a transitive one may not.
+    first key. The relation follows because one hop can be a call or only an
+    import, and only a call breaks when a signature changes: ``calls
+    add_node`` and ``imports graph_store.py`` must not read alike (report6,
+    T5, where they did). A transitive row names the hop it was reached
+    through.
     """
     row = node_row(node)
     if not isinstance(row, str) or "direct" not in node:
         return row
-    return f"{'direct' if node['direct'] else 'transitive'} | {row}"
+    head = "direct" if node["direct"] else "transitive"
+    if node.get("via"):
+        head += " | " + "; ".join(node["via"])
+    return f"{head} | {row}"
 
 
 def file_count_row(entry: dict[str, Any]) -> Any:
-    """``<path> | <n> items[ (<d> direct)]``."""
+    """``<path> | <n> items[ (<d> direct[; <i> only imports])]``."""
     if "file" not in entry or "items" not in entry:
         return entry
     row = f"{entry['file']} | {entry['items']} item{'s' if entry['items'] != 1 else ''}"
-    return f"{row} ({entry['direct']} direct)" if entry.get("direct") else row
+    if not entry.get("direct"):
+        return row
+    only = f"; {entry['import_only']} only imports" if entry.get("import_only") else ""
+    return f"{row} ({entry['direct']} direct{only})"
 
 
 def handle_row(node: dict[str, Any]) -> Any:

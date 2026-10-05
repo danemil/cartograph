@@ -27,7 +27,11 @@ Cartograph reports the sites, you make the edits with your normal tools.
 
 ### Who calls it, and what breaks
 
-1. **Direct callers** — the code that breaks first when a signature changes:
+For one symbol — "who calls X, and what would break if its signature
+changed?" — two calls answer it. Answer from them:
+
+1. **Direct callers** — every call site, which is what a signature change
+   breaks:
    ```
    carto query callers_of <symbol> --limit 50 --format json
    ```
@@ -35,20 +39,36 @@ Cartograph reports the sites, you make the edits with your normal tools.
    (the response's `disambiguation` rows carry the names to pass back). If `truncated` is true, pass
    `page.next_cursor` back with `--cursor` until it is not.
 
-2. **Other uses** — passed as a callback, imported, inherited from:
+2. **Tests** that call it or cover it, to update in the same commit:
+   ```
+   carto query tests_for <symbol> --format json
+   ```
+
+3. **Other uses** — passed as a callback, imported, inherited from — when the
+   change is a rename or a removal, which these break too:
    ```
    carto query references_to <symbol> --format json
    ```
 
-3. **Tests** that will need updating in the same commit:
-   ```
-   carto query tests_for <symbol> --format json
-   ```
+Run `impact` only when asked what *else* could be affected, beyond the
+callers:
 
 4. **The wider reach**, transitively, from the file that defines it:
    ```
    carto impact --files <file> --depth 2 --format json
    ```
+   Read it as file-level reach, not as call sites of your symbol:
+   - It starts from **every** symbol in the file. Each row says how it
+     depends on the change: `direct | calls add_node | …` is a caller of
+     `add_node`; `direct | calls get_node | …` calls another function in the
+     same file and is not touched by a change to `add_node`.
+   - `direct | imports graph_store.py | …` only imports it. An import is not
+     broken by a signature change — only a call is — though a rename or
+     removal breaks it. The summary counts them apart (`9 direct: 4 call,
+     5 import only`), and `affected_files` says `only imports` per file.
+   - `transitive` rows are callers of callers (`calls ingest`): affected only
+     if the direct caller's own behaviour or signature changes too.
+
    `impact` lists the 20 most affected items, direct dependents first. It
    never shortens the scope: `data.totals` counts everything, and
    `data.affected_files` names **every** affected file with how many of its
@@ -58,9 +78,7 @@ Cartograph reports the sites, you make the edits with your normal tools.
    ```
    carto impact --files <file> --limit <totals.direct> --format json
    ```
-
-Steps 1 and 4 answer most "what would break" questions; add 2 and 3 when the
-change is a removal or the symbol is not only called.
+   `impact` is its own command, not a `query` pattern.
 
 `query`, `refactor` and `dead-code` carry `data.coverage`. When it says
 code files are not covered, a caller may sit in one of them: say so in the

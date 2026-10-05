@@ -240,7 +240,8 @@ def test_summary_states_the_scope_on_one_line(fan_in_repo, capsys):
     summary = _run(fan_in_repo, capsys=capsys)["data"]["summary"]
     assert summary.startswith(
         f"core.py: {TOTAL_ITEMS} items affected within 2 hops across "
-        f"{TOTAL_FILES} files ({TOTAL_DIRECT} direct); showing top 20"
+        f"{TOTAL_FILES} files ({TOTAL_DIRECT} direct: {DIRECT_CALLERS} call, "
+        "1 import only); showing top 20"
     )
 
 

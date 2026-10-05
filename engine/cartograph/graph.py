@@ -1397,6 +1397,7 @@ class GraphStore:
         changed_files: list[str],
         max_depth: int = MAX_IMPACT_DEPTH,
         max_nodes: int = MAX_IMPACT_NODES,
+        relations: bool = False,
     ) -> dict[str, Any]:
         """Find dependents and tests impacted by changed files within depth N.
 
@@ -1418,14 +1419,105 @@ class GraphStore:
           - impact_scores: qualified name to best-path score
           - total_impacted, direct_qns, file_counts (path, items, direct) and
             edge_counts (by kind): over everything reachable, whatever the cap
+          - with ``relations``: ``relations``, how each dependent depends on
+            the change (see ``_impact_relations``)
         """
         if BFS_ENGINE == "networkx":
             return self._get_impact_radius_networkx(
                 changed_files, max_depth=max_depth, max_nodes=max_nodes,
+                relations=relations,
             )
         return self.get_impact_radius_sql(
             changed_files, max_depth=max_depth, max_nodes=max_nodes,
+            relations=relations,
         )
+
+    def _impact_relations(
+        self,
+        seeds: set[str],
+        direct_qns: set[str],
+        kept_qns: set[str],
+        scores: dict[str, float],
+    ) -> dict[str, Any]:
+        """How each dependent depends on the change, by edge kind.
+
+        A direct dependent and the change are one hop apart, but the hop can
+        be a call or only an import, and those break on different changes: a
+        signature change breaks a call, not an import. Read as the same
+        thing, an importer becomes a "directly impacted runtime path" (the
+        fifth A/B, T5). So for every direct dependent this names the edges to
+        the changed nodes, and for each kept transitive one the best-path hop
+        it was reached through. Over every direct dependent, not only the kept
+        rows, so the counts by relation are as exact as the totals.
+
+        Returns ``via`` ({qn: [(kind, other qn)]}, for the kept rows),
+        ``direct`` ({primary kind: count}) and ``import_only_files``
+        ({file: direct dependents in it that only import}).
+        """
+        dependents = direct_qns | kept_qns
+        links: dict[str, set[tuple[str, str]]] = {}
+        qns = list(dependents)
+        for i in range(0, len(qns), 450):
+            batch = qns[i:i + 450]
+            placeholders = ",".join("?" for _ in batch)
+            for column in ("source_qualified", "target_qualified"):
+                for kind, source, target in self._conn.execute(  # nosec B608
+                    "SELECT kind, source_qualified, target_qualified FROM edges "
+                    f"WHERE {column} IN ({placeholders})",
+                    batch,
+                ):
+                    direction = IMPACT_EDGE_DIRECTIONS.get(
+                        kind, IMPACT_DEFAULT_EDGE_DIRECTION,
+                    )
+                    # The traversal's own orientation: who depends on whom.
+                    if direction == IMPACT_DIRECTION_INCOMING:
+                        dependent, dependency = source, target
+                    elif direction == IMPACT_DIRECTION_OUTGOING:
+                        dependent, dependency = target, source
+                    else:
+                        continue
+                    if dependent in dependents and dependency != dependent:
+                        links.setdefault(dependent, set()).add((kind, dependency))
+
+        def weight(kind: str) -> float:
+            return IMPACT_EDGE_WEIGHTS.get(kind, IMPACT_DEFAULT_EDGE_WEIGHT)
+
+        via: dict[str, list[tuple[str, str]]] = {}
+        direct: dict[str, int] = {}
+        import_only: set[str] = set()
+        for qn in direct_qns:
+            to_seeds = sorted(
+                (link for link in links.get(qn, ()) if link[1] in seeds),
+                key=lambda link: (-weight(link[0]), link[0], link[1]),
+            )
+            kinds = {kind for kind, _ in to_seeds}
+            if kinds == {"IMPORTS_FROM"}:
+                primary = "IMPORTS_FROM"
+                import_only.add(qn)
+            elif kinds:
+                primary = to_seeds[0][0] if to_seeds[0][0] != "IMPORTS_FROM" else next(
+                    kind for kind, _ in to_seeds if kind != "IMPORTS_FROM")
+            else:
+                primary = "OTHER"
+            direct[primary] = direct.get(primary, 0) + 1
+            if qn in kept_qns:
+                via[qn] = to_seeds
+        for qn in kept_qns - direct_qns:
+            hops = [
+                link for link in links.get(qn, ())
+                if link[1] in scores and link[1] not in seeds
+            ]
+            if hops:
+                # The hop on the best path: the score it was ranked by.
+                via[qn] = [max(
+                    hops,
+                    key=lambda link: (scores[link[1]] * weight(link[0]),
+                                      link[0], link[1]),
+                )]
+        files: dict[str, int] = {}
+        for node in self._batch_get_nodes(import_only):
+            files[node.file_path] = files.get(node.file_path, 0) + 1
+        return {"via": via, "direct": direct, "import_only_files": files}
 
     # -- Bounded SQLite relaxation version (default) ----------------------
 
@@ -1434,6 +1526,7 @@ class GraphStore:
         changed_files: list[str],
         max_depth: int = MAX_IMPACT_DEPTH,
         max_nodes: int = MAX_IMPACT_NODES,
+        relations: bool = False,
     ) -> dict[str, Any]:
         """Impact radius via bounded best-score relaxation in SQLite.
 
@@ -1668,7 +1761,7 @@ class GraphStore:
         if all_qns:
             relevant_edges = self.get_edges_among(all_qns)
 
-        return {
+        out = {
             "changed_nodes": changed_nodes,
             "impacted_nodes": impacted_nodes,
             "impacted_files": impacted_files,
@@ -1685,6 +1778,17 @@ class GraphStore:
             "file_counts": file_counts,
             "edge_counts": edge_counts,
         }
+        if relations:
+            all_scores = {
+                row[0]: float(row[1]) for row in self._conn.execute(
+                    "SELECT node_qn, score FROM _impact_best"
+                )
+            }
+            out["relations"] = self._impact_relations(
+                seeds, direct_qns, {n.qualified_name for n in impacted_nodes},
+                all_scores,
+            )
+        return out
 
     # -- NetworkX BFS version (legacy) ------------------------------------
 
@@ -1693,6 +1797,7 @@ class GraphStore:
         changed_files: list[str],
         max_depth: int = MAX_IMPACT_DEPTH,
         max_nodes: int = MAX_IMPACT_NODES,
+        relations: bool = False,
     ) -> dict[str, Any]:
         """BFS via NetworkX (legacy). Used when CRG_BFS_ENGINE=networkx."""
         max_depth = max(0, int(max_depth))
@@ -1766,7 +1871,7 @@ class GraphStore:
         if all_qns:
             relevant_edges = self.get_edges_among(all_qns)
 
-        return {
+        out = {
             "changed_nodes": changed_nodes,
             "impacted_nodes": impacted_nodes,
             "impacted_files": impacted_files,
@@ -1783,6 +1888,11 @@ class GraphStore:
             "file_counts": file_counts,
             "edge_counts": edge_counts,
         }
+        if relations:
+            out["relations"] = self._impact_relations(
+                seeds, direct_qns, {n.qualified_name for n in impacted_nodes}, best,
+            )
+        return out
 
     def get_subgraph(self, qualified_names: list[str]) -> dict[str, Any]:
         """Extract a subgraph containing the specified nodes and their connecting edges."""

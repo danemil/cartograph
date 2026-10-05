@@ -591,13 +591,76 @@ class _ContractParser(argparse.ArgumentParser):
     def error(self, message: str):  # noqa: D102 — argparse's own contract
         from . import envelope as _env
 
-        env = _env.error(self._tool_name(), _env.Exit.USAGE, message)
+        tool = self._tool_name()
+        remediation = None
+        corrected = _corrected_call(tool, message, sys.argv[1:])
+        if corrected:
+            message, remediation = corrected
+        env = _env.error(tool, _env.Exit.USAGE, message, remediation=remediation)
         fmt = _usage_format(self)
         if fmt != "json":
             # Text mode keeps argparse's usage block, which is the part a
             # human needs; emit() then writes the message to stderr.
             self.print_usage(sys.stderr)
         raise SystemExit(_env.emit(env, fmt))
+
+
+# Commands an agent has tried as a query pattern (report6, T5: `carto query
+# impact --files …`). The graph commands, plus the two others that answer
+# a code question.
+def _commands_mistaken_for_patterns() -> set[str]:
+    return (_GRAPH_TOOL_COMMANDS - {"query"}) | {"dead-code", "status"}
+
+
+def _corrected_call(
+    tool: str, message: str, argv: list[str],
+) -> "tuple[str, str] | None":
+    """The call an agent meant, for a wrong spelling argparse rejected.
+
+    ``query impact``, ``query large-functions``, ``query callers`` and a bare
+    ``callers_of`` are each one word away from a real command. argparse lists
+    the valid choices and stops there; the agent then guesses again, and one
+    T5 run spent a call that way. Returns the message with the right command
+    named first, and that command, rewritten from the agent's own arguments,
+    as the remediation. None when the mistake is not one of these.
+    """
+    import re
+    import shlex
+    from difflib import get_close_matches
+
+    found = re.search(r"invalid choice: '([^']*)'", message)
+    if not found or found.group(1) not in argv:
+        return None
+    bad = found.group(1)
+    rest = argv[argv.index(bad) + 1:]
+    norm = bad.lower().replace("-", "_")
+    if tool == "query":
+        command = next((c for c in sorted(_commands_mistaken_for_patterns())
+                        if c.replace("-", "_") == norm), None)
+        if command == "impact":
+            hint = "callers of one symbol: `carto query callers_of <file>::<name>`"
+            if rest and not rest[0].startswith("-"):
+                target = rest[0]
+                hint = f"callers of that symbol: `carto query callers_of {target}`"
+                rest = ["--files", target.split("::", 1)[0], *rest[1:]]
+            fixed = shlex.join(["carto", "impact", *rest])
+            return (f"`impact` is a command of its own, not a query pattern: "
+                    f"run `{fixed}` ({hint}). {message}", fixed)
+        if command:
+            fixed = shlex.join(["carto", command, *rest])
+            return (f"`{command}` is a command of its own, not a query pattern: "
+                    f"run `{fixed}`. {message}", fixed)
+        pattern = next((p for p in QUERY_PATTERNS if p == norm), None) \
+            or next((p for p in QUERY_PATTERNS if p.startswith(f"{norm}_")), None) \
+            or next(iter(get_close_matches(norm, QUERY_PATTERNS, n=1, cutoff=0.75)), None)
+        if pattern:
+            fixed = shlex.join(["carto", "query", pattern, *rest])
+            return f"Did you mean `{pattern}`? Run `{fixed}`. {message}", fixed
+        return None
+    if norm in QUERY_PATTERNS:
+        fixed = shlex.join(["carto", "query", norm, *rest])
+        return (f"`{norm}` is a query pattern: run `{fixed}`. {message}", fixed)
+    return None
 
 
 _GRAPH_TOOL_COMMANDS = {

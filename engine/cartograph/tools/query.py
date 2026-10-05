@@ -135,6 +135,51 @@ def _rank_disambiguation_candidates(
     return [node_to_dict(node) for node in sorted(candidates, key=score)]
 
 
+#: How a dependent depends on a changed node, as the verb its row leads with.
+_RELATION_VERBS = {
+    "CALLS": "calls", "IMPORTS_FROM": "imports", "INHERITS": "inherits",
+    "IMPLEMENTS": "implements", "OVERRIDES": "overrides", "TESTED_BY": "tests",
+    "REFERENCES": "references", "DEPENDS_ON": "depends on",
+}
+#: The same, counted in the summary: "(9 direct: 4 call, 5 import only)".
+_RELATION_NOUNS = {
+    "CALLS": "call", "INHERITS": "inherit", "IMPLEMENTS": "implement",
+    "OVERRIDES": "override", "TESTED_BY": "test", "REFERENCES": "reference",
+    "DEPENDS_ON": "depend", "IMPORTS_FROM": "import only", "OTHER": "other",
+}
+#: Names per verb in one row before the rest are counted.
+_MAX_VIA_NAMES = 3
+
+
+def _short_name(qualified: str) -> str:
+    """``path/x.py::Store.add`` -> ``Store.add``; a file -> its base name."""
+    if "::" in qualified:
+        return qualified.rsplit("::", 1)[1]
+    return Path(qualified.replace("\\", "/")).name or qualified
+
+
+def _via(links: list[tuple[str, str]]) -> list[str]:
+    """``["calls add_node, get_node", "tests add_node"]``, strongest relation first.
+
+    Names only, no paths: a direct dependent's names are the changed file's
+    own symbols, and a transitive one's is the hop the row's own path follows.
+    """
+    by_verb: dict[str, list[str]] = {}
+    for kind, other in links:
+        verb = _RELATION_VERBS.get(kind, kind.lower().replace("_", " "))
+        names = by_verb.setdefault(verb, [])
+        name = _short_name(other)
+        if name not in names:
+            names.append(name)
+    out = []
+    for verb, names in by_verb.items():
+        text = f"{verb} " + ", ".join(names[:_MAX_VIA_NAMES])
+        if len(names) > _MAX_VIA_NAMES:
+            text += f", +{len(names) - _MAX_VIA_NAMES} more"
+        out.append(text)
+    return out
+
+
 def _impact_summary(
     changed_files: list[str], max_depth: int, totals: dict[str, Any],
     *, shown: int, shown_direct: int,
@@ -156,17 +201,35 @@ def _impact_summary(
             f"{label}: nothing affected within {max_depth} hops "
             f"({totals['changed_nodes']} nodes in the changed files)"
         )
+    by_relation = totals.get("direct_by_relation") or {}
+    split = (": " + ", ".join(f"{n} {r}" for r, n in by_relation.items())
+             if by_relation else "")
     scope = (
         f"{label}: {items} items affected within {max_depth} hops across "
-        f"{files} files ({direct} direct)"
+        f"{files} files ({direct} direct{split})"
     )
     if shown >= items:
-        return f"{scope}; all shown"
-    line = f"{scope}; showing top {shown}"
-    if shown_direct < direct:
+        line = f"{scope}; all shown"
+    else:
+        line = f"{scope}; showing top {shown}"
+        if shown_direct < direct:
+            line += (
+                f"; {direct} direct dependents; {shown_direct} shown; "
+                f"--limit {direct} lists them all"
+            )
+    # Direct means one hop, and a hop can be a call or only an import. Read
+    # alike, importers were reported as broken by a signature change (report6,
+    # T5); the summary is the line read first, so it says which is which.
+    imports_only = by_relation.get(_RELATION_NOUNS["IMPORTS_FROM"], 0)
+    if imports_only:
         line += (
-            f"; {direct} direct dependents; {shown_direct} shown; "
-            f"--limit {direct} lists them all"
+            f"; the {imports_only} import-only dependents are not broken by a "
+            "signature change, only by a rename or removal"
+        )
+    if len(changed_files) == 1:
+        line += (
+            f"; callers of one symbol: carto query callers_of "
+            f"{changed_files[0]}::<name>"
         )
     return line
 
@@ -226,8 +289,11 @@ def get_impact_radius(
         original_tokens = estimate_file_tokens(root, changed_files)
         abs_files = _resolve_graph_file_paths(store, root, changed_files)
         result = store.get_impact_radius(
-            abs_files, max_depth=max_depth, max_nodes=max_results
+            abs_files, max_depth=max_depth, max_nodes=max_results,
+            relations=True,
         )
+        relations = result.get("relations") or {}
+        via = relations.get("via", {})
 
         impact_scores = result.get("impact_scores", {})
         direct_qns = result.get("direct_qns", set())
@@ -239,6 +305,8 @@ def get_impact_radius(
             if score is not None:
                 node_dict["impact_score"] = score
             node_dict["direct"] = node.qualified_name in direct_qns
+            if via.get(node.qualified_name):
+                node_dict["via"] = _via(via[node.qualified_name])
             impacted_dicts.append(node_dict)
         edge_dicts = [edge_to_dict(e) for e in result["edges"]]
         truncated = result["truncated"]
@@ -255,6 +323,18 @@ def get_impact_radius(
             "changed_nodes": len(changed_dicts),
             "edges": result.get("edge_counts", {}),
         }
+        if relations.get("direct"):
+            # Strongest relation first, the order the traversal weighs them.
+            order = list(_RELATION_NOUNS)
+            totals["direct_by_relation"] = {
+                _RELATION_NOUNS.get(kind, kind.lower()): n
+                for kind, n in sorted(
+                    relations["direct"].items(),
+                    key=lambda item: (order.index(item[0]) if item[0] in order
+                                      else len(order), item[0]),
+                )
+            }
+        import_only_files = relations.get("import_only_files", {})
         summary = _impact_summary(
             changed_files, max_depth, totals, shown=len(impacted_dicts),
             shown_direct=sum(1 for n in impacted_dicts if n["direct"]),
@@ -307,7 +387,9 @@ def get_impact_radius(
             # scope of a change is never shortened along with its list.
             "impacted_files": [path for path, _, _ in file_counts],
             "affected_files": [
-                {"file": path, "items": items, "direct": direct}
+                {"file": path, "items": items, "direct": direct,
+                 **({"import_only": import_only_files[path]}
+                    if import_only_files.get(path) else {})}
                 for path, items, direct in file_counts
             ],
             "edges": edge_dicts,
