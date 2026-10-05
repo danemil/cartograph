@@ -596,6 +596,46 @@ nothing changed).
 Then: T5 A/B re-run on 0.9.4; then the hands-on Dev Container check (the user
 chose Dev Container first; step 1 was a Docker check).
 
+## Done — 2026-10-05, 0.9.4: the four decisions above
+
+Built by two subagents (each with a Codex second opinion) plus the skill edit.
+
+- `a281af6` — **re-parse after an upgrade.** `PARSER_VERSION` in
+  `incremental.py` (bump it whenever a parser change alters nodes/edges for
+  existing code), recorded by every full build. The first `update` on a graph
+  without it, or with another value, rebuilds in full (`build_type: "full"`,
+  `rebuild_reason: "parser_version"`); `status` says `stale: true`,
+  `stale_reason: "built by an older Cartograph parser"`, `remediation:
+  "carto build"` until then. The C++ identity rebuild stays separate (it
+  retries after a C++ parse failure; the parser version must not) and is now
+  reported as a full rebuild too. Every pre-0.9.4 graph rebuilds once.
+- `622c447` — **`callers_of` lists every call line** in `edges` (7 for
+  `add_node`, not 3); results stay one row per caller, `--limit` counts
+  callers. The store's unit is a call *line*: two calls on one line are one
+  edge.
+- `edecd76` — **refactor-safely wording** as chosen, plus Codex's scoping:
+  Java and Go have no optional parameters.
+- `ad6dc87` — **cosmetics.** `changed_files` = what the update applied
+  (re-parsed or deleted); the rest is `ignored_changes`. The build summary
+  quotes the final totals.
+
+Found on the way, not fixed — candidates for the user to decide:
+
+1. **Incremental flows/communities may never match.** The changed files
+   passed to `incremental_trace_flows` / `incremental_detect_communities` are
+   repo-relative, nodes are stored absolute, and those functions only
+   normalise separators. If so, flows and communities go stale after
+   incremental updates. Path forms confirmed; the effect not yet proven by a
+   test. Related: a deleted file's nodes are gone before incremental seeding.
+2. **Paged `callers_of` repeats edges**: `_page_for` slices `results`, never
+   `edges`, so page 2 carries page 1's call lines (pre-existing).
+3. **`callees_of` keeps one call line per callee** (same dedupe as
+   `callers_of` had); `references_to` likely too.
+4. The session-start hook checks only the branch for staleness, not the
+   parser version (its `update` rebuilds anyway). `skills/build-graph` says
+   "stale → carto update"; status now says `carto build`; both work.
+5. No lock: two concurrent updates could both rebuild.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
