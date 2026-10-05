@@ -207,3 +207,68 @@ def test_tool_command_missing_graph_reports_a_recoverable_precondition(
     # Required for precondition errors: it is what lets the agent recover
     # instead of failing the user's task.
     assert payload["error"]["remediation"] == "carto build"
+
+
+@pytest.mark.parametrize("detail", ["compact", "full"])
+def test_callers_of_lists_one_edge_per_call_line(
+    tmp_path, monkeypatch, capsys, detail,
+):
+    """A caller with three call lines is one result and three edges.
+
+    Measured on a real repo: `_build_fixture` called `add_node` on four lines
+    and the response showed one, so an agent reported three call sites where
+    there were seven. Built from source, so the parser's one-edge-per-line
+    storage is exercised along with the query and both output shapes.
+    """
+    from cartograph.graph import GraphStore
+    from cartograph.incremental import full_build
+
+    monkeypatch.setenv("CRG_SERIAL_PARSE", "1")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "lib.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (repo / "use.py").write_text(
+        "from lib import add\n"
+        "\n"
+        "\n"
+        "def many():\n"
+        "    x = add(1, 2)\n"
+        "    y = add(3, 4)\n"
+        "    return add(x, y)\n"
+        "\n"
+        "\n"
+        "def once():\n"
+        "    return add(8, 9)\n",
+        encoding="utf-8",
+    )
+    db_path = repo / ".cartograph" / "graph.db"
+    db_path.parent.mkdir()
+    store = GraphStore(db_path)
+    try:
+        full_build(repo, store)
+    finally:
+        store.close()
+
+    argv = ["cartograph", "query", "callers_of", "lib.py::add",
+            "--repo", str(repo), "--detail", detail]
+    with patch.object(sys, "argv", argv):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["result_count"] == 2
+    assert data["results_omitted"] == 0
+    assert len(data["results"]) == 2
+    if detail == "compact":
+        assert data["edges"] == [
+            "CALLS | many -> lib.py::add | use.py:5",
+            "CALLS | many -> lib.py::add | use.py:6",
+            "CALLS | many -> lib.py::add | use.py:7",
+            "CALLS | once -> lib.py::add | use.py:11",
+        ]
+    else:
+        assert [(e["source"], e["line"]) for e in data["edges"]] == [
+            ("use.py::many", 5), ("use.py::many", 6), ("use.py::many", 7),
+            ("use.py::once", 11),
+        ]

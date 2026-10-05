@@ -323,6 +323,107 @@ class TestQueryGraphCallTargetFallbacks:
         edge_targets = {e["target"] for e in result["edges"]}
         assert edge_targets == {f"{self.target_file}::target_func", "target_func"}
 
+    def _add_calls(self, source, target, file_path, lines):
+        with GraphStore(self.db_path) as store:
+            for line in lines:
+                store.upsert_edge(EdgeInfo(
+                    kind="CALLS", source=source, target=target,
+                    file_path=file_path, line=line,
+                ))
+            store.commit()
+
+    def test_callers_of_lists_every_call_line_of_a_caller(self):
+        """One result per caller, one edge per call line.
+
+        Only the first edge per caller used to survive, so a caller with four
+        call lines showed one and an agent counted call sites from that.
+        """
+        caller = f"{self.target_file}::same_file_caller"
+        target = f"{self.target_file}::target_func"
+        self._add_calls(caller, target, self.target_file, [24, 23])
+
+        result = query_graph(
+            pattern="callers_of", target=target, repo_root=str(self.root),
+        )
+
+        assert result["result_count"] == 2
+        assert [r["name"] for r in result["results"]].count("same_file_caller") == 1
+        lines = [
+            e["line"] for e in result["edges"] if e["source"] == caller
+        ]
+        assert lines == [22, 23, 24]
+
+    def test_callers_of_drops_only_exact_duplicate_edges(self):
+        caller = f"{self.target_file}::same_file_caller"
+        target = f"{self.target_file}::target_func"
+        with GraphStore(self.db_path) as store:
+            # upsert_edge refuses an exact repeat, so write the row directly:
+            # the query must not depend on every writer deduplicating.
+            store._conn.execute(
+                "INSERT INTO edges (kind, source_qualified, target_qualified,"
+                " file_path, line, extra, updated_at)"
+                " VALUES ('CALLS', ?, ?, ?, 22, '{}', 0)",
+                (caller, target, self.target_file),
+            )
+            store.commit()
+        self._add_calls(caller, target, self.target_file, [23])
+
+        result = query_graph(
+            pattern="callers_of", target=target, repo_root=str(self.root),
+        )
+
+        lines = [e["line"] for e in result["edges"] if e["source"] == caller]
+        assert lines == [22, 23]
+
+    def test_callers_of_bare_fallback_lists_every_call_line(self):
+        caller = f"{self.cross_file}::cross_file_caller"
+        self._add_calls(caller, "target_func", self.cross_file, [8])
+
+        result = query_graph(
+            pattern="callers_of",
+            target=f"{self.target_file}::target_func",
+            repo_root=str(self.root),
+        )
+
+        by_name = {r["name"]: r for r in result["results"]}
+        assert by_name["cross_file_caller"]["target_resolution"] == "unresolved"
+        lines = [e["line"] for e in result["edges"] if e["source"] == caller]
+        assert lines == [7, 8]
+
+    def test_callers_of_keeps_bare_edges_off_a_resolved_caller(self):
+        """A bare same-name call from a resolved caller is not this target's."""
+        caller = f"{self.target_file}::same_file_caller"
+        self._add_calls(caller, "target_func", self.target_file, [23])
+
+        result = query_graph(
+            pattern="callers_of",
+            target=f"{self.target_file}::target_func",
+            repo_root=str(self.root),
+        )
+
+        edges = [e for e in result["edges"] if e["source"] == caller]
+        assert [(e["target"], e["line"]) for e in edges] == [
+            (f"{self.target_file}::target_func", 22),
+        ]
+
+    def test_callers_of_limit_counts_callers_and_keeps_their_edges(self):
+        caller = f"{self.target_file}::same_file_caller"
+        target = f"{self.target_file}::target_func"
+        self._add_calls(caller, target, self.target_file, [23, 24])
+
+        result = query_graph(
+            pattern="callers_of", target=target, repo_root=str(self.root),
+            max_results=1,
+        )
+
+        assert result["result_count"] == 2
+        assert result["results_omitted"] == 1
+        assert [r["name"] for r in result["results"]] == ["same_file_caller"]
+        # Every call line of the caller on the page, and nothing of the one off it.
+        assert [(e["source"], e["line"]) for e in result["edges"]] == [
+            (caller, 22), (caller, 23), (caller, 24),
+        ]
+
     def test_references_to_returns_type_dependents(self, monkeypatch):
         monkeypatch.setenv("CRG_SERIAL_PARSE", "1")
         type_path = self.root / "types.ts"

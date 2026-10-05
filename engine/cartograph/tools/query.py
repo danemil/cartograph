@@ -151,6 +151,27 @@ _RELATION_NOUNS = {
 _MAX_VIA_NAMES = 3
 
 
+def _calls_by_caller(edges: Any) -> list[tuple[str, list[Any]]]:
+    """Group call edges by caller: first-seen caller order, line order within.
+
+    The store keeps one CALLS edge per call line, so a caller that calls the
+    target on four lines has four edges and all four are call sites. Only an
+    exact repeat (same source, target, file and line) is dropped.
+    """
+    groups: dict[str, list[Any]] = {}
+    seen: set[tuple[Any, ...]] = set()
+    for e in edges:
+        key = (e.source_qualified, e.target_qualified, e.file_path, e.line)
+        if key in seen:
+            continue
+        seen.add(key)
+        groups.setdefault(e.source_qualified, []).append(e)
+    return [
+        (source, sorted(calls, key=lambda e: (e.file_path or "", e.line or 0)))
+        for source, calls in groups.items()
+    ]
+
+
 def _short_name(qualified: str) -> str:
     """``path/x.py::Store.add`` -> ``Store.add``; a file -> its base name."""
     if "::" in qualified:
@@ -452,15 +473,23 @@ def query_graph(
         edges_out: list[dict[str, Any]] = []
         total_results = 0
 
-        def add_result(result: dict[str, Any], edge: Any | None = None) -> None:
-            """Count every logical result but retain only the bounded prefix."""
+        def add_result(
+            result: dict[str, Any], edge: Any | list[Any] | None = None,
+        ) -> None:
+            """Count every logical result but retain only the bounded prefix.
+
+            ``edge`` may be a list: one result can rest on several edges (a
+            caller that calls the target on four lines). The limit counts
+            results, so a retained result brings all of its edges with it.
+            """
             nonlocal total_results
             total_results += 1
             if len(results) >= response_limit:
                 return
             results.append(result)
-            if edge is not None:
-                edges_out.append(edge_to_dict(edge))
+            for e in edge if isinstance(edge, list) else [edge]:
+                if e is not None:
+                    edges_out.append(edge_to_dict(e))
 
         # For callers_of, skip common builtins early (bare names only)
         # "Who calls .map()?" returns hundreds of useless hits.
@@ -552,14 +581,17 @@ def query_graph(
         qn = node.qualified_name if node else target
 
         if pattern == "callers_of":
+            # One result per caller, but every call line in `edges`: an agent
+            # told to read every call site counts these rows, and keeping only
+            # the first edge per caller turned seven call lines into three.
             seen_sources: set[str] = set()
-            for e in store.iter_edges_by_target(qn):
-                if e.kind == "CALLS":
-                    if e.source_qualified not in seen_sources:
-                        seen_sources.add(e.source_qualified)
-                        caller = store.get_node(e.source_qualified)
-                        if caller:
-                            add_result(node_to_dict(caller), e)
+            for source, calls in _calls_by_caller(
+                e for e in store.iter_edges_by_target(qn) if e.kind == "CALLS"
+            ):
+                seen_sources.add(source)
+                caller = store.get_node(source)
+                if caller:
+                    add_result(node_to_dict(caller), calls)
             # Fallback: CALLS edges store unqualified target names
             # (e.g. "generateTestCode") while qn is fully qualified
             # (e.g. "file.ts::generateTestCode"). Search by plain name too.
@@ -573,28 +605,30 @@ def query_graph(
                     if node.language == "cpp"
                     else 0
                 )
-                for e in store.iter_edges_by_target_name(
-                    node.name,
-                    language=node.language or None,
-                ):
-                    # A C++ overload set deliberately keeps the target bare.
-                    # Its candidates support disambiguation, but do not prove
-                    # that any one exact overload was called.
-                    if (
-                        "ambiguous_targets" in e.extra
-                        or "unresolved_targets" in e.extra
-                        or (node.language == "cpp" and e.extra.get("receiver"))
-                    ):
-                        continue
-                    if cpp_overload_count > 1:
-                        continue
-                    if e.source_qualified not in seen_sources:
-                        seen_sources.add(e.source_qualified)
-                        caller = store.get_node(e.source_qualified)
-                        if caller:
-                            caller_result = node_to_dict(caller)
-                            caller_result["target_resolution"] = "unresolved"
-                            add_result(caller_result, e)
+                # A C++ overload set deliberately keeps the target bare. Its
+                # candidates support disambiguation, but do not prove that any
+                # one exact overload was called. A caller already found through
+                # a resolved edge gets none of its bare-name edges: they share
+                # the short name but were not resolved to this target, so they
+                # are as likely to be calls of something else.
+                bare_calls = (
+                    e for e in store.iter_edges_by_target_name(
+                        node.name,
+                        language=node.language or None,
+                    )
+                    if cpp_overload_count <= 1
+                    and "ambiguous_targets" not in e.extra
+                    and "unresolved_targets" not in e.extra
+                    and not (node.language == "cpp" and e.extra.get("receiver"))
+                    and e.source_qualified not in seen_sources
+                )
+                for source, calls in _calls_by_caller(bare_calls):
+                    seen_sources.add(source)
+                    caller = store.get_node(source)
+                    if caller:
+                        caller_result = node_to_dict(caller)
+                        caller_result["target_resolution"] = "unresolved"
+                        add_result(caller_result, calls)
 
         elif pattern == "references_to":
             seen_reference_sources: set[str] = set()
