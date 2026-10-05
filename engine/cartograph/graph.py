@@ -736,6 +736,33 @@ class GraphStore:
                 if d:
                     results.append(d)
 
+        # Through a test-file helper: a fixture or builder in a test file that
+        # calls this node directly, and the tests that call that helper. Both
+        # hops are resolved CALLS edges, so no name is guessed.
+        for qn in input_qns:
+            for helper in conn.execute(
+                "SELECT DISTINCT n.qualified_name FROM edges e "
+                "JOIN nodes n ON n.qualified_name = e.source_qualified "
+                "JOIN nodes f ON f.kind = 'File' AND f.file_path = n.file_path "
+                "WHERE e.target_qualified = ? AND e.kind = 'CALLS' "
+                "AND n.kind = 'Function' AND n.is_test = 0 AND f.is_test = 1",
+                (qn,),
+            ).fetchall():
+                for row in conn.execute(
+                    "SELECT DISTINCT e.source_qualified FROM edges e "
+                    "JOIN nodes t ON t.qualified_name = e.source_qualified "
+                    "WHERE e.target_qualified = ? AND e.kind = 'CALLS' "
+                    "AND t.kind = 'Test'",
+                    (helper["qualified_name"],),
+                ).fetchall():
+                    tgt = row["source_qualified"]
+                    if tgt not in seen:
+                        seen.add(tgt)
+                        d = _node_dict(tgt, indirect=True)
+                        if d:
+                            d["via"] = helper["qualified_name"]
+                            results.append(d)
+
         # Transitive: follow CALLS edges, then collect TESTED_BY on callees
         frontier = set(input_qns)
         for _ in range(max_depth):

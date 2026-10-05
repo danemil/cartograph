@@ -48,6 +48,8 @@ changed?" — two calls answer it. Answer from them:
    ```
    carto query tests_for <symbol> --format json
    ```
+   A row ending `via <helper>` reaches the symbol through a fixture or helper
+   in the test file: it breaks if the helper's call breaks.
 
 3. **Other uses** — passed as a callback, imported, inherited from — when the
    change is a rename or a removal, which these break too:

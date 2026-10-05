@@ -100,6 +100,10 @@ def node_row(
     if name:
         parts.append(name)
     parts.append(f"{path}:{line}" if line and kind != "File" else path)
+    # tests_for reaches some tests through a test-file helper; say which, so
+    # an indirect test does not read as a direct caller.
+    if isinstance(node.get("via"), str):
+        parts.append(f"via {node['via'].rsplit('::', 1)[-1]}")
     return " | ".join(parts)
 
 

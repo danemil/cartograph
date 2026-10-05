@@ -15532,6 +15532,14 @@ class CodeParser:
                 for child in node.children:
                     if child.type == "dotted_name":
                         imports.append(child.text.decode("utf-8", errors="replace"))
+                    elif child.type == "aliased_import":
+                        # import x.y as z: the module is the aliased node's
+                        # name, not a direct child of the statement.
+                        name = child.child_by_field_name("name")
+                        if name is not None:
+                            imports.append(
+                                name.text.decode("utf-8", errors="replace"),
+                            )
         elif language in ("javascript", "typescript", "tsx"):
             # import ... from 'module'
             for child in node.children:

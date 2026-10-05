@@ -726,6 +726,8 @@ def query_graph(
                 if test:
                     result = node_to_dict(test)
                     result["indirect"] = bool(match.get("indirect", False))
+                    if match.get("via"):
+                        result["via"] = match["via"]
                     add_result(result)
                     seen.add(test_qn)
             # Also search by naming convention
