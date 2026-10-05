@@ -113,6 +113,13 @@ from git history; line endings aside). A skill of the same name with any other
 content is kept and named in the output. `.claude/skills` or `.agents/skills`
 is removed only when this emptied it.
 
+The same releases, run with `--platform claude`, merged Claude Code hooks into
+`.claude/settings.json`. From 0.9.3, `carto install` and `carto uninstall`
+remove a hook there only when its command is identical to one a release wrote
+(`engine/cartograph/legacy_hooks.json`); your own hooks and settings stay, and
+the file is deleted only when Cartograph's hooks were all it held.
+`carto install --dry-run` shows what would go.
+
 ## Layout
 
 | Path | What |

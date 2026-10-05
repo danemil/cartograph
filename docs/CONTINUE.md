@@ -535,14 +535,38 @@ correctness first.
 | T2 repository overview | 0.9.1: with 5/5 correct vs 3/5; −27% billing, 4 vs 9 tool calls (nested components named in the layout row) |
 | T3 largest functions | **0.8.9: with 5/5 fully correct vs 1/5; −86% billing, 2 vs 17 tool calls; every "with" run cheaper than every "without" run; coverage "searched all 71 code files" in the repo and in a moved copy** |
 | T4 largest files | carto correctly not used; tie |
-| T5 callers / blast radius | **0.9.2: with 5/5 correct vs 2/5; 5/5 answers state what breaks per kind of change (rename / order / optional) vs 0/5 explicit without; cost ≈ (+5%, overlapping)**. Gap seen: `query tests_for add_node` returned nothing although two test files call it (callers_of listed them) — open |
+| T5 callers / blast radius | **0.9.2: with 5/5 correct vs 2/5; 5/5 answers state what breaks per kind of change (rename / order / optional) vs 0/5 explicit without; cost ≈ (+5%, overlapping)**. Gap seen: `query tests_for add_node` returned nothing although two test files call it — fixed in 0.9.3 (aliased `import x as y` had no import edge; test-file helpers now followed one hop) |
 | T6 free choice | tie |
 
 Defects the measurements found, all fixed: code-only overview (0.8.7), lost
 large-functions route (0.8.7), hidden `--min-lines 50` and untracked files
 missing from the graph (0.8.8), test methods excluded, absolute paths breaking
-a moved checkout, no `--format` on build/update (0.8.9). Open, cosmetic:
-`update` reports `total_nodes: 0` when nothing changed.
+a moved checkout, no `--format` on build/update (0.8.9); `tests_for` empty
+for a test calling through `import x as y`, and `update` reporting
+`total_nodes: 0` on an up-to-date graph (0.9.3).
+
+## Done — 2026-10-05, 0.9.3: the four small items left after the A/B runs
+
+Each item: root cause reproduced, a Codex second opinion, a test that fails
+before the fix.
+
+- `26d6825` — **`tests_for`**. `_extract_import` skipped Python's
+  `aliased_import` node, so `import graph_store as gs` produced no
+  IMPORTS_FROM edge; without that evidence the bare TESTED_BY source stayed
+  unresolved. Fixed at the parser. Codex agreed and advised against giving
+  `tests_for` the bare-name fallback `callers_of` has (wrong same-named
+  functions). `tests_for` also follows one resolved hop through a non-test
+  helper in a test file (`_build_fixture`), rows ending `via <helper>`. On
+  the kit repo: 0 → 5 tests across both test files.
+- `b4c0d1a` — **`update` totals**. `total_nodes`/`total_edges` are the whole
+  graph for update as for build, read after postprocess (Codex: postprocess
+  adds edges); what an update re-parsed is `nodes_updated`/`edges_updated`.
+- `d7064d6` — **old Claude Code hooks**. They were in the user's test repo,
+  not this one. `install` and `uninstall` remove commands identical to one a
+  release wrote (`legacy_hooks.json`). Codex flagged that a pattern could
+  match a person's own guarded `carto` hook, hence exact strings.
+- Windows and Dev Containers by hand: guided session with the user, after
+  0.9.3 — results go here.
 
 ## NEXT TASK
 
