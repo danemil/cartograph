@@ -568,6 +568,34 @@ before the fix.
 - Windows and Dev Containers by hand: guided session with the user, after
   0.9.3 — results go here.
 
+## Decided by the user on 2026-10-05 — build these as 0.9.4
+
+From report8 and the 0.9.3 check on the VM (report9/10: `tests_for` only
+worked after a manual `carto build`, because `update` re-parses nothing when
+nothing changed).
+
+1. **Re-parse after an upgrade: automatic rebuild + status flag.** The graph
+   records the parser version that built it (generalise the C++-only
+   `CPP_IDENTITY_VERSION`). The first `update` after an upgrade does a full
+   rebuild; until then `carto status` says stale, "built by an older parser",
+   with `carto build` as remediation.
+2. **`callers_of`: one edge row per call.** Results stay one row per caller;
+   edges list every call line (`_build_fixture` → test_query.py:19, 22, 28,
+   30, not only :19).
+3. **refactor-safely wording, with the failure mode.** Positional calls break
+   when a required parameter is added, removed or reordered — not when one is
+   renamed or made optional; keyword calls break on a rename; a new optional
+   trailing parameter breaks none. A reorder often raises no error at the
+   call (values land in the wrong parameters); say so rather than promising
+   a TypeError.
+4. **Both cosmetic fixes.** `update`: `changed_files` lists only re-parsed
+   files, non-code changes (`.gitignore`) go to `ignored_changes`. `build`:
+   the summary quotes the post-postprocess totals (it said 5314 edges while
+   `total_edges` was 5222).
+
+Then: T5 A/B re-run on 0.9.4; then the hands-on Dev Container check (the user
+chose Dev Container first; step 1 was a Docker check).
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
