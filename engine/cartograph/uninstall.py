@@ -450,6 +450,19 @@ def _process_repo(
     for rel, reason in legacy.kept:
         report.skipped_paths.append(f"{repo_root / rel} ({reason}; left unchanged)")
 
+    # Claude Code hooks a release before 0.6.0 merged into .claude/settings.json.
+    from .legacy_hooks import SETTINGS, sweep as sweep_hooks
+
+    old_hooks = sweep_hooks(repo_root, dry_run=dry_run)
+    if old_hooks.deleted_file:
+        _record_remove(report, repo_root / SETTINGS,
+                       "remove Claude Code settings holding only Cartograph hooks", dry_run)
+    elif old_hooks.removed:
+        _record_edit(report, repo_root / SETTINGS,
+                     f"remove {old_hooks.removed} Cartograph hook command(s)", dry_run)
+    elif old_hooks.kept:
+        report.skipped_paths.append(f"{repo_root / SETTINGS} ({old_hooks.kept}; left unchanged)")
+
     # Every variant is matched per file, so which section a given path was
     # written with no longer has to be worked out here.
     for relative in (skills.INSTRUCTION_FILE, skills.LEGACY_INSTRUCTION_FILE):

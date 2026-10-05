@@ -155,9 +155,12 @@ tooltip, never injected. Both DECIDED/PROPOSED cases proven with live calls.
   read `.github/skills` (`copilot skill --help`, CLI 1.0.82; VS Code's agent
   skills docs). `carto enrich` (a Claude Code `PreToolUse` helper) is gone.
   `carto uninstall` removes the Copilot files and no longer edits other hosts'
-  configs — so `.claude/settings.json` hooks and the pre-commit hook written by
-  earlier `install.sh`/`install.ps1` runs (`--platform claude`) are left for
-  the person to delete.
+  configs. The pre-commit hook written by earlier `install.sh`/`install.ps1`
+  runs (`--platform claude`) is left for the person to delete. Their
+  `.claude/settings.json` hooks are now removed by `install` and `uninstall`
+  (`legacy_hooks.py`): only commands identical to one a release wrote
+  (`legacy_hooks.json`, 12, generated from each revision's own generator), so
+  a person's own hook — even a guarded `carto` one — stays.
 
 ## Done — step 1b, the narrow-lookup fix
 

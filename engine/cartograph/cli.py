@@ -284,12 +284,19 @@ def _handle_init(args: argparse.Namespace) -> None:
         for t in instr_targets:
             print(f"  {t}")
 
+    from .legacy_hooks import describe as _describe_legacy_hooks
+    from .legacy_hooks import sweep as _sweep_legacy_hooks
     from .legacy_skills import describe as _describe_legacy
     from .legacy_skills import sweep as _sweep_legacy
 
     if dry_run:
         if not getattr(args, "no_skills", False):
             for line in _describe_legacy(_sweep_legacy(repo_root, dry_run=True), dry_run=True):
+                print(line)
+        if not getattr(args, "no_hooks", False):
+            for line in _describe_legacy_hooks(
+                _sweep_legacy_hooks(repo_root, dry_run=True), dry_run=True,
+            ):
                 print(line)
         print("\n[dry-run] Would add the files written to the repository's info/exclude.")
         print("[dry-run] No files were modified.")
@@ -357,6 +364,10 @@ def _handle_init(args: argparse.Namespace) -> None:
         hooks_file = install_copilot_hooks(repo_root)
         print(f"Installed Copilot hooks in {hooks_file}")
         written.append(hooks_file.relative_to(repo_root).as_posix())
+        # Claude Code hooks a release before 0.6.0 merged into
+        # .claude/settings.json; only Cartograph's own entries go.
+        for line in _describe_legacy_hooks(_sweep_legacy_hooks(repo_root)):
+            print(line)
 
     _report_local_exclude(repo_root, written)
 

@@ -1,0 +1,14 @@
+[
+  "PATH=\"$PATH:${CARTO_HOME:-$HOME/.cartograph}/bin\"; command -v carto >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook prompt-capture --host claude-code --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || cat >/dev/null || true",
+  "PATH=\"$PATH:${CARTO_HOME:-$HOME/.cartograph}/bin\"; command -v carto >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook session-summarise --host claude-code --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || cat >/dev/null || true",
+  "cat >/dev/null || true; PATH=\"$PATH:${CARTO_HOME:-$HOME/.cartograph}/bin\"; command -v carto >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook file-update --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || true",
+  "cat >/dev/null || true; PATH=\"$PATH:${CARTO_HOME:-$HOME/.cartograph}/bin\"; command -v carto >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook session-status --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || true",
+  "cat >/dev/null || true; command -v carto >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook file-update --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || true",
+  "cat >/dev/null || true; command -v carto >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook session-status --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || true",
+  "cat >/dev/null || true; command -v cartograph >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook file-update --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || true",
+  "cat >/dev/null || true; command -v cartograph >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook session-status --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || true",
+  "cat >/dev/null || true; command -v cartograph >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto status --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || echo 'Not a git repo, skipping'",
+  "cat >/dev/null || true; command -v cartograph >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto update --skip-flows --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || true",
+  "command -v carto >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook prompt-capture --host claude-code --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || cat >/dev/null || true",
+  "command -v carto >/dev/null 2>&1 || exit 0; git rev-parse --git-dir >/dev/null 2>&1 && carto hook session-summarise --host claude-code --repo \"$(git rev-parse --show-toplevel 2>/dev/null)\" || cat >/dev/null || true"
+]
