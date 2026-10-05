@@ -532,7 +532,7 @@ correctness first.
 | T2 repository overview | 0.9.1: with 5/5 correct vs 3/5; −27% billing, 4 vs 9 tool calls (nested components named in the layout row) |
 | T3 largest functions | **0.8.9: with 5/5 fully correct vs 1/5; −86% billing, 2 vs 17 tool calls; every "with" run cheaper than every "without" run; coverage "searched all 71 code files" in the repo and in a moved copy** |
 | T4 largest files | carto correctly not used; tie |
-| T5 callers / blast radius | 0.9.1: no import-only file called broken (was 1/5); cost −1.7% (was +20%); 2/5 vs 3/5 — all callers found, the three partly answers claimed a parameter rename breaks positional calls; refactor-safely now says what breaks per kind of change (0.9.2) |
+| T5 callers / blast radius | **0.9.2: with 5/5 correct vs 2/5; 5/5 answers state what breaks per kind of change (rename / order / optional) vs 0/5 explicit without; cost ≈ (+5%, overlapping)**. Gap seen: `query tests_for add_node` returned nothing although two test files call it (callers_of listed them) — open |
 | T6 free choice | tie |
 
 Defects the measurements found, all fixed: code-only overview (0.8.7), lost
