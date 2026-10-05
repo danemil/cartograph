@@ -30,11 +30,16 @@ Cartograph reports the sites, you make the edits with your normal tools.
 For one symbol — "who calls X, and what would break if its signature
 changed?" — two calls answer it. Answer from them:
 
-1. **Direct callers** — every call site, which is what a signature change
-   breaks:
+1. **Direct callers** — every call site a signature change can reach:
    ```
    carto query callers_of <symbol> --limit 50 --format json
    ```
+   Then read the call lines before saying what breaks, and say it per kind
+   of change: calls that pass arguments by position break when the number or
+   order of required parameters changes, not when a parameter is renamed;
+   calls that pass by keyword break on a rename; an optional parameter added
+   at the end breaks none of them. "Any signature change breaks every caller"
+   is wrong more often than right.
    A target is a name, or `path/to/file.py::Name` when the name is ambiguous
    (the response's `disambiguation` rows carry the names to pass back). If `truncated` is true, pass
    `page.next_cursor` back with `--cursor` until it is not.
