@@ -385,7 +385,7 @@ def _handle_data_dir_option(args, repo_root: Path) -> None:
 #: parse is a file every later answer silently does not cover.
 _BUILD_FIELDS = (
     "build_type", "files_parsed", "files_updated", "total_nodes", "total_edges",
-    "changed_files", "dependent_files", "base_resolved", "errors", "warnings",
+    "nodes_updated", "edges_updated", "changed_files", "dependent_files", "base_resolved", "errors", "warnings",
 )
 
 
@@ -2628,9 +2628,11 @@ def main() -> None:
                     )
                 else:
                     updated = result.get("files_updated", 0)
+                    reparsed = result.get("nodes_updated", 0)
                     print(
-                        f"Incremental: {updated} files updated, "
-                        f"{nodes} nodes, {edges} edges"
+                        f"Incremental: {updated} files updated "
+                        f"({reparsed} nodes re-parsed); "
+                        f"graph: {nodes} nodes, {edges} edges"
                         f" (postprocess={pp})"
                     )
 

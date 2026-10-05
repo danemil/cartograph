@@ -530,13 +530,27 @@ def build_or_update_graph(
             }
         else:
             result = incremental_update(root, store, base=base_resolved)
+            # incremental_update counts what it re-parsed under total_*. Here
+            # total_* is the whole graph, as it is for a full build: an agent
+            # read "total_nodes: 0" on an up-to-date graph as an empty one.
+            result = {
+                **result,
+                "nodes_updated": result["total_nodes"],
+                "edges_updated": result["total_edges"],
+            }
             if result["files_updated"] == 0:
+                stats = store.get_stats()
                 return {
                     **result,
+                    "total_nodes": stats.total_nodes,
+                    "total_edges": stats.total_edges,
                     "status": "ok",
                     "build_type": "incremental",
                     "base_resolved": base_resolved,
-                    "summary": "No changes detected. Graph is up to date.",
+                    "summary": (
+                        "No changes detected. Graph is up to date "
+                        f"({stats.total_nodes} nodes, {stats.total_edges} edges)."
+                    ),
                     "postprocess_level": postprocess,
                 }
             build_result = {
@@ -546,8 +560,8 @@ def build_or_update_graph(
                 "base_resolved": base_resolved,
                 "summary": (
                     f"Incremental update: {result['files_updated']} files re-parsed, "
-                    f"{result['total_nodes']} nodes and "
-                    f"{result['total_edges']} edges updated. "
+                    f"{result['nodes_updated']} nodes and "
+                    f"{result['edges_updated']} edges updated. "
                     f"Changed: {result['changed_files']}. "
                     f"Dependents also updated: {result['dependent_files']}."
                 ),
@@ -566,6 +580,10 @@ def build_or_update_graph(
         )
         if warnings:
             build_result["warnings"] = warnings
+        # The whole graph, read after postprocess, which adds and rewrites edges.
+        stats = store.get_stats()
+        build_result["total_nodes"] = stats.total_nodes
+        build_result["total_edges"] = stats.total_edges
         return build_result
     finally:
         store.close()

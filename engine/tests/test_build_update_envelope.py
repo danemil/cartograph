@@ -81,6 +81,11 @@ def test_update_json_with_nothing_to_do(repo):
     assert doc["tool"] == "update"
     assert doc["data"]["files_updated"] == 0
     assert "up to date" in doc["data"]["summary"]
+    # total_* is the whole graph for update as for build; an agent read
+    # "total_nodes: 0" on an up-to-date graph as an empty one.
+    assert doc["data"]["total_nodes"] >= 2
+    assert doc["data"]["total_edges"] >= 1
+    assert doc["data"]["nodes_updated"] == 0
 
 
 def test_update_json_names_changed_files_repo_relative(repo):
@@ -92,6 +97,8 @@ def test_update_json_names_changed_files_repo_relative(repo):
     assert data["files_updated"] >= 1
     assert data["changed_files"] == ["a.py"]
     assert str(repo) not in json.dumps(data)
+    assert data["nodes_updated"] >= 3          # a.py's file node, f and g
+    assert data["total_nodes"] >= data["nodes_updated"]
 
 
 def test_update_json_outside_git_is_a_precondition(tmp_path):

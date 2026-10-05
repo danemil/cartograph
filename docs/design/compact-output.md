@@ -627,8 +627,9 @@ that does not map onto the tree is still refused, as before.
 (default text, as `status` does) and `--max-tokens`. In json mode stdout is
 the envelope alone — anything printed during the run is redirected to stderr
 — and `data` is the summary plus counts and the files touched (`build_type`,
-`files_parsed`/`files_updated`, `total_nodes`, `total_edges`,
-`changed_files`, `dependent_files`, `base_resolved`, `errors`, `warnings`);
+`files_parsed`/`files_updated`, `total_nodes`, `total_edges` — the whole
+graph after the run, for update as for build — `nodes_updated`/`edges_updated`
+(what an update re-parsed), `changed_files`, `dependent_files`, `base_resolved`, `errors`, `warnings`);
 postprocess and embed carry their result whole. Exit codes: `0` ok; `2`
 precondition with a remediation for no git repository (`update`), no graph
 (`postprocess`, `embed`), a graph of another repository, and an embedding
