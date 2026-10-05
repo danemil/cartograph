@@ -478,6 +478,28 @@ def seed_grammars(python: Path, payload: Path) -> str:
         check=True, capture_output=True, text=True,
     ).stdout.strip()
 
+    # The runtime names its cache directory after its OWN version, which need
+    # not be the package metadata's: on Linux the pack is compiled from source,
+    # and in 0.9.0's build the 1.20.0 source compiled a 1.21.0 runtime that
+    # cached under v1.21.0. The frozen engine will look where the runtime
+    # looks, so the directory that actually holds the libraries is the one to
+    # ship — and its name is the version to record.
+    found = sorted(
+        p.parent for p in (cache_base / "tree-sitter-language-pack").glob("v*/libs")
+        if any(p.iterdir())
+    )
+    if len(found) == 1 and found[0].name != f"v{version}":
+        print(
+            f"grammar runtime cached under {found[0].name}, package metadata says "
+            f"{version}; shipping {found[0].name}",
+            file=sys.stderr,
+        )
+        version = found[0].name[1:]
+    elif len(found) > 1:
+        raise SystemExit(
+            f"grammar libs under more than one version: {[p.name for p in found]}; "
+            "cannot tell which one the runtime reads"
+        )
     src = cache_base / "tree-sitter-language-pack" / f"v{version}"
     if not (src / "libs").is_dir():
         # Say where the pack did put them. A change in where it caches is the
