@@ -492,6 +492,29 @@ the ranking was partial (`searched 0 of 71 code files`); `carto update
   `docs/design/compact-output.md`, last section.
 - **Not re-measured:** the A/B itself; no real Dev Container run.
 
+## The user's A/B measurements (Copilot CLI, gpt-5.4-mini) — summary
+
+Reports are in the vault: `20 Projects/FRQ/MCPs/report-carto-1oct2026.md`,
+`report2.md`, and `20 Projects/FRQ/report3.md` … `report5.md`. Read billing
+(`totalNanoAiu`) and input+cached+output, never input alone; with five runs per
+side, cost noise is large, so judge cost by non-overlapping ranges and weigh
+correctness first.
+
+| Task | Result on the latest version measured |
+|---|---|
+| T1 recall ("have we already decided…") | 0.8.6: with 5/5 correct vs 0/5 without (isolated Copilot homes) |
+| T2 repository overview | 0.8.7: 5/5 correct both sides; −36% billing with carto (layout section fixed the 0.8.6 0/5 regression) |
+| T3 largest functions | **0.8.9: with 5/5 fully correct vs 1/5; −86% billing, 2 vs 17 tool calls; every "with" run cheaper than every "without" run; coverage "searched all 71 code files" in the repo and in a moved copy** |
+| T4 largest files | carto correctly not used; tie |
+| T5 callers / blast radius | 0.8.6: carto used 5/5; 5 yes vs 5 partly |
+| T6 free choice | tie |
+
+Defects the measurements found, all fixed: code-only overview (0.8.7), lost
+large-functions route (0.8.7), hidden `--min-lines 50` and untracked files
+missing from the graph (0.8.8), test methods excluded, absolute paths breaking
+a moved checkout, no `--format` on build/update (0.8.9). Open, cosmetic:
+`update` reports `total_nodes: 0` when nothing changed.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
