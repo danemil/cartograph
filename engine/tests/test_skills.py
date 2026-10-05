@@ -522,6 +522,17 @@ class TestSkillRouting:
         for phrase in ("layout.note", "read first:", "covers parsed code only"):
             assert phrase in body, phrase
 
+    def test_overview_names_nested_components_and_their_real_connections(self):
+        # report6, T2: 3 of 5 answers left out the skills and the MCP server
+        # nested in template/, and one explained connections by community
+        # coupling. The skill must say to name the parts the layout lists
+        # inside a dominant directory, and to take connections from the docs.
+        body = skills_module.skill_documents()["explore-codebase"].split("---", 2)[2]
+        for phrase in ("`sub:`", "`skills:`", "`server:`", "`app:`",
+                       "how the components connect", "README and docs",
+                       "coupling counts say only that code shares"):
+            assert phrase in body, phrase
+
     def test_descriptions_stay_small(self):
         # 1,849 characters before the routing fix; every one is paid per request.
         total = sum(len(fm["description"]) for fm in self._frontmatter().values())

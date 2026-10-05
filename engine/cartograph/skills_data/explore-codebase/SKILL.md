@@ -39,7 +39,12 @@ architecture.
    ```
    `layout` comes first: every file git lists, counted by top-level directory
    and kind (code, docs, config, other), and how many of them the graph
-   parsed. Then one row per code component (community): its name, size,
+   parsed. A directory holding a large share of the repository also names
+   what is inside it: `sub:` its second-level directories, then the
+   components found in it — `skills:` (with how many), `server:` (server
+   entry points), `app:` (dashboards, web apps), `tests:`, `hooks:`,
+   `ci:`. Each of those is a component of the answer, under its own name.
+   Then one row per code component (community): its name, size,
    language and the directories it lives in; one row per connected pair: edge
    count, edge kinds, and `high coupling` where it is.
 
@@ -118,10 +123,19 @@ Exit `2` means there is no graph yet — run `error.remediation`, or use the
 ### Report
 
 Lead with the shape: the major components, where each lives and what it is
-for, and which of them are coupled. Where most of the repository is docs or
-templates, those are major components too; say what they are from reading
-them, not from their file counts. Name specific files and symbols — a summary the reader cannot
-act on is not worth the tokens.
+for. Name every component the layout names — the parts inside a dominant
+directory too (its skills, servers, apps, tests, hooks, CI), not just the
+top-level directories. Where most of the repository is docs or templates,
+those are major components too; say what they are from reading them, not
+from their file counts.
+
+Then say how the components connect: what calls, feeds, copies, runs or
+serves what — e.g. a workflow runs the validators, ingestion writes the store
+that a server or dashboard reads, a template is copied into new projects.
+Take these from the README and docs you read, and from the code's own entry
+points; communities and their coupling counts say only that code shares
+edges, which is not how a reader's components connect. Name specific files
+and symbols — a summary the reader cannot act on is not worth the tokens.
 
 ### Reference
 

@@ -238,10 +238,13 @@ def connection_row(pair: dict[str, Any]) -> Any:
 
 
 def layout_dir_row(entry: dict[str, Any]) -> Any:
-    """``<dir> | <n> files | <kind> <n>, ...[ | read first: <files>]``.
+    """``<dir> | <n> files | <kind> <n>, ...[ | read first: <files>][ | sub: ...][ | <components>]``.
 
     The root row names the documents a reader would open first, because on a
     repository that is mostly not code they are where its structure is told.
+    A dominant directory's row names what is inside it (``layout._expanded``),
+    because "template/ | 66 files" hid the skills and the MCP server an
+    overview had to name.
     """
     if "dir" not in entry or "files" not in entry:
         return entry
@@ -251,7 +254,60 @@ def layout_dir_row(entry: dict[str, Any]) -> Any:
         parts.append(", ".join(f"{k} {n}" for k, n in kinds.items()))
     if entry.get("notable"):
         parts.append("read first: " + ", ".join(entry["notable"]))
+    if entry.get("subdirs"):
+        parts.append("sub: " + _subdirs(entry))
+    if entry.get("components"):
+        parts.append(_components(entry["components"]))
     return " | ".join(parts)
+
+
+def _subdirs(entry: dict[str, Any]) -> str:
+    # Named relative to the row's own directory, which leads the row.
+    top = entry["dir"]
+    named = ", ".join(
+        f"{s['dir'][len(top):] if s['dir'].startswith(top) else s['dir']} "
+        f"{s['files']} ("
+        + ", ".join(f"{k} {n}" for k, n in (s.get("kinds") or {}).items()) + ")"
+        for s in entry["subdirs"]
+    )
+    rest = entry.get("subdirs_omitted")
+    if rest:
+        named += f", +{rest['dirs']} dirs {rest['files']} files"
+    if entry.get("own_files"):
+        named += f"; {entry['own_files']} own file{'s' if entry['own_files'] != 1 else ''}"
+    return named
+
+
+#: Component kinds in the order a row names them, and the label for each.
+_COMPONENT_LABELS = (("skills", "skills"), ("servers", "server"), ("apps", "app"),
+                     ("tests", "tests"), ("hooks", "hooks"), ("ci", "ci"))
+
+
+def _components(parts: dict[str, list[Any]]) -> str:
+    """``skills: <dir> (<n>); server: <path>; app: <dir>; tests: <dir> (<n>)...``.
+
+    Full repo-relative paths, so each can be opened as written. Each kind
+    names a few, shallowest first, and counts the rest.
+    """
+    from .layout import MAX_COMPONENTS
+
+    out = []
+    for key, label in _COMPONENT_LABELS:
+        items = parts.get(key) or []
+        if not items:
+            continue
+        named = []
+        for item in items[:MAX_COMPONENTS]:
+            if isinstance(item, dict):
+                count = item.get("count", item.get("files"))
+                named.append(f"{item['dir']} ({count})")
+            else:
+                named.append(item)
+        text = f"{label}: " + ", ".join(named)
+        if len(items) > MAX_COMPONENTS:
+            text += f", +{len(items) - MAX_COMPONENTS} more"
+        out.append(text)
+    return "; ".join(out)
 
 
 def _with_metric(field_name: str, unit: str) -> Callable[[dict[str, Any]], Any]:

@@ -57,6 +57,28 @@ MAX_NOTABLE = 4
 CODE_MAJORITY = 50
 
 
+#: A top-level directory whose inside is named in its row: one holding at
+#: least this share of all files, or of all code files. A quarter of the
+#: files is a component big enough that "it holds most of the repository"
+#: hides its parts; at most four directories can reach it, which bounds the
+#: cost. The code share catches the shape the fifth A/B measured: a kit that
+#: is mostly docs, with the implementation — skills, an MCP server, a
+#: dashboard — nested in one directory that holds only part of the files.
+EXPAND_FILE_SHARE = 25
+EXPAND_CODE_SHARE = 50
+#: Sub-directories named per expanded row before the rest are summed.
+MAX_SUBDIRS = 6
+#: Paths named per kind of component; the rest are counted.
+MAX_COMPONENTS = 3
+
+#: Directory names that mark a component a reader would name. Matched on the
+#: name alone, like the kinds; nothing is opened.
+_APP_DIRS = frozenset({"dashboard", "dashboards", "app", "apps", "web",
+                       "webapp", "frontend", "ui", "site", "viewer"})
+_TEST_DIRS = frozenset({"tests", "test", "__tests__", "spec", "specs"})
+_SERVER_DIRS = frozenset({"server", "servers", "mcp", "mcp-server", "mcp_server"})
+
+
 def kind_of(path: str) -> str:
     name = PurePosixPath(path).name.lower()
     stem, dot, ext = name.lstrip(".").rpartition(".")
@@ -82,6 +104,109 @@ def _notable(root_files: Iterable[str]) -> list[str]:
                 ranked.append((rank, name))
                 break
     return [name for _, name in sorted(ranked)][:MAX_NOTABLE]
+
+
+def _is_server_file(parts: tuple[str, ...]) -> bool:
+    """A code file named as a server or MCP entry point, and not a test of one."""
+    stem = PurePosixPath(parts[-1]).stem.lower()
+    if any(p in _TEST_DIRS for p in parts[:-1]) or stem.startswith("test") \
+            or stem.endswith(("_test", ".test", ".spec", "_spec")):
+        return False
+    return "server" in stem or stem == "mcp" or stem.startswith(("mcp_", "mcp-")) \
+        or stem.endswith(("_mcp", "-mcp"))
+
+
+def _components(top: str, paths: list[str]) -> dict[str, list[Any]]:
+    """The recognisable parts under one top-level directory.
+
+    Skills directories (a ``skills/`` whose children hold ``SKILL.md``) with
+    how many skills; server and MCP entry points; app and dashboard
+    directories; test, hook and CI directories with their file counts. These
+    are what an overview names as components and the top-level counts hide.
+    Shallowest first, because an entry point sits above what it serves.
+    """
+    skills: Counter[str] = Counter()
+    servers: set[str] = set()
+    apps: set[str] = set()
+    tests: Counter[str] = Counter()
+    hooks: set[str] = set()
+    ci: Counter[str] = Counter()
+    for path in paths:
+        parts = tuple(path.split("/"))
+        if parts[-1].lower() == "skill.md" and len(parts) >= 3 \
+                and parts[-3].lower() == "skills":
+            skills["/".join(parts[:-2]) + "/"] += 1
+        if kind_of(path) == "code" and _is_server_file(parts):
+            servers.add(path)
+        for depth in range(1, len(parts) - 1):
+            name = parts[depth].lower()
+            here = "/".join(parts[:depth + 1]) + "/"
+            if name in _APP_DIRS:
+                apps.add(here)
+            elif name in _SERVER_DIRS:
+                servers.add(here)
+            elif name == "hooks" and parts[depth - 1].lower() != ".git":
+                hooks.add(here)
+            elif name == "workflows" and parts[depth - 1] == ".github":
+                ci[here] += 1
+            if name in _TEST_DIRS:
+                # The outermost test directory counts its files once.
+                tests[here] += 1
+                break
+    # A dashboard inside an app directory is one component, not two; the
+    # same for servers under a server directory.
+    apps = {a for a in apps if not any(a != b and a.startswith(b) for b in apps)}
+    servers = {s for s in servers
+               if not any(s != d and d.endswith("/") and s.startswith(d) for d in servers)}
+
+    def ranked(items: Iterable[str]) -> list[str]:
+        return sorted(items, key=lambda p: (p.rstrip("/").count("/"), p))
+
+    out: dict[str, list[Any]] = {}
+    if skills:
+        out["skills"] = [{"dir": d, "count": skills[d]} for d in ranked(skills)]
+    if servers:
+        out["servers"] = ranked(servers)
+    if apps:
+        out["apps"] = ranked(apps)
+    if tests:
+        out["tests"] = [{"dir": d, "files": tests[d]} for d in ranked(tests)]
+    if hooks:
+        out["hooks"] = ranked(hooks)
+    if ci:
+        out["ci"] = [{"dir": d, "files": ci[d]} for d in ranked(ci)]
+    return out
+
+
+def _expanded(top: str, paths: list[str]) -> dict[str, Any]:
+    """Sub-directories with counts and kinds, and the components inside."""
+    subs: dict[str, Counter[str]] = {}
+    own = 0
+    for path in paths:
+        rest = path[len(top):]
+        head, sep, _ = rest.partition("/")
+        if sep:
+            subs.setdefault(f"{top}{head}/", Counter())[kind_of(path)] += 1
+        else:
+            own += 1
+    if not subs:
+        return {}
+    ranked = sorted(subs.items(), key=lambda item: (-sum(item[1].values()), item[0]))
+    out: dict[str, Any] = {
+        "subdirs": [{"dir": d, "files": sum(c.values()), "kinds": _ordered(c)}
+                    for d, c in ranked[:MAX_SUBDIRS]],
+    }
+    rest_dirs = ranked[MAX_SUBDIRS:]
+    if rest_dirs:
+        out["subdirs_omitted"] = {
+            "dirs": len(rest_dirs),
+            "files": sum(sum(c.values()) for _, c in rest_dirs),
+        }
+    out["own_files"] = own
+    parts = _components(top, paths)
+    if parts:
+        out["components"] = parts
+    return out
 
 
 def _pct(part: int, whole: int) -> int:
@@ -115,8 +240,17 @@ def summarise(files: list[str], graph_files: set[str]) -> dict[str, Any]:
     if root:
         rows.append({"dir": "(root)", "files": sum(root.values()),
                      "kinds": _ordered(root), "notable": notable})
-    rows.extend({"dir": d, "files": sum(c.values()), "kinds": _ordered(c)}
-                for d, c in ranked[:MAX_DIRS])
+    code_total = by_kind["code"]
+    for d, c in ranked[:MAX_DIRS]:
+        row: dict[str, Any] = {"dir": d, "files": sum(c.values()), "kinds": _ordered(c)}
+        # A top-level test tree is one component, the tests; its
+        # sub-directories mirror the code under test, and a `tests/server/`
+        # in it is not a server.
+        dominant = (_pct(row["files"], total) >= EXPAND_FILE_SHARE
+                    or (code_total and _pct(c["code"], code_total) >= EXPAND_CODE_SHARE))
+        if dominant and d.rstrip("/").lower() not in _TEST_DIRS:
+            row.update(_expanded(d, [p for p in files if p.startswith(d)]))
+        rows.append(row)
     layout: dict[str, Any] = {
         "files": total,
         "by_kind": _ordered(by_kind),
