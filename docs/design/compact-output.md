@@ -699,3 +699,171 @@ joins (both go through `analyze_changes`), anchor registration in the
 graph-tool dispatcher and in `_attach_coverage` (every tool opens through
 `_get_store`), and relativising build results (their paths are already
 repo-relative).
+
+## The fifth A/B: what is inside a dominant directory, and what an impact row depends on
+
+The user's A/B on 0.8.9 (Copilot CLI, gpt-5.4-mini, five alternating rounds,
+isolated homes; vault `20 Projects/FRQ/report6.md`) found two answers that
+carto made worse, not cheaper:
+
+- **T2, the overview:** with carto 2/5 correct, 3 partly (without: 4/5).
+  Every run called `architecture` alone. Two partly answers left out the
+  role-playbook skills (`template/.claude/skills/*`) and the MCP server
+  (`template/scripts/knowledge/mcp_server.py`), both nested in `template/`,
+  which the layout showed as one row of counts. One explained connections by
+  community coupling instead of what the README says flows where.
+- **T5, callers and blast radius:** with carto 4/5 correct, 1 partly; +20%
+  billing. The partly answer called every importer of `graph_store.py` a
+  "directly impacted runtime path" of a change to `add_node`: impact's rows
+  said `direct | File | ingest_docs.py` for an importer exactly as they said
+  `direct | Function | ingest` for a caller. One run also tried `carto query
+  impact …`, a usage error that named the sixteen patterns and nothing else.
+
+### A dominant directory names what is inside it
+
+A top-level directory is expanded when it holds **at least 25% of all files,
+or at least 50% of all code files**, is not itself a test tree, and has
+sub-directories. A quarter of the files is a part too big for "it holds most
+of the repository" to describe; at most four directories can reach it, which
+bounds the cost. The code share catches the A/B's shape: a kit that is
+mostly docs, whose implementation lives in one directory that holds only part
+of the files. A top-level `tests/` is one component, the tests; its
+sub-directories mirror the code, and a `tests/server/` in it is not a server.
+
+The expanded row adds `sub:` (second-level directories, largest first, at
+most 6, with counts and kinds; the rest summed; the directory's own files
+counted) and the components found anywhere inside it, by path alone:
+
+| Component | Recognised by |
+|---|---|
+| `skills:` | a `skills/` directory whose children hold `SKILL.md`, with the count |
+| `server:` | a code file whose name says server or MCP (`*server*`, `mcp_*`), not a test; a `server/`/`mcp/` directory |
+| `app:` | a `dashboard/`, `app/`, `apps/`, `web/`, `frontend/`, `ui/`, `site/`, `viewer/` directory |
+| `tests:` | the outermost `tests/`, `test/`, `__tests__/`, `spec/` directory, with its file count |
+| `hooks:` | a `hooks/` directory |
+| `ci:` | a `.github/workflows/` directory, with its file count |
+
+Each kind names three, shallowest first, and counts the rest. On a fixture
+built to the A/B repository's shape (103 files, `template/` 66 of them):
+
+```
+template/ | 66 files | code 24, docs 38, config 3, other 1 | sub: docs/ 20 (docs 20), .claude/ 19 (code 2, docs 16, config 1), scripts/ 19 (code 19), dashboard/ 4 (code 3, docs 1), .github/ 2 (config 2); 2 own files | skills: template/.claude/skills/ (8); server: template/scripts/knowledge/mcp_server.py; app: template/dashboard/; tests: template/scripts/knowledge/tests/ (5); hooks: template/.claude/hooks/; ci: template/.github/workflows/ (2)
+```
+
+The explore-codebase skill now says to name every component the layout
+names, nested ones included, and to take the connections between them from
+the README, the docs and the entry points — "a workflow runs the validators,
+ingestion writes the store a server reads" — not from community coupling,
+which says only that code shares edges.
+
+### An impact row says how it depends on the change
+
+Every row now carries the relation after `direct`/`transitive`:
+
+```
+before  direct | Function | ingest | kn/ingest_code.py:4
+        direct | File | kn/link_commits.py
+        transitive | Function | main | kn/cli.py:4
+after   direct | calls add_node | Function | ingest | kn/ingest_code.py:4
+        direct | calls get_node | Function | lookup | kn/query.py:4
+        direct | imports graph_store.py | File | kn/link_commits.py
+        transitive | calls ingest | Function | main | kn/cli.py:4
+```
+
+A direct row names its edges to the changed nodes, grouped by verb, three
+names a verb, strongest first. A transitive row names the hop on its best
+path — the one its score was ranked by. `--detail full` rows carry the same
+as `via`. The summary splits the direct count by each dependent's strongest
+relation, over every direct dependent rather than the rows shown, and says
+what an import-only dependent means:
+
+```
+before  graph_store.py: 11 items affected within 2 hops across 6 files (9 direct); all shown
+after   graph_store.py: 11 items affected within 2 hops across 6 files (9 direct: 4 call, 5 import only); all shown; the 5 import-only dependents are not broken by a signature change, only by a rename or removal; callers of one symbol: carto query callers_of kn/graph_store.py::<name>
+```
+
+`totals.direct_by_relation` carries the split, and a file row says how many of
+its direct items only import (`kn/link_commits.py | 1 item (1 direct; 1 only
+imports)`). Everything 0.6.1 guarantees is unchanged: exact totals, every
+affected file listed, direct first, truncation flagged. The relations are
+computed by one helper both traversal engines call (`GraphStore._impact_relations`),
+from the edges table, in the traversal's own orientation; `review-context`,
+which uses the same traversal, does not ask for them and does not pay for them.
+
+The refactor-safely skill now answers a signature question from `query
+callers_of` and `query tests_for` and says to run `impact` only for "what
+else could be affected", with how to read its rows: it starts from every
+symbol in the file, `calls get_node` is not a caller of `add_node`, imports do
+not break on a signature change, transitive rows are callers of callers.
+
+### A wrong spelling names the right command
+
+argparse rejects `carto query impact`, `query large-functions`, `query
+callers` and a bare `carto callers_of`, and listed only the valid choices.
+The usage envelope (still exit 1) now leads its message with the command
+meant and carries it, rewritten from the agent's own arguments, as
+`error.remediation`:
+
+```
+carto query impact --files kn/graph_store.py --depth 2 --format json
+  -> remediation: carto impact --files kn/graph_store.py --depth 2 --format json
+     message: `impact` is a command of its own, not a query pattern: run `…` (callers of one symbol: `carto query callers_of <file>::<name>`). argument PATTERN: invalid choice: …
+carto query impact kn/graph_store.py::add_node     -> carto impact --files kn/graph_store.py (message names callers_of for the symbol)
+carto query large-functions --limit 10              -> carto large-functions --limit 10
+carto query callers add_node                        -> carto query callers_of add_node
+carto callers_of add_node                           -> carto query callers_of add_node
+```
+
+### Measured
+
+Stdout bytes of `--format json`. Before is `2539881` (0.8.9 + docs), run from
+a worktree; after is this change. claude-mem is a fresh shallow clone at
+`1bb6439` (2,023 tracked files; the graph from earlier sessions was gone).
+
+| Command | Before | After |
+|---|---:|---:|
+| `architecture`, A/B-shaped fixture (103 files, `template/` 66) | 1,300 | 1,769 |
+| `architecture`, docs-kit fixture (51 files) | 1,170 | 1,345 |
+| `architecture`, claude-mem (no directory qualifies: `tests/` is a test tree, `src/` 23% of files, 32% of code) | 2,906 | 2,906 |
+| `impact --files kn/graph_store.py`, callers fixture | 1,833 | 2,437 |
+| `impact --files src/services/sqlite/SessionStore.ts`, claude-mem | 18,369 | 21,997 |
+| `impact --files src/services/worker/knowledge/CorpusBuilder.ts` | 4,686 | 5,801 |
+| `impact --files src/utils/logger.ts` (817+ direct, the hub) | 55,111 | 61,168 |
+
+Impact grows 11–33%: the relation on each of the 20 rows and two summary
+clauses. That is the price of a row that cannot be misread; the file list,
+which is most of a hub's response, is unchanged but for the `only imports`
+counts. Wall time on logger.ts: 1 s before and after, timed in whole seconds.
+
+### Tests, and that they can fail
+
+`engine/tests/test_layout.py` (7 new, one a real `git init` + build),
+`engine/tests/test_impact_edges.py` (11, a Python repository parsed by the CLI's
+own build: a caller through `from … import`, one through `import module`, a
+caller of another function in the file, an import-only file, a test, a
+caller of a caller), two in `test_skills.py`, and the summary test in
+`test_impact_scope.py` updated for the split. Each behaviour was removed and
+the tests run:
+
+| Removed | Fails |
+|---|---|
+| expansion of a dominant directory | sub-directories, components, code share, compact row, architecture e2e, test tree |
+| the code-share criterion | expanded however small |
+| the test-tree exclusion | test tree is not expanded |
+| test files excluded from servers | components, compact row |
+| skills detection / app detection | components, compact row, architecture e2e |
+| `sub:` / components in the compact row | compact row (and e2e) |
+| the relation in an impact row | each row says how it depends |
+| `only imports` in a file row | file rows |
+| the import-only clause / the callers_of clause in the summary | summary separates callers from importers |
+| relations over the kept rows only | breakdown beyond the limit, the 0.6.1 summary test |
+| the transitive hop | each row, full rows |
+| relations on the networkx engine | both engines agree (old and new) |
+| the corrected call in the parser's `error` | all five wrong-spelling tests |
+| `--files <path>` from a positional symbol | query impact on a symbol |
+| bare pattern as a command | pattern used as a command |
+| the new explore-codebase / refactor-safely text | the two skill tests |
+
+Not measured: the A/B itself on this version — whether the overview now names
+the skills and the server, and whether a T5 answer now keeps importers apart
+from callers, needs the user's re-run.

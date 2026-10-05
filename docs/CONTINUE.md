@@ -1,6 +1,6 @@
 ---
 tags: [handoff, cartograph]
-updated: 2026-10-02
+updated: 2026-10-05
 next-task: Linux .vsix acceptance on the user's machine, then transcript-aware summaries
 ---
 
@@ -492,10 +492,36 @@ the ranking was partial (`searched 0 of 71 code files`); `carto update
   `docs/design/compact-output.md`, last section.
 - **Not re-measured:** the A/B itself; no real Dev Container run.
 
+## Done — 2026-10-05, the fifth A/B: nested components, and what an impact row depends on
+
+The user's A/B on 0.8.9 (vault `20 Projects/FRQ/report6.md`): T2 overview
+with carto 2/5 correct vs 4/5 without — answers missed the skills and MCP
+server nested in `template/`; T5 4/5 vs 5/5 — one answer read impact's
+importers as call-site breakage, and one run tried `carto query impact`.
+
+- **Layout:** a top-level directory with ≥25% of files or ≥50% of code files
+  (not a test tree) names its sub-directories and components inside it
+  (`skills:`, `server:`, `app:`, `tests:`, `hooks:`, `ci:`).
+  explore-codebase: name them, and take connections from the README/docs,
+  not community coupling.
+- **Impact rows** say the relation (`direct | calls add_node | …`, `direct |
+  imports graph_store.py | …`, `transitive | calls ingest | …`); the summary
+  splits direct by relation (`9 direct: 4 call, 5 import only`), says
+  import-only dependents are not broken by a signature change, and points to
+  `query callers_of <file>::<name>`. 0.6.1's guarantees unchanged.
+  refactor-safely: callers_of + tests_for first, impact only for wider reach.
+- **Wrong spellings** (`query impact`, `query large-functions`, `query
+  callers`, bare `callers_of`) → usage error naming the right command, as
+  `error.remediation`.
+- Sizes and the mutation table: `docs/design/compact-output.md`, last section.
+  impact grows 11–33%; architecture +469 chars on the A/B-shaped fixture,
+  unchanged on claude-mem.
+- **Not re-measured:** the A/B itself. No version bump.
+
 ## The user's A/B measurements (Copilot CLI, gpt-5.4-mini) — summary
 
 Reports are in the vault: `20 Projects/FRQ/MCPs/report-carto-1oct2026.md`,
-`report2.md`, and `20 Projects/FRQ/report3.md` … `report5.md`. Read billing
+`report2.md`, and `20 Projects/FRQ/report3.md` … `report6.md`. Read billing
 (`totalNanoAiu`) and input+cached+output, never input alone; with five runs per
 side, cost noise is large, so judge cost by non-overlapping ranges and weigh
 correctness first.
@@ -503,10 +529,10 @@ correctness first.
 | Task | Result on the latest version measured |
 |---|---|
 | T1 recall ("have we already decided…") | 0.8.6: with 5/5 correct vs 0/5 without (isolated Copilot homes) |
-| T2 repository overview | 0.8.7: 5/5 correct both sides; −36% billing with carto (layout section fixed the 0.8.6 0/5 regression) |
+| T2 repository overview | 0.8.9: with 2/5 correct, 3 partly vs 4/5 without (nested skills/MCP server missed; fixed after, not re-measured) |
 | T3 largest functions | **0.8.9: with 5/5 fully correct vs 1/5; −86% billing, 2 vs 17 tool calls; every "with" run cheaper than every "without" run; coverage "searched all 71 code files" in the repo and in a moved copy** |
 | T4 largest files | carto correctly not used; tie |
-| T5 callers / blast radius | 0.8.6: carto used 5/5; 5 yes vs 5 partly |
+| T5 callers / blast radius | 0.8.9: with 4/5 correct, 1 partly vs 5/5; +20% billing (importers read as call sites; fixed after, not re-measured) |
 | T6 free choice | tie |
 
 Defects the measurements found, all fixed: code-only overview (0.8.7), lost
