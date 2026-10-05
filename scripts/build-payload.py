@@ -480,6 +480,16 @@ def seed_grammars(python: Path, payload: Path) -> str:
 
     src = cache_base / "tree-sitter-language-pack" / f"v{version}"
     if not (src / "libs").is_dir():
+        # Say where the pack did put them. A change in where it caches is the
+        # likely cause, and the runtime would then miss the bundled grammars
+        # too and reach for the network — so the answer matters beyond the build.
+        print(f"grammar cache {cache_base} contains:", file=sys.stderr)
+        for path in sorted(cache_base.rglob("*"))[:40]:
+            print(f"  {path.relative_to(cache_base)}", file=sys.stderr)
+        for root in (Path.home() / ".cache", Path(os.environ.get("XDG_CACHE_HOME", "/nonexistent"))):
+            for lib in (sorted(root.rglob("*.so"))[:15] if root.is_dir() else []):
+                if "tree" in str(lib) or "grammar" in str(lib):
+                    print(f"  elsewhere: {lib}", file=sys.stderr)
         raise SystemExit(f"no grammar libs under {src}; the download produced nothing")
     dest = payload / "grammars" / "tree-sitter-language-pack" / f"v{version}"
     dest.mkdir(parents=True, exist_ok=True)
