@@ -395,7 +395,7 @@ def _handle_data_dir_option(args, repo_root: Path) -> None:
 #: files touched; the parse errors are listed because a file that failed to
 #: parse is a file every later answer silently does not cover.
 _BUILD_FIELDS = (
-    "build_type", "files_parsed", "files_updated", "total_nodes", "total_edges",
+    "build_type", "rebuild_reason", "files_parsed", "files_updated", "total_nodes", "total_edges",
     "nodes_updated", "edges_updated", "changed_files", "dependent_files", "base_resolved", "errors", "warnings",
 )
 
@@ -2631,9 +2631,15 @@ def main() -> None:
                     # No usable incremental base (fresh/legacy graph, or the
                     # last-synced commit was lost to a rewrite/shallow clone),
                     # so the update fell back to a full rebuild.
+                    # Or the graph was built by an older parser (or C++
+                    # identity format), which only a full re-parse replaces.
                     parsed = result.get("files_parsed", 0)
+                    why = {
+                        "parser_version": "graph built by an older Cartograph parser",
+                        "cpp_identity": "graph used an older C++ identity format",
+                    }.get(result.get("rebuild_reason"), "no usable incremental base")
                     print(
-                        f"Full rebuild (no usable incremental base): "
+                        f"Full rebuild ({why}): "
                         f"{parsed} files, {nodes} nodes, {edges} edges"
                         f" (postprocess={pp})"
                     )
@@ -2718,15 +2724,31 @@ def main() -> None:
             stored_svn_branch = store.get_metadata("svn_branch")
             stored_rev = store.get_metadata("svn_revision")
 
+            from .incremental import PARSER_VERSION, PARSER_VERSION_METADATA_KEY
+
+            other_branch = bool(
+                stored_branch and current_branch and stored_branch != current_branch
+            )
+            # Read, never written here: status reports on the graph and must
+            # not migrate it. An empty graph holds no old parse.
+            older_parser = bool(stats.total_nodes) and (
+                store.get_metadata(PARSER_VERSION_METADATA_KEY) != PARSER_VERSION
+            )
+            stale_reasons = []
+            if older_parser:
+                stale_reasons.append("built by an older Cartograph parser")
+            if other_branch:
+                stale_reasons.append(
+                    f"built on branch '{stored_branch}', now on '{current_branch}'"
+                )
+            stale = bool(stale_reasons)
+
             # --json is the deprecated alias for --format json.
             want_json = args.json_output or getattr(args, "output_format", "text") == "json"
 
             if want_json:
                 from . import envelope as _env
 
-                stale = bool(
-                    stored_branch and current_branch and stored_branch != current_branch
-                )
                 env = _env.ok(
                     "status",
                     data={
@@ -2745,6 +2767,10 @@ def main() -> None:
                         # Explicit rather than left for the agent to infer by
                         # comparing branches itself.
                         "stale": stale,
+                        # Why, and the one command that clears it; both null
+                        # when the graph is current.
+                        "stale_reason": "; ".join(stale_reasons) or None,
+                        "remediation": "carto build" if stale else None,
                     },
                     provenance={
                         "graph_sha": stored_sha,
@@ -2762,7 +2788,12 @@ def main() -> None:
                     print(f"Built on branch: {stored_branch}")
                 if stored_sha:
                     print(f"Built at commit: {stored_sha[:12]}")
-                if stored_branch and current_branch and stored_branch != current_branch:
+                if older_parser:
+                    print(
+                        "WARNING: Graph was built by an older Cartograph parser. "
+                        "Run 'carto build' to rebuild."
+                    )
+                if other_branch:
                     print(
                         f"WARNING: Graph was built on '{stored_branch}' "
                         f"but you are now on '{current_branch}'. "

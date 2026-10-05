@@ -530,6 +530,29 @@ def build_or_update_graph(
             }
         else:
             result = incremental_update(root, store, base=base_resolved)
+
+        if not full_rebuild and result.get("full_rebuild"):
+            # The update found a graph an older parser built and rebuilt it in
+            # full. Say so, and post-process it as the full build it was.
+            full_rebuild = True
+            why = (
+                "Graph was built by an older Cartograph parser"
+                if result.get("rebuild_reason") == "parser_version"
+                else "Graph used an older C++ identity format"
+            )
+            build_result = {
+                **{k: v for k, v in result.items()
+                   if k not in ("changed_files", "dependent_files", "files_updated")},
+                "status": "ok",
+                "build_type": "full",
+                "base_resolved": None,
+                "summary": (
+                    f"{why}; rebuilt in full: parsed {result['files_parsed']} "
+                    f"files, created {result['total_nodes']} nodes and "
+                    f"{result['total_edges']} edges."
+                ),
+            }
+        elif not full_rebuild:
             # incremental_update counts what it re-parsed under total_*. Here
             # total_* is the whole graph, as it is for a full build: an agent
             # read "total_nodes: 0" on an up-to-date graph as an empty one.

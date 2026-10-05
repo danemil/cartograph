@@ -15,7 +15,9 @@
     "current_sha": "<redacted>",
     "svn_branch": null,
     "svn_revision": null,
-    "stale": false
+    "stale": false,
+    "stale_reason": null,
+    "remediation": null
   },
   "truncated": false,
   "provenance": {
@@ -23,8 +25,8 @@
     "built_at": null
   },
   "size": {
-    "chars": 433,
-    "tokens_estimated": 109,
+    "chars": 472,
+    "tokens_estimated": 118,
     "estimator": "chars/4"
   }
 }

@@ -65,8 +65,36 @@ def _make_executor(max_workers: int):
 
 logger = logging.getLogger(__name__)
 
+#: The parser that built the graph. BUMP THIS whenever a parser change alters
+#: the nodes or edges produced for existing, unchanged code (a new edge kind, a
+#: construct newly recognised, an identity spelled differently). ``update``
+#: re-parses only changed files, so without a bump a graph built by an older
+#: release keeps the old parse until someone happens to run ``carto build``:
+#: 0.9.3's ``import x as y`` fix reached no existing graph that way. A graph
+#: whose stored value differs, or that has none (every graph before 0.9.4), is
+#: rebuilt in full by the next ``incremental_update`` and reported stale by
+#: ``carto status`` until then.
+PARSER_VERSION = "1"
+PARSER_VERSION_METADATA_KEY = "parser_version"
+
+#: C++ only: the overload-aware identity format. Kept apart from
+#: PARSER_VERSION because it is recorded only when every C++ file parsed, so a
+#: failed C++ parse retries the migration; PARSER_VERSION is recorded even when
+#: some file failed, or one unparseable file would force a full rebuild on
+#: every update.
 CPP_IDENTITY_VERSION = "1"
 _CPP_IDENTITY_METADATA_KEY = "cpp_identity_version"
+
+
+def parser_version_mismatch(store: GraphStore) -> bool:
+    """True when the graph holds nodes that an older parser produced.
+
+    A graph with no nodes has nothing stale in it, whatever it records.
+    """
+    return (
+        store.get_metadata(PARSER_VERSION_METADATA_KEY) != PARSER_VERSION
+        and store.has_nodes()
+    )
 
 
 def _run_python_resolver(store: GraphStore) -> Optional[dict]:
@@ -1478,6 +1506,7 @@ def full_build(
 
     store.set_metadata("last_updated", time.strftime("%Y-%m-%dT%H:%M:%S"))
     store.set_metadata("last_build_type", "full")
+    store.set_metadata(PARSER_VERSION_METADATA_KEY, PARSER_VERSION)
     if not cpp_errors:
         store.set_metadata(_CPP_IDENTITY_METADATA_KEY, CPP_IDENTITY_VERSION)
     _store_vcs_metadata(repo_root, store)
@@ -1522,29 +1551,45 @@ def incremental_update(
     parser = CodeParser(repo_root)
     ignore_patterns = _load_ignore_patterns(repo_root)
 
-    if (
+    parser_rebuild = parser_version_mismatch(store)
+    identity_rebuild = (
         store.get_metadata(_CPP_IDENTITY_METADATA_KEY) != CPP_IDENTITY_VERSION
         and store.has_nodes_for_language("cpp")
-    ):
-        logger.info(
-            "C++ identity format changed; rebuilding the graph before incremental update",
-        )
+    )
+    if parser_rebuild or identity_rebuild:
+        # Every unchanged file still holds the old parse, so re-parsing only
+        # the changed ones would leave the graph a mix of two parsers.
+        if parser_rebuild:
+            logger.info(
+                "Graph was built by an older Cartograph parser; rebuilding it "
+                "in full before the incremental update",
+            )
+        else:
+            logger.info(
+                "C++ identity format changed; rebuilding the graph before "
+                "incremental update",
+            )
         rebuilt = full_build(repo_root, store)
-        return {
+        result = {
+            **rebuilt,
             "files_updated": rebuilt["files_parsed"],
-            "total_nodes": rebuilt["total_nodes"],
-            "total_edges": rebuilt["total_edges"],
-            "changed_files": list(changed_files or []),
+            # What the update would otherwise have looked at: on a full
+            # rebuild every file is re-parsed, so none is singled out.
+            "changed_files": [],
             "dependent_files": [],
-            "errors": rebuilt["errors"],
-            "identity_rebuild": True,
-            "python_resolution": rebuilt["python_resolution"],
-            "rescript_resolution": rebuilt["rescript_resolution"],
-            "spring_resolution": rebuilt["spring_resolution"],
-            "event_resolution": rebuilt["event_resolution"],
-            "temporal_resolution": rebuilt["temporal_resolution"],
-            "hcl_resolution": rebuilt["hcl_resolution"],
+            # Read by tools/build.py: report it, and post-process it, as the
+            # full build it was.
+            "full_rebuild": True,
+            "rebuild_reason": "parser_version" if parser_rebuild else "cpp_identity",
         }
+        if identity_rebuild:
+            result["identity_rebuild"] = True
+        return result
+
+    if store.get_metadata(PARSER_VERSION_METADATA_KEY) != PARSER_VERSION:
+        # No nodes (parser_rebuild is False above): nothing an older parser
+        # produced survives, so whatever this update parses is current.
+        store.set_metadata(PARSER_VERSION_METADATA_KEY, PARSER_VERSION)
 
     # Determine changed files
     if changed_files is None:

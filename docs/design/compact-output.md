@@ -627,6 +627,9 @@ that does not map onto the tree is still refused, as before.
 (default text, as `status` does) and `--max-tokens`. In json mode stdout is
 the envelope alone — anything printed during the run is redirected to stderr
 — and `data` is the summary plus counts and the files touched (`build_type`,
+`rebuild_reason` — present only when an update rebuilt in full because an
+older parser built the graph, `parser_version`, or an older C++ identity
+format, `cpp_identity`; `build_type` is then `full` —
 `files_parsed`/`files_updated`, `total_nodes`, `total_edges` — the whole
 graph after the run, for update as for build — `nodes_updated`/`edges_updated`
 (what an update re-parsed), `changed_files`, `dependent_files`, `base_resolved`, `errors`, `warnings`);
@@ -634,6 +637,18 @@ postprocess and embed carry their result whole. Exit codes: `0` ok; `2`
 precondition with a remediation for no git repository (`update`), no graph
 (`postprocess`, `embed`), a graph of another repository, and an embedding
 provider that is not configured; `3` anything else. Text mode is unchanged.
+
+### Graphs built by an older parser (0.9.4)
+
+A full build records `parser_version` (`incremental.PARSER_VERSION`) in the
+graph's metadata; it is bumped whenever a parser change alters the nodes or
+edges of unchanged code. The next `update` on a graph with nodes whose stored
+value differs or is missing — every graph before 0.9.4 — rebuilds it in full
+once, reported as above. Until then `status` says so: `data.stale` is true,
+`data.stale_reason` is `"built by an older Cartograph parser"` and
+`data.remediation` is `"carto build"` (both null on a current graph; a branch
+change gives its own reason; several are joined with `; `). The text form
+prints a WARNING line. Status only reads the value, never writes it.
 
 Not given `--format`: `visualize`, whose `--format` already chooses an export
 format (html, json, graphml, …) — an envelope flag would collide with it —

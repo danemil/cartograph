@@ -18,6 +18,7 @@ import pytest
 
 import cartograph.graph  # noqa: F401 - imported so unittest.mock can patch it
 from cartograph import cli
+from cartograph.incremental import PARSER_VERSION
 
 
 @pytest.mark.parametrize(
@@ -74,6 +75,7 @@ def test_status_json_is_the_only_stdout_and_includes_current_sha(capsys):
         "git_head_sha": "old-sha",
         "svn_revision": None,
         "svn_branch": None,
+        "parser_version": PARSER_VERSION,
     }.get
     argv = ["cartograph", "status", "--repo", "repo-root", "--json"]
 
@@ -118,6 +120,8 @@ def test_status_json_is_the_only_stdout_and_includes_current_sha(capsys):
         # New under the envelope: said outright rather than left for the agent
         # to infer by comparing built_on_branch against current_branch.
         "stale": True,
+        "stale_reason": "built on branch 'main', now on 'feature'",
+        "remediation": "carto build",
     }
     assert payload["provenance"] == {
         "graph_sha": "old-sha",
