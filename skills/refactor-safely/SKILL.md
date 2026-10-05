@@ -35,11 +35,16 @@ changed?" — two calls answer it. Answer from them:
    carto query callers_of <symbol> --limit 50 --format json
    ```
    Then read the call lines before saying what breaks, and say it per kind
-   of change: calls that pass arguments by position break when the number or
-   order of required parameters changes, not when a parameter is renamed;
-   calls that pass by keyword break on a rename; an optional parameter added
-   at the end breaks none of them. "Any signature change breaks every caller"
-   is wrong more often than right.
+   of change: calls that pass arguments by position break when a required
+   parameter is added, removed or reordered — not when one is renamed or
+   made optional. Calls that pass by keyword break on a rename. A new
+   optional parameter at the end breaks none of them where the language has
+   optional parameters (Python, JS/TS, C#); Java and Go have none, so there
+   any new parameter is a required one. "Any signature change
+   breaks every caller" is wrong more often than right.
+   A reorder often raises no error at the call: the values land in the wrong
+   parameters and the failure shows up later, or never. Say so rather than
+   promising a TypeError.
    A target is a name, or `path/to/file.py::Name` when the name is ambiguous
    (the response's `disambiguation` rows carry the names to pass back). If `truncated` is true, pass
    `page.next_cursor` back with `--cursor` until it is not.
