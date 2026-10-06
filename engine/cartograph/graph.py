@@ -1183,14 +1183,37 @@ class GraphStore:
             caller = edge[
                 "source_qualified" if endpoint == "target_qualified" else "target_qualified"
             ]
-            supported = [
+            evidenced = [
                 qualified
                 for qualified, candidate_file in candidates
-                if (candidate_file == context_file or candidate_file in imported_files)
-                and not receiver_rules_out(edge_extra, caller, qualified)
+                if candidate_file == context_file or candidate_file in imported_files
+            ]
+            supported = [
+                qualified for qualified in evidenced
+                if not receiver_rules_out(edge_extra, caller, qualified)
             ]
             java_call = kind == "CALLS" and endpoint == "target_qualified"
-            if java_call and context_file.endswith(".java"):
+            is_java = java_call and context_file.endswith(".java")
+            # Ruling out the caller's own namesake leaves the others no better
+            # evidenced than before: `self._thread.start()` inside one class's
+            # method is no proof of another class's `start` in the same file.
+            # Outside Java, whose declared types and hierarchy decide below, the
+            # one left is a candidate, never a resolution.
+            unproven: list[str] = []
+            if (
+                not is_java
+                and len(supported) == 1
+                and len(evidenced) > 1
+                and not _declared_type(edge_extra)
+            ):
+                unproven = [
+                    qualified for qualified in evidenced
+                    if not receiver_rules_out(
+                        edge_extra, caller, qualified, binding=False,
+                    )
+                ]
+                supported = []
+            if is_java:
                 # The class hierarchy and a variable's declared type decide
                 # before import evidence: a parent in the same package needs no
                 # import, and a class may arrive by wildcard.
@@ -1213,6 +1236,7 @@ class GraphStore:
                 and not managed
                 and len(supported) < 2
                 and not ambiguity_supported
+                and not unproven
             ):
                 continue
             desired_extra = dict(edge_extra)
@@ -1234,6 +1258,10 @@ class GraphStore:
                     resolution = "ambiguous"
                     resolution_candidates = supported
                     other = "unresolved"
+                elif unproven:
+                    resolution = "ambiguous" if len(unproven) > 1 else "unresolved"
+                    resolution_candidates = unproven
+                    other = "unresolved" if resolution == "ambiguous" else "ambiguous"
                 elif ambiguity_supported:
                     resolution = (
                         "ambiguous"
