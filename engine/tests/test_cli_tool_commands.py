@@ -260,7 +260,14 @@ def test_callers_of_lists_one_edge_per_call_line(
     assert data["result_count"] == 2
     assert data["results_omitted"] == 0
     assert len(data["results"]) == 2
+    assert data["summary"] == (
+        "Found 2 caller(s), 4 call line(s) for callers_of('lib.py::add')"
+    )
     if detail == "compact":
+        assert data["results"] == [
+            "Function | many | use.py:4 | calls at 5, 6, 7",
+            "Function | once | use.py:10 | calls at 11",
+        ]
         assert data["edges"] == [
             "CALLS | many -> lib.py::add | use.py:5",
             "CALLS | many -> lib.py::add | use.py:6",
@@ -268,6 +275,9 @@ def test_callers_of_lists_one_edge_per_call_line(
             "CALLS | once -> lib.py::add | use.py:11",
         ]
     else:
+        assert [(r["qualified_name"], r["call_lines"]) for r in data["results"]] == [
+            ("use.py::many", [5, 6, 7]), ("use.py::once", [11]),
+        ]
         assert [(e["source"], e["line"]) for e in data["edges"]] == [
             ("use.py::many", 5), ("use.py::many", 6), ("use.py::many", 7),
             ("use.py::once", 11),

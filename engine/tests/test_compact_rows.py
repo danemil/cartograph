@@ -54,6 +54,35 @@ def test_a_caller_row_ends_with_its_resolution():
     assert compact.node_row(resolved) == "Function | Service.handle | src/app/Service.java:6"
 
 
+def test_a_caller_row_names_its_call_lines():
+    # report11, T5: the row showed only where the caller is defined (:18), so
+    # answers cited the def line instead of the calls at :20 and :22.
+    caller = {
+        "kind": "Test", "name": "test_add_and_replace_node",
+        "qualified_name": "tests/test_graph_store.py::GraphStoreTests.test_add_and_replace_node",
+        "file_path": "tests/test_graph_store.py", "line_start": 18,
+        "parent_name": "GraphStoreTests", "call_lines": [20, 22],
+    }
+    assert compact.node_row(caller) == (
+        "Test | GraphStoreTests.test_add_and_replace_node"
+        " | tests/test_graph_store.py:18 | calls at 20, 22"
+    )
+    single = {**caller, "call_lines": [20]}
+    assert compact.node_row(single).endswith(":18 | calls at 20")
+    # Where the calls are leads; how the caller was matched qualifies the row.
+    labelled = {**caller, "target_resolution": "unresolved"}
+    assert compact.node_row(labelled).endswith(
+        ":18 | calls at 20, 22 | unresolved"
+    )
+    # A call outside the caller's own file is named with its path.
+    elsewhere = {**caller, "call_sites_elsewhere": [
+        {"file": "tests/shared.py", "line": 5},
+    ]}
+    assert compact.node_row(elsewhere).endswith(
+        ":18 | calls at 20, 22, tests/shared.py:5"
+    )
+
+
 def test_a_file_row_does_not_repeat_its_path():
     node = {
         "kind": "File", "name": "src/store.ts", "qualified_name": "src/store.ts",

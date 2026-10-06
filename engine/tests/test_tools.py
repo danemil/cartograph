@@ -353,6 +353,79 @@ class TestQueryGraphCallTargetFallbacks:
         ]
         assert lines == [22, 23, 24]
 
+    def test_callers_of_row_carries_its_call_lines(self):
+        """Each caller row names the lines it calls the target on.
+
+        report11, T5: the rows said where each caller is defined and only the
+        separate edge list held the call lines, so answers cited def lines.
+        """
+        caller = f"{self.target_file}::same_file_caller"
+        target = f"{self.target_file}::target_func"
+        self._add_calls(caller, target, self.target_file, [24, 23])
+
+        result = query_graph(
+            pattern="callers_of", target=target, repo_root=str(self.root),
+        )
+
+        by_name = {r["name"]: r for r in result["results"]}
+        assert by_name["same_file_caller"]["call_lines"] == [22, 23, 24]
+        # A labelled (bare-name) caller carries its lines too.
+        assert by_name["cross_file_caller"]["call_lines"] == [7]
+        assert by_name["cross_file_caller"]["target_resolution"] == "unresolved"
+        assert "call_sites_elsewhere" not in by_name["same_file_caller"]
+        assert result["summary"].startswith(
+            "Found 2 caller(s), 4 call line(s) for callers_of("
+        )
+        from cartograph import compact
+        assert compact.node_row(by_name["cross_file_caller"]).endswith(
+            " | calls at 7 | unresolved"
+        )
+
+    def test_callers_of_names_a_call_outside_the_callers_file(self):
+        caller = f"{self.target_file}::same_file_caller"
+        target = f"{self.target_file}::target_func"
+        self._add_calls(caller, target, self.cross_file, [3])
+
+        result = query_graph(
+            pattern="callers_of", target=target, repo_root=str(self.root),
+        )
+
+        row = next(r for r in result["results"] if r["name"] == "same_file_caller")
+        assert row["call_lines"] == [22]
+        assert row["call_sites_elsewhere"] == [{"file": self.cross_file, "line": 3}]
+
+    def test_callers_of_paging_keeps_a_callers_lines_with_it(self):
+        caller = f"{self.target_file}::same_file_caller"
+        target = f"{self.target_file}::target_func"
+        self._add_calls(caller, target, self.target_file, [23])
+
+        result = query_graph(
+            pattern="callers_of", target=target, repo_root=str(self.root),
+            max_results=1,
+        )
+
+        assert result["result_count"] == 2
+        assert len(result["results"]) == 1
+        shown = result["results"][0]
+        sites = shown["call_lines"] + shown.get("call_sites_elsewhere", [])
+        assert len(sites) == len(result["edges"])
+        # The totals cover every caller, not just the page.
+        assert result["summary"].startswith(
+            "Found 2 caller(s), 3 call line(s) for callers_of("
+        )
+
+    def test_callers_of_minimal_keeps_the_call_lines(self):
+        result = query_graph(
+            pattern="callers_of",
+            target=f"{self.target_file}::target_func",
+            repo_root=str(self.root),
+            detail_level="minimal",
+        )
+
+        by_name = {r["name"]: r for r in result["results"]}
+        assert by_name["same_file_caller"]["call_lines"] == [22]
+        assert by_name["cross_file_caller"]["call_lines"] == [7]
+
     def test_callers_of_drops_only_exact_duplicate_edges(self):
         caller = f"{self.target_file}::same_file_caller"
         target = f"{self.target_file}::target_func"
