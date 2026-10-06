@@ -690,6 +690,32 @@ ranks the test and `add_node` first. The parser-version rebuild had already
 run from a hook before the check (graph built 15:07 that day, edges 5222 →
 5235, the same-line split), so status/update showed fresh — expected.
 
+## Done — 2026-10-06, Dev Container checked by hand (0.9.5)
+
+On the user's VM: Docker 29.8.2, VS Code over Remote SSH, "Reopen in
+Container" with `mcr.microsoft.com/devcontainers/base:ubuntu-22.04` + the node
+feature + `npm i -g @github/copilot` (Copilot CLI 1.0.92), on a copy at
+`~/dc-test`. Proven: the linux-x64 `.vsix` installs into the container
+(`code --install-extension`), `carto` is on new terminals' PATH
+(`/home/vscode/.cartograph/bin`); `install` + `build` give the VM's graph
+exactly (450 / 5235); Copilot CLI loads refactor-safely by itself and answers
+with call lines; CLI memory = hooks, embedded search, and a correct
+host-agent summary (DECIDED / PROPOSED / DEAD ENDS, informed by the reply);
+Chat memory = logs via Cartograph Local reaching the container; one prompt
+alone is deliberately not summarised (2 needed).
+
+Setup note for docs: a repo owned by root on the host is not writable by the
+container's `vscode` user — `sudo chown -R vscode:vscode /workspaces/<repo>`.
+
+**Bug found:** `_TEST_FILE_PATTERNS` (parser.py) is matched against the
+absolute path with `search`, and `tests?/` matches `dc-test/` (or `latest/`),
+so every file of a checkout under such a directory is a test file:
+`tests_for add_node` returned 11 (via `ingest.py::build`) instead of 5;
+flows, dead-code and anything excluding tests are affected too. Fix: classify
+on the repo-relative path and anchor patterns to path components.
+Minor: `carto mem search` requires `--query`; a positional query could be
+accepted.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
