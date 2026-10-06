@@ -12,10 +12,12 @@ import json
 import logging
 import re
 from collections import deque
-from typing import Optional
+from pathlib import Path
+from typing import Callable, Optional
 
 from .constants import SECURITY_KEYWORDS as _SECURITY_KEYWORDS
 from .graph import FlowAdjacency, GraphNode, GraphStore, _sanitize_name
+from .parser import _is_test_file as _parser_is_test_file
 from .parser import normalize_file_path
 
 logger = logging.getLogger(__name__)
@@ -152,14 +154,26 @@ def _matches_entry_name(node: GraphNode) -> bool:
     return False
 
 
-_TEST_FILE_RE = re.compile(
-    r"([\\/]__tests__[\\/]|\.spec\.[jt]sx?$|\.test\.[jt]sx?$|[\\/]test_[^/\\]*\.py$)",
-)
+def test_file_judge(
+    store: GraphStore, root: Optional[str | Path] = None,
+) -> Callable[[str], bool]:
+    """``file_path -> is it a test file``, as the parser judged it.
 
+    The parser classifies each file by its path inside the repository when
+    the graph is built, and records that on the File node. Re-matching a
+    pattern against a stored absolute path would also match the directories
+    above the checkout (``/workspaces/dc-test``). A path with no File node
+    falls back to the parser's classifier, relative to *root* when given.
+    """
+    flags = store.get_file_test_flags()
 
-def _is_test_file(file_path: str) -> bool:
-    """Return True if *file_path* looks like a test file."""
-    return bool(_TEST_FILE_RE.search(file_path))
+    def judge(file_path: str) -> bool:
+        flag = flags.get(file_path)
+        if flag is not None:
+            return flag
+        return _parser_is_test_file(file_path, root)
+
+    return judge
 
 
 def detect_entry_points(
@@ -187,9 +201,10 @@ def detect_entry_points(
 
     entry_points: list[GraphNode] = []
     seen_qn: set[str] = set()
+    in_test_file = test_file_judge(store)
 
     for node in candidate_nodes:
-        if not include_tests and (node.is_test or _is_test_file(node.file_path)):
+        if not include_tests and (node.is_test or in_test_file(node.file_path)):
             continue
         if node.extra.get("verilog_kind"):
             continue

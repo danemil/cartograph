@@ -1348,6 +1348,19 @@ class GraphStore:
         ).fetchall()
         return [row["file_path"] for row in rows]
 
+    def get_file_test_flags(self) -> dict[str, bool]:
+        """Each File node's path and whether the parser classified it as a test.
+
+        The parser judges a file by its path inside the repository at build
+        time; callers holding only an absolute ``file_path`` use this rather
+        than re-matching a pattern against the checkout's directories.
+        """
+        rows = self._conn.execute(
+            "SELECT file_path, MAX(is_test) AS t FROM nodes "
+            "WHERE kind = 'File' GROUP BY file_path"
+        ).fetchall()
+        return {row["file_path"]: bool(row["t"]) for row in rows}
+
     def search_nodes(self, query: str, limit: int = 20) -> list[GraphNode]:
         """Keyword search across node names.
 

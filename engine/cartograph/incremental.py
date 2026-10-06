@@ -74,7 +74,7 @@ logger = logging.getLogger(__name__)
 #: whose stored value differs, or that has none (every graph before 0.9.4), is
 #: rebuilt in full by the next ``incremental_update`` and reported stale by
 #: ``carto status`` until then.
-PARSER_VERSION = "2"
+PARSER_VERSION = "3"  # 3: is_test judged by the path inside the repository
 PARSER_VERSION_METADATA_KEY = "parser_version"
 
 #: C++ only: the overload-aware identity format. Kept apart from

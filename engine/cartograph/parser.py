@@ -1252,23 +1252,31 @@ _TEST_PATTERNS = [
     re.compile(r"_spec$"),
 ]
 
+# Matched against the path *inside the repository*, POSIX-separated (see
+# ``_is_test_file``), never against the absolute path: a checkout at
+# ``/workspaces/dc-test`` or ``~/src/latest`` must not make every file a test.
+# Directory patterns are anchored to a whole path component, filename patterns
+# to the start of the file name where they name a prefix.
 _TEST_FILE_PATTERNS = [
-    re.compile(r"test_.*\.py$"),
-    re.compile(r".*_test\.py$"),
-    re.compile(r".*\.test\.[jt]sx?$"),
-    re.compile(r".*\.spec\.[jt]sx?$"),
-    re.compile(r".*_test\.go$"),
-    re.compile(r"tests?/"),
-    re.compile(r"[\\/]__tests__[\\/]"),
-    re.compile(r".*_test\.dart$"),
-    re.compile(r"test[_-].*\.[rR]$"),
-    re.compile(r"tests/testthat/"),
-    re.compile(r".*Test\.kt$"),
-    re.compile(r".*Test\.java$"),
-    re.compile(r".*_test\.resi?$"),
-    re.compile(r".*\.test\.resi?$"),
-    re.compile(r"test/runtests\.jl$"),
-    re.compile(r"test/.*\.jl$"),
+    re.compile(r"(^|/)test_[^/]*\.py$"),
+    re.compile(r"_test\.py$"),
+    re.compile(r"\.test\.[jt]sx?$"),
+    re.compile(r"\.spec\.[jt]sx?$"),
+    re.compile(r"_test\.go$"),
+    # tests/, test/, and suffixed forms: e2e-tests/, integration_tests/.
+    re.compile(r"(^|/)([^/]*[_-])?tests?/"),
+    re.compile(r"(^|/)__tests__/"),
+    re.compile(r"(^|/)e2e[_-]?tests?/"),
+    re.compile(r"(^|/)test[_-]utils?/"),
+    re.compile(r"_test\.dart$"),
+    re.compile(r"(^|/)test[_-][^/]*\.[rR]$"),
+    re.compile(r"(^|/)tests/testthat/"),
+    re.compile(r"Test\.kt$"),
+    re.compile(r"Test\.java$"),
+    re.compile(r"_test\.resi?$"),
+    re.compile(r"\.test\.resi?$"),
+    re.compile(r"(^|/)test/runtests\.jl$"),
+    re.compile(r"(^|/)test/[^/]*\.jl$"),
 ]
 
 _TEST_RUNNER_NAMES = frozenset({
@@ -1848,19 +1856,54 @@ def _scan_rescript_modules(cleaned: str, offset_to_line) -> list[dict]:
     return modules
 
 
-def _is_test_file(path: str) -> bool:
-    return any(p.search(path) for p in _TEST_FILE_PATTERNS)
+def _repo_relative(path: str, root: Optional[str | Path] = None) -> str:
+    """*path* as POSIX, relative to *root* when it lies under it.
+
+    A path outside *root*, or with no *root*, is returned as given (POSIX).
+    """
+    posix = str(path).replace("\\", "/")
+    if root is None:
+        return posix
+    for base in _root_prefixes(str(root)):
+        if posix.startswith(base):
+            return posix[len(base):]
+    return posix
+
+
+@lru_cache(maxsize=64)
+def _root_prefixes(root: str) -> tuple[str, ...]:
+    """``root/`` as given and as resolved, POSIX-separated (cached: hot path)."""
+    given = root.replace("\\", "/").rstrip("/")
+    prefixes = [given + "/"] if given else []
+    try:
+        resolved = Path(root).resolve().as_posix().rstrip("/")
+    except OSError:
+        resolved = ""
+    if resolved and resolved != given:
+        prefixes.append(resolved + "/")
+    return tuple(prefixes)
+
+
+def _is_test_file(path: str, root: Optional[str | Path] = None) -> bool:
+    """Whether *path* is a test file, judged by its path inside the repository.
+
+    Pass the repository *root* whenever *path* is absolute: the directories
+    above the checkout say nothing about the file.
+    """
+    rel = _repo_relative(path, root)
+    return any(p.search(rel) for p in _TEST_FILE_PATTERNS)
 
 
 def _is_test_function(
     name: str, file_path: str, decorators: tuple[str, ...] = (),
+    root: Optional[str | Path] = None,
 ) -> bool:
     """A function is a test if its name matches test patterns, it lives
     in a test file and has a test-runner name, or it has a @Test annotation.
     """
     if any(p.search(name) for p in _TEST_PATTERNS):
         return True
-    if _is_test_file(file_path) and name in _TEST_RUNNER_NAMES:
+    if _is_test_file(file_path, root) and name in _TEST_RUNNER_NAMES:
         return True
     if decorators and any(d in _TEST_ANNOTATIONS for d in decorators):
         return True
@@ -2620,6 +2663,16 @@ class CodeParser:
 
         return SHEBANG_INTERPRETER_TO_LANGUAGE.get(interpreter)
 
+    def _is_test_path(self, file_path: str | Path) -> bool:
+        """``_is_test_file`` on the path inside this parser's repository."""
+        return _is_test_file(str(file_path), self._repo_root)
+
+    def _is_test_fn(
+        self, name: str, file_path: str, decorators: tuple[str, ...] = (),
+    ) -> bool:
+        """``_is_test_function`` with the file judged inside the repository."""
+        return _is_test_function(name, file_path, decorators, self._repo_root)
+
     def parse_file(self, path: Path) -> tuple[list[NodeInfo], list[EdgeInfo]]:
         """Parse a single file and return extracted nodes and edges."""
         try:
@@ -2739,7 +2792,7 @@ class CodeParser:
         file_path_str = normalize_file_path(path)
 
         # File node
-        test_file = _is_test_file(file_path_str)
+        test_file = self._is_test_path(file_path_str)
         file_extra: dict = {}
         # C#: record the namespace(s) this file declares so query-time
         # fallbacks can resolve namespace-form IMPORTS_FROM targets (from
@@ -2983,7 +3036,7 @@ class CodeParser:
                 line_start=1,
                 line_end=source.count(b"\n") + 1,
                 language="blade",
-                is_test=_is_test_file(file_path),
+                is_test=self._is_test_path(file_path),
             ),
         ]
         edges: list[EdgeInfo] = []
@@ -3010,7 +3063,7 @@ class CodeParser:
 
         tree = vue_parser.parse(source)
         file_path_str = normalize_file_path(path)
-        test_file = _is_test_file(file_path_str)
+        test_file = self._is_test_path(file_path_str)
 
         all_nodes: list[NodeInfo] = [NodeInfo(
             kind="File",
@@ -3132,7 +3185,7 @@ class CodeParser:
 
         tree = svelte_parser.parse(source)
         file_path_str = normalize_file_path(path)
-        test_file = _is_test_file(file_path_str)
+        test_file = self._is_test_path(file_path_str)
 
         all_nodes: list[NodeInfo] = [NodeInfo(
             kind="File",
@@ -3320,7 +3373,7 @@ class CodeParser:
                 line_start=1,
                 line_end=1,
                 language=kernel_lang,
-                is_test=_is_test_file(file_path_str),
+                is_test=self._is_test_path(file_path_str),
             )], []
 
         return self._parse_notebook_cells(path, cells, kernel_lang)
@@ -3339,7 +3392,7 @@ class CodeParser:
             default_language: Default language for the File node.
         """
         file_path_str = normalize_file_path(path)
-        test_file = _is_test_file(file_path_str)
+        test_file = self._is_test_path(file_path_str)
 
         # Group cells by language
         lang_cells: dict[str, list[CellInfo]] = {}
@@ -3543,7 +3596,7 @@ class CodeParser:
                 line_start=1,
                 line_end=1,
                 language="python",
-                is_test=_is_test_file(file_path_str),
+                is_test=self._is_test_path(file_path_str),
             )
             file_node.extra["notebook_format"] = "databricks_py"
             return [file_node], []
@@ -3576,7 +3629,7 @@ class CodeParser:
         statements = _vbnet_logical_lines(cleaned)
         file_path = normalize_file_path(path)
         line_count = text.count("\n") + 1
-        test_file = _is_test_file(file_path)
+        test_file = self._is_test_path(file_path)
 
         nodes = [NodeInfo(
             kind="File",
@@ -3817,7 +3870,7 @@ class CodeParser:
                 key = ((scope or "").casefold(), name.casefold())
                 member_index = member_nodes.get(key)
                 if member_index is None:
-                    is_test = _is_test_function(name, file_path)
+                    is_test = self._is_test_fn(name, file_path)
                     extra = {"vbnet_kind": member_kind}
                     if type_params:
                         extra["vbnet_type_parameters"] = type_params
@@ -3997,7 +4050,7 @@ class CodeParser:
         """
         text = source.decode("utf-8", errors="replace")
         file_path_str = normalize_file_path(path)
-        test_file = _is_test_file(file_path_str)
+        test_file = self._is_test_path(file_path_str)
         is_interface = path.suffix.lower() == ".resi"
 
         # Strip comments and string/backtick literal content so downstream
@@ -4089,7 +4142,7 @@ class CodeParser:
             if not is_top_level(off, parent):
                 continue  # nested local `let` — not a structural node
             line_start = offset_to_line(off)
-            is_test_fn = _is_test_function(name, file_path_str)
+            is_test_fn = self._is_test_fn(name, file_path_str)
             let_entries.append({
                 "name": name,
                 "start_off": off,
@@ -4404,7 +4457,7 @@ class CodeParser:
         """
         text = source.decode("utf-8", errors="replace")
         file_path_str = normalize_file_path(path)
-        test_file = _is_test_file(file_path_str)
+        test_file = self._is_test_path(file_path_str)
 
         nodes: list[NodeInfo] = []
         edges: list[EdgeInfo] = []
@@ -6754,7 +6807,7 @@ class CodeParser:
             )
             if fn_name is None:
                 return False
-            is_test = _is_test_function(fn_name, file_path)
+            is_test = self._is_test_fn(fn_name, file_path)
             kind = "Test" if is_test else "Function"
             qualified = self._qualify(fn_name, file_path, enclosing_class)
             nodes.append(NodeInfo(
@@ -7752,7 +7805,7 @@ class CodeParser:
             if lhs is not None and lhs.type == "call_expression":
                 name = self._julia_short_func_name(lhs)
                 if name:
-                    is_test = _is_test_function(name, file_path, ())
+                    is_test = self._is_test_fn(name, file_path, ())
                     kind = "Test" if is_test else "Function"
                     lexical_parent = self._julia_scope_join(
                         enclosing_class, enclosing_func,
@@ -8177,7 +8230,7 @@ class CodeParser:
         # Check for anonymous function: local foo = function(...) end
         for expr in expr_list.children:
             if expr.type == "function_definition":
-                is_test = _is_test_function(var_name, file_path)
+                is_test = self._is_test_fn(var_name, file_path)
                 kind = "Test" if is_test else "Function"
                 qualified = self._qualify(var_name, file_path, enclosing_class)
                 params = self._get_params(expr, language, source)
@@ -8258,7 +8311,7 @@ class CodeParser:
         if not table_name or not method_name:
             return False
 
-        is_test = _is_test_function(method_name, file_path)
+        is_test = self._is_test_fn(method_name, file_path)
         kind = "Test" if is_test else "Function"
         qualified = self._qualify(method_name, file_path, table_name)
         params = self._get_params(child, language, source)
@@ -8420,7 +8473,7 @@ class CodeParser:
         if not name:
             return False
 
-        is_test = _is_test_function(name, file_path)
+        is_test = self._is_test_fn(name, file_path)
         kind = "Test" if is_test else "Function"
         qualified = self._qualify(name, file_path, enclosing_class)
 
@@ -8745,7 +8798,7 @@ class CodeParser:
             if not var_name or not func_node:
                 continue
 
-            is_test = _is_test_function(var_name, file_path)
+            is_test = self._is_test_fn(var_name, file_path)
             kind = "Test" if is_test else "Function"
             qualified = self._qualify(var_name, file_path, enclosing_class)
             params = self._get_params(func_node, language, source)
@@ -8817,7 +8870,7 @@ class CodeParser:
         if not prop_name or not func_node:
             return False
 
-        is_test = _is_test_function(prop_name, file_path)
+        is_test = self._is_test_fn(prop_name, file_path)
         kind = "Test" if is_test else "Function"
         qualified = self._qualify(prop_name, file_path, enclosing_class)
         params = self._get_params(func_node, language, source)
@@ -8925,7 +8978,7 @@ class CodeParser:
         if member_name is None:
             return False
 
-        is_test = _is_test_function(member_name, file_path)
+        is_test = self._is_test_fn(member_name, file_path)
         kind = "Test" if is_test else "Function"
         qualified = self._qualify(member_name, file_path, enclosing_class)
         params = self._get_params(right, language, source)
@@ -10470,12 +10523,12 @@ class CodeParser:
         if deco_list:
             decorators = tuple(deco_list)
 
-        is_test = _is_test_function(name, file_path, decorators)
+        is_test = self._is_test_fn(name, file_path, decorators)
         # PHPUnit's name convention is ``test*`` (not only ``test_*``).
         if (
             language == "php"
             and child.type == "method_declaration"
-            and _is_test_file(file_path)
+            and self._is_test_path(file_path)
             and name.startswith("test")
         ):
             is_test = True
@@ -10764,7 +10817,7 @@ class CodeParser:
         if (
             call_name
             and language in ("javascript", "typescript", "tsx")
-            and _is_test_file(file_path)
+            and self._is_test_path(file_path)
             and call_name not in _TEST_RUNNER_NAMES
         ):
             effective_call_name = (
@@ -10775,7 +10828,7 @@ class CodeParser:
         if (
             effective_call_name
             and language in ("javascript", "typescript", "tsx")
-            and _is_test_file(file_path)
+            and self._is_test_path(file_path)
             and effective_call_name in _TEST_RUNNER_NAMES
         ):
             test_desc = self._get_test_description(child, source)
@@ -16272,7 +16325,7 @@ class CodeParser:
 
         if right.type == "function_definition" and left.type == "identifier":
             name = left.text.decode("utf-8", errors="replace")
-            is_test = _is_test_function(name, file_path)
+            is_test = self._is_test_fn(name, file_path)
             kind = "Test" if is_test else "Function"
             qualified = self._qualify(name, file_path, enclosing_class)
             params = self._get_params(right, language, source)
