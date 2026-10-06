@@ -142,6 +142,42 @@ class TestSearch:
         assert code == 1
         assert doc["error"]["code"] == "usage"
 
+    def test_the_query_may_be_positional(self, carto, repo):
+        _add(carto, repo, "add_node callers noted", body="three of them")
+        code, doc, _ = carto("mem", "search", "add_node callers", "--repo", str(repo))
+        assert code == 0, doc
+        assert [i["title"] for i in doc["data"]["items"]] == ["add_node callers noted"]
+        # The same query as --query finds the same rows.
+        _, flagged, _ = carto(
+            "mem", "search", "--repo", str(repo), "--query", "add_node callers"
+        )
+        assert flagged["data"]["items"] == doc["data"]["items"]
+
+    def test_the_same_query_twice_is_accepted(self, carto, repo):
+        _add(carto, repo, "budget")
+        code, doc, _ = carto(
+            "mem", "search", "budget", "--query", "budget", "--repo", str(repo)
+        )
+        assert code == 0, doc
+
+    @pytest.mark.parametrize("argv", [
+        ["mem", "search"],
+        ["mem", "search", "one", "--query", "other"],
+    ])
+    def test_no_query_or_two_different_ones_is_a_usage_error(self, carto, repo, argv):
+        _add(carto, repo, "an observation")
+        code, doc, _ = carto(*argv, "--repo", str(repo))
+        assert code == 1
+        assert doc["error"]["code"] == "usage"
+        assert "query" in doc["error"]["message"].lower()
+
+    def test_the_catalogue_lists_the_query_as_optional_positional(self, carto):
+        _, doc, _ = carto("capabilities", "--command", "mem search")
+        [query] = doc["data"]["commands"][0]["arguments"]
+        assert query["positional"] is True
+        # Not required: --query still satisfies it, which skills rely on.
+        assert query["required"] is False
+
     def test_a_namespace_is_not_a_command(self, carto):
         code, doc, _ = carto("mem", "--format", "json")
         assert code == 1

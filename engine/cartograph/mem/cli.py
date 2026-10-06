@@ -67,7 +67,15 @@ def add_parser(sub: Any) -> argparse.ArgumentParser:
     )
 
     search_cmd = mem_sub.add_parser("search", help="Find recorded observations")
-    search_cmd.add_argument("--query", required=True, help="What to look for")
+    # The query is accepted positionally, like `carto search`, or as --query,
+    # which skills and earlier releases spell. One of the two is required;
+    # dispatch reconciles them (argparse cannot express "exactly one of a
+    # positional and a flag").
+    search_cmd.add_argument(
+        "query_text", nargs="?", default=None, metavar="QUERY",
+        help="What to look for (or --query)",
+    )
+    search_cmd.add_argument("--query", default=None, help="What to look for")
     search_cmd.add_argument(
         "--obs-type", dest="obs_types", default=None,
         help="Comma-separated observation kinds to keep",
@@ -292,6 +300,18 @@ def _summarise_usage(args: argparse.Namespace) -> Optional[str]:
     return None
 
 
+def _resolve_search_query(args: argparse.Namespace) -> Optional[str]:
+    """Settle `mem search`'s query into ``args.query``; what is wrong, or None."""
+    positional, flag = args.query_text, args.query
+    if positional is not None and flag is not None and positional != flag:
+        return "the query was given twice, differently: as an argument and as --query"
+    query = positional if positional is not None else flag
+    if query is None:
+        return "the following arguments are required: QUERY (or --query)"
+    args.query = query
+    return None
+
+
 def _positive_int(value: str) -> int:
     """The CLI's own limit type, so `--limit 0` is one usage error everywhere."""
     from ..cli import _positive_int as shared
@@ -378,6 +398,11 @@ def run(args: argparse.Namespace, repo_root: Path) -> None:
 
     if args.mem_command == "summarise":
         problem = _summarise_usage(args)
+        if problem:
+            _usage_exit(command, problem, fmt)
+
+    if args.mem_command == "search":
+        problem = _resolve_search_query(args)
         if problem:
             _usage_exit(command, problem, fmt)
 

@@ -58,7 +58,7 @@ _EXAMPLES = {
     "visualize": "carto visualize",
     "forget": "carto forget src/old.py",
     "mem add": "carto mem add --title 'Chose offset paging' --kind decision",
-    "mem search": "carto mem search --query 'token budget' --limit 10",
+    "mem search": "carto mem search 'token budget' --limit 10",
     "mem show": "carto mem show --id 8fd68e7d0e1ee1a1 --format json",
     "mem status": "carto mem status --format json",
     "mem summarise": "carto mem summarise --format json",
@@ -102,7 +102,7 @@ def _flag_entry(action: argparse.Action) -> Optional[dict[str, Any]]:
         entry["flag"] = max(action.option_strings, key=len)
     else:
         entry["positional"] = True
-        entry["required"] = True
+        entry["required"] = action.nargs not in (argparse.OPTIONAL, argparse.ZERO_OR_MORE)
     if action.choices:
         entry["choices"] = list(action.choices)
     if action.default not in (None, False) and not action.option_strings:
