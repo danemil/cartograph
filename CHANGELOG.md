@@ -3,6 +3,26 @@
 Releases of Cartograph itself. `engine/CHANGELOG.md` is the upstream
 code-review-graph history the engine was forked from (2.3.8).
 
+## 0.9.7 — 2026-10-06
+
+- **Flows and communities stay current after `carto update`.** An
+  incremental update compared repo-relative paths with stored absolute ones,
+  so it re-traced nothing: a new function got no flow and no community until
+  the next full build, and re-parsed nodes left flows pointing at nodes that
+  no longer existed. Now an update gives the same flows and communities as a
+  full rebuild (new entry points, changed and deleted files, a function left
+  without callers). Cost: about 0.04 s per update on a 450-node repository;
+  roughly 1–3 s on a 25k-node one, the same as a full post-process.
+- Community detection no longer depends on the order nodes were stored in
+  (Leiden, when `igraph` is installed: assignments shift once).
+- **`callees_of` reads like `callers_of`**: one row per callee with every call
+  line (`called at ingest.py:75, 92`), and both totals in the summary
+  ("23 callee(s), 37 call line(s)" — it used to drop 14 of those 37).
+- Compact `callers_of` / `callees_of` output leaves out `edges`, which only
+  repeated the rows (about 35–50% smaller); `--detail full` keeps them.
+- A paged query carries only its own page's edges (page 2 used to repeat
+  page 1's).
+
 ## 0.9.6 — 2026-10-06
 
 **Every graph rebuilds once** on the first `carto update` (parser version 3).

@@ -751,6 +751,25 @@ The three findings left from 0.9.4:
    <lines>`, both totals in the summary, `call_lines` in full detail, compact
    without duplicate edges.
 
+## Done — 2026-10-06, 0.9.7: the three findings
+
+`e9d9ca8` + `9c3a30a` (flows/communities equal a full rebuild after update;
+Leiden input order fixed), `c9e969a` (edges paged with their rows; none in
+compact callers_of/callees_of), `b11c286` + the compact tweak (callees_of rows
+with call lines, `called at <file>:<lines>`).
+
+Found on the way, not fixed:
+- Deleting a file drops edges *into* it from other files
+  (`remove_files_permanently`); a full rebuild keeps 8 of them as unresolved
+  (kit: 6262 vs 6270 edges after `git rm ingest_issues.py`).
+- A flow whose entry point sits in a re-parsed file gets a new id (a full
+  rebuild renumbers all anyway); keeping ids needs a qualified-name key.
+- On a cursor page the summary's "showing N, M omitted" is computed from the
+  widened fetch, not the page.
+- `impact --detail full` likely carries edges of items not on the page.
+- `ingest_docs.ingest_root(...)` with all three modules imported is
+  `ambiguous` (module-qualified calls are not bound by their module receiver).
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
