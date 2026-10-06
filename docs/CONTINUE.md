@@ -730,6 +730,27 @@ Windows (only the VM and its Docker), so Windows is VS Code's UI plus Cartograph
 Local. The win32-x64 `.vsix` stays built and smoke-tested in CI, labelled CI-only.
 The original four open items are closed.
 
+## Decided by the user on 2026-10-06 — build these as 0.9.7
+
+The three findings left from 0.9.4:
+
+1. **Flows and communities after an incremental update — fix the incremental
+   path.** Proven on a kit copy: a new function committed and applied by
+   `update` got no flow and no community (26 flows / 0 for the new entry;
+   full rebuild: 27 / 1, and it joins a community). Cause: nodes store
+   absolute `file_path`, `changed_files` is repo-relative, so
+   `incremental_trace_flows` / `incremental_detect_communities` match nothing.
+   Fix the matching; re-seed flows that touched a deleted file; tests that
+   compare incremental with a full rebuild (new entry point, changed
+   function, deletion).
+2. **`callers_of` edges per page, and none in compact output.** Each page
+   carries only its own callers' edges (`_page_for` sliced only `results`);
+   compact output omits `edges` for callers_of (rows already say `calls at`),
+   `--detail full` keeps them.
+3. **`callees_of` matches `callers_of`.** One row per callee ending `calls at
+   <lines>`, both totals in the summary, `call_lines` in full detail, compact
+   without duplicate edges.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
