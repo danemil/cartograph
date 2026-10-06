@@ -38,6 +38,7 @@ environment's rules, not preferences.
 | **Chat hooks can be disabled by organisation policy** (`chat.useHooks`) | Automatic capture from Chat — the hook never runs, silently | Memory is also imported from the conversation logs that exist regardless ([below](#where-memory-comes-from)); the extension says once when hooks are off |
 | **Copilot CLI runs repository hooks only in a trusted folder** | CLI capture in an untrusted folder, silently | Trust the folder once; otherwise the CLI's own session log is imported |
 | **Development happens in a VM or container** — Remote SSH, Dev Containers, WSL | VS Code keeps Chat history on the *local* machine, the engine runs on the *remote* | **Cartograph Local**, a small companion extension on the local side, passes Chat history to the remote |
+| **Nothing more is installed on the Windows workstation** | Running Cartograph, Node or the Copilot CLI on Windows itself | Windows is only VS Code's UI: the engine, hooks and Copilot CLI run on the Linux VM or in its containers, and only Cartograph Local sits on Windows. The win32-x64 `.vsix` is built and smoke-tested in CI for teams that do work in Windows folders, but has not been run by a person |
 | Extension allow-lists (possible) | Installing either `.vsix` | Needs the organisation's approval — plan for two extensions |
 
 ### Where memory comes from
@@ -226,7 +227,9 @@ darwin-arm64, and the Linux build is smoke-tested offline on Ubuntu 20.04,
 Ubuntu 22.04 and Debian 11. Linux over Remote SSH has been run by hand
 end to end, and a Dev Container on that VM by hand on 0.9.5 (setup:
 [docs/verify-memory.md](docs/verify-memory.md#step-10--dev-containers));
-Windows has been tested in CI only. See `docs/packaging.md`. What changed in each release: [CHANGELOG.md](CHANGELOG.md).
+A Windows-local folder (Cartograph running on Windows itself) is built and
+smoke-tested in CI only: the target workstations allow no installs on Windows,
+so it is not a target environment. See `docs/packaging.md`. What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
 To check memory on a real machine, step by step: [docs/verify-memory.md](docs/verify-memory.md).
 

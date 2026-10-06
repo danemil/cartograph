@@ -724,7 +724,11 @@ accepted.
 run on install; `carto mem search "<query>"` works and returns both Chat
 prompts plus a Chat session summary ("Identify tests affected by an add_node
 parameter change") — Chat summaries via logs proven in a container too.
-**Dev Containers: proven by hand. Windows (local, no Remote SSH): still CI only.**
+**Dev Containers: proven by hand.** Windows-local (no Remote SSH): **not a target
+environment** — decided 2026-10-06: the user's workstations allow no installs on
+Windows (only the VM and its Docker), so Windows is VS Code's UI plus Cartograph
+Local. The win32-x64 `.vsix` stays built and smoke-tested in CI, labelled CI-only.
+The original four open items are closed.
 
 ## NEXT TASK
 
