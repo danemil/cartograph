@@ -636,6 +636,22 @@ Found on the way, not fixed — candidates for the user to decide:
    "stale → carto update"; status now says `carto build`; both work.
 5. No lock: two concurrent updates could both rebuild.
 
+## PR #1 (outside contributor, Java/Go call binding, 0.9.5) — decided 2026-10-06
+
+Reviewed against 0.9.4 in a scratch clone. Verified: Java interface calls
+reach the implementation (`via_supertype`), impact on an implementation finds
+its caller (master: nothing), `super.m()` is no longer a self-call,
+`freeze_support()` fixes BrokenProcessPool in the frozen binary on
+macOS/Windows; Python `callers_of` identical on 60 sampled engine functions.
+Problems: two same-named calls on one line (`repo.save(); other.save();`)
+collapse into one edge (pre-existing store identity), which the PR then binds
+precisely to one target, silently dropping the other; claimed recall numbers
+ship without a harness; ~1 test for ~230 lines of resolver logic.
+**User decision:** test 0.9.4 first (report11, unchanged); meanwhile finish
+the PR on a local branch (`pr1-finish`: same-line fix, tests, Codex review),
+then merge as 0.9.5 with a Java-focused check. Nothing goes to GitHub
+without asking the user.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
