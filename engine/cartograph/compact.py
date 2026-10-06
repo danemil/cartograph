@@ -82,8 +82,8 @@ def node_row(
 ) -> Any:
     """``[<n> <unit> | ]<kind> | [<name> | ]<path>[:<line>][ | <tail>]``.
 
-    The tail, in order: ``calls at <lines>`` (callers_of) and the calls'
-    confidence tier when it is not EXTRACTED, ``via <helper>`` (tests_for),
+    The tail, in order: ``calls at <lines>`` (callers_of, callees_of) and
+    the calls' confidence tier when it is not EXTRACTED, ``via <helper>`` (tests_for),
     ``<resolution>``.
 
     ``metric`` names the field a command is about and its unit, e.g.
@@ -97,6 +97,14 @@ def node_row(
         # Not a node this knows how to shorten. Passing it through whole is
         # the honest failure; guessing would drop something that mattered.
         return node
+    parts = _metric_and_name(node, kind, metric)
+    parts.append(f"{path}:{line}" if line and kind != "File" else path)
+    return " | ".join(parts + _call_tail(node))
+
+
+def _metric_and_name(
+    node: dict[str, Any], kind: str, metric: Optional[tuple[str, str]],
+) -> list[str]:
     parts: list[str] = []
     if metric and node.get(metric[0]) is not None:
         parts.append(f"{node[metric[0]]} {metric[1]}")
@@ -104,7 +112,11 @@ def node_row(
     name = display_name(node)
     if name:
         parts.append(name)
-    parts.append(f"{path}:{line}" if line and kind != "File" else path)
+    return parts
+
+
+def _call_tail(node: dict[str, Any]) -> list[str]:
+    parts: list[str] = []
     # callers_of: where the calls are, next to where the caller is, so the def
     # line is not read as the call site (report11, T5).
     sites = [str(n) for n in node.get("call_lines") or ()] + [
@@ -122,7 +134,35 @@ def node_row(
         parts.append(f"via {node['via'].rsplit('::', 1)[-1]}")
     if node.get("target_resolution"):
         parts.append(node["target_resolution"])
-    return " | ".join(parts)
+    return parts
+
+
+def query_row(node: dict[str, Any]) -> Any:
+    """A ``query`` result: a node row, or a callee that is not in the graph.
+
+    callees_of lists a call whose target resolved to no node — a builtin, a
+    library function, an overload it could not choose — under its bare name,
+    with no file. It is still a call the function makes, so its row says so:
+    ``<kind> | <name> | <not in graph | ambiguous, <n> candidates: ...> |
+    calls at <file>:<line>, ...``. Any other path-less row is passed whole.
+    """
+    path, _ = _location(node)
+    kind, name = node.get("kind"), node.get("qualified_name")
+    if path or not kind or not name or "call_lines" not in node:
+        return node_row(node)
+    parts = [kind, name]
+    candidates = node.get("candidates")
+    if node.get("resolution") and isinstance(candidates, list):
+        count = node.get("candidate_count", len(candidates))
+        named = ", ".join(str(c) for c in candidates)
+        if count > len(candidates):
+            named += f", +{count - len(candidates)} more"
+        elif node.get("candidates_truncated"):
+            named += ", and more not recorded"
+        parts.append(f"{node['resolution']}, {count} candidates: {named}")
+    else:
+        parts.append("not in graph")
+    return " | ".join(parts + _call_tail(node))
 
 
 def impact_row(node: dict[str, Any]) -> Any:
@@ -365,17 +405,17 @@ _SPECS: dict[str, _Spec] = {
     ),
     "query": _Spec(
         rows={
-            ("results",): node_row,
+            ("results",): query_row,
             ("edges",): edge_row,
             ("disambiguation",): handle_row,
         },
         # `candidates` is the same list as `disambiguation`, kept upstream for
         # an older key name; `description` restates the pattern name.
         drop=("candidates", "description"),
-        # A callers_of row ends `calls at <lines>` and carries the calls'
-        # tier, so its edges were the rows written again: ~40% of a response.
-        # Other patterns' rows do not state their edges, so they keep them.
-        drop_for_pattern={"callers_of": ("edges",)},
+        # A callers_of or callees_of row ends `calls at <lines>` and carries
+        # the calls' tier, so its edges were the rows written again: ~40% of
+        # a response. Other patterns' rows do not state their edges.
+        drop_for_pattern={"callers_of": ("edges",), "callees_of": ("edges",)},
     ),
     # `search_mode` is carried by the envelope, normalised; the copy in `data`
     # is the store's implementation name ("fts"), which is the one spelling

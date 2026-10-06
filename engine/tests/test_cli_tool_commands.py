@@ -460,3 +460,92 @@ def test_a_heuristically_resolved_call_says_so_on_its_row():
     extracted = _with_call_lines(dict(row), [edge(3, "EXTRACTED")])
     assert "call_confidence" not in extracted
     assert compact.node_row(extracted) == "Function | f | use.py:1 | calls at 3"
+
+
+_CALLEES_REPO = {
+    "lib.py": "def add(a, b):\n    return a + b\n",
+    "use.py": (
+        "from lib import add\n"
+        "\n"
+        "\n"
+        "def helper():\n"
+        "    return 1\n"
+        "\n"
+        "\n"
+        "def run():\n"
+        "    a = add(1, 2)\n"
+        "    b = helper()\n"
+        "    c = add(a, b)\n"
+        "    external(c)\n"
+        "    external(a)\n"
+        "    return c\n"
+    ),
+}
+
+
+def test_callees_of_rows_say_where_each_callee_is_called(
+    tmp_path, monkeypatch, capsys,
+):
+    """One row per callee, ending `calls at`, as callers_of rows do.
+
+    A row says where the callee is defined; the call lines are in the queried
+    function's file, so a callee defined elsewhere names that file with each
+    line rather than letting a bare number read as a line of its own file.
+    """
+    repo = _build_repo(tmp_path, monkeypatch, _CALLEES_REPO)
+    data = _run_query(capsys, repo, "callees_of", "use.py::run")["data"]
+
+    assert data["summary"] == (
+        "Found 3 callee(s), 5 call line(s) for callees_of('use.py::run')"
+    )
+    assert data["results"] == [
+        "Function | add | lib.py:1 | calls at use.py:9, use.py:11",
+        "Function | helper | use.py:4 | calls at 10",
+        "Function | external | not in graph | calls at use.py:12, use.py:13",
+    ]
+    assert "edges" not in data
+
+
+def test_full_callees_of_keeps_every_call_line_and_edge(
+    tmp_path, monkeypatch, capsys,
+):
+    """It kept one edge per callee: `add` called twice showed one call."""
+    repo = _build_repo(tmp_path, monkeypatch, _CALLEES_REPO)
+    data = _run_query(
+        capsys, repo, "callees_of", "use.py::run", "--detail", "full",
+    )["data"]
+
+    by_name = {r["qualified_name"]: r for r in data["results"]}
+    assert by_name["use.py::helper"]["call_lines"] == [10]
+    assert by_name["lib.py::add"]["call_lines"] == []
+    assert by_name["lib.py::add"]["call_sites_elsewhere"] == [
+        {"file": "use.py", "line": 9}, {"file": "use.py", "line": 11},
+    ]
+    # An external callee keeps its bare name and gets its call lines too.
+    external = by_name["external"]
+    assert external["kind"] == "Function" and "file_path" not in external
+    assert external["call_sites_elsewhere"] == [
+        {"file": "use.py", "line": 12}, {"file": "use.py", "line": 13},
+    ]
+    assert [(e["target"], e["line"]) for e in data["edges"]] == [
+        ("lib.py::add", 9), ("lib.py::add", 11), ("use.py::helper", 10),
+        ("external", 12), ("external", 13),
+    ]
+
+
+def test_each_callees_of_page_carries_only_its_own_callees_edges(
+    tmp_path, monkeypatch, capsys,
+):
+    repo = _build_repo(tmp_path, monkeypatch, _CALLEES_REPO)
+    first, second = _two_pages(capsys, repo, "callees_of", "use.py::run", "full")
+
+    assert [(e["target"], e["line"]) for e in first["data"]["edges"]] == [
+        ("lib.py::add", 9), ("lib.py::add", 11),
+    ]
+    assert [(e["target"], e["line"]) for e in second["data"]["edges"]] == [
+        ("use.py::helper", 10),
+    ]
+    # Both totals cover every callee, not just the page.
+    assert second["data"]["summary"].startswith(
+        "Found 3 callee(s), 5 call line(s) for callees_of("
+    )

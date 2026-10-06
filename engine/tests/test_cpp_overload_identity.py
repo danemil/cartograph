@@ -139,7 +139,16 @@ void caller() { process(1); }
         "candidates": [int_overload, double_overload],
         "candidate_count": 2,
         "candidates_truncated": False,
+        # An ambiguous callee has no file of its own, so its call is named
+        # with the file it is in.
+        "call_lines": [],
+        "call_sites_elsewhere": [{"file": source_path.as_posix(), "line": 3}],
     }]
+    from cartograph import compact
+    assert compact.query_row(callees["results"][0]) == (
+        f"Function | process | ambiguous, 2 candidates: {int_overload}, "
+        f"{double_overload} | calls at {source_path.as_posix()}:3"
+    )
     assert callees["edges"][0]["ambiguous_targets"] == [
         int_overload,
         double_overload,

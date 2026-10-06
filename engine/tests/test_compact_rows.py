@@ -329,3 +329,24 @@ def test_compacting_keeps_what_the_envelope_reads_from_data(tmp_path, monkeypatc
     assert env["search_mode"] == "keyword"
     assert env["truncated"] is True
     assert env["truncated_reason"] == "page_limit"
+
+
+def test_a_callee_not_in_the_graph_is_still_a_row_with_its_calls():
+    """callees_of lists builtins and unchosen overloads by bare name, no file."""
+    sites = [{"file": "src/a.py", "line": 12}, {"file": "src/a.py", "line": 14}]
+    external = {"kind": "Function", "name": "len", "qualified_name": "len",
+                "call_lines": [], "call_sites_elsewhere": sites}
+    assert compact.query_row(external) == (
+        "Function | len | not in graph | calls at src/a.py:12, src/a.py:14"
+    )
+    ambiguous = {
+        **external, "name": "load", "qualified_name": "load",
+        "resolution": "ambiguous", "candidates": ["x.py::load", "y.py::load"],
+        "candidate_count": 5, "candidates_truncated": True,
+    }
+    assert compact.query_row(ambiguous) == (
+        "Function | load | ambiguous, 5 candidates: x.py::load, y.py::load, +3 more"
+        " | calls at src/a.py:12, src/a.py:14"
+    )
+    # A path-less row that is not a callee is still passed whole.
+    assert compact.query_row({"import_target": "os"}) == {"import_target": "os"}

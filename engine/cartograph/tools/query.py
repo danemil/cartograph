@@ -157,8 +157,16 @@ _MAX_VIA_NAMES = 3
 _EXTRACTED = "EXTRACTED"
 
 
-def _calls_by_caller(edges: Any) -> list[tuple[str, list[Any]]]:
+#: The patterns whose rows carry call lines, and what each row is.
+_CALL_NOUNS = {"callers_of": "caller", "callees_of": "callee"}
+
+
+def _calls_by_caller(
+    edges: Any, by: str = "source",
+) -> list[tuple[str, list[Any]]]:
     """Group call edges by caller: first-seen caller order, line order within.
+
+    ``by="target"`` groups by callee instead, for callees_of.
 
     The store keeps one CALLS edge per call line, so a caller that calls the
     target on four lines has four edges and all four are call sites. Only an
@@ -176,7 +184,8 @@ def _calls_by_caller(edges: Any) -> list[tuple[str, list[Any]]]:
         if key in seen:
             continue
         seen.add(key)
-        groups.setdefault(e.source_qualified, []).append(e)
+        group = e.target_qualified if by == "target" else e.source_qualified
+        groups.setdefault(group, []).append(e)
     return [
         (source, sorted(calls, key=lambda e: (e.file_path or "", e.line or 0)))
         for source, calls in groups.items()
@@ -184,13 +193,20 @@ def _calls_by_caller(edges: Any) -> list[tuple[str, list[Any]]]:
 
 
 def _with_call_lines(result: dict[str, Any], calls: list[Any]) -> dict[str, Any]:
-    """Name on a caller's row the lines it calls the target on.
+    """Name on a caller's (or callee's) row the lines of the calls.
 
     report11, T5: a caller row said only where the caller is defined, the call
     lines sat in the separate edge list, and answers cited the def line. Calls
     sit in the caller's own file, so ``call_lines`` holds bare line numbers;
     a call recorded in another file is listed whole in
     ``call_sites_elsewhere`` rather than passed off as a line of this one.
+
+    The same holds for a callees_of row: ``call_lines`` are lines of the
+    row's own file (the callee's), so a callee defined in another file than
+    the queried function has its calls in ``call_sites_elsewhere``, with the
+    file named, and an external callee, which has no file, has all of them
+    there. A bare number beside a row's location is always a line of that
+    location's file.
     """
     own = result.get("file_path")
     lines: list[int] = []
@@ -549,14 +565,14 @@ def query_graph(
             edges_out.append(edge_to_dict(e))
             edge_rows.append(None)
 
-        def add_caller(caller_result: dict[str, Any], calls: list[Any]) -> None:
-            """A callers_of row: the caller, its call lines, all its edges."""
+        def add_with_calls(row: dict[str, Any], calls: list[Any]) -> None:
+            """A callers_of or callees_of row: the node, its call lines, all its edges."""
             nonlocal total_call_lines
-            _with_call_lines(caller_result, calls)
-            total_call_lines += len(caller_result["call_lines"]) + len(
-                caller_result.get("call_sites_elsewhere", ())
+            _with_call_lines(row, calls)
+            total_call_lines += len(row["call_lines"]) + len(
+                row.get("call_sites_elsewhere", ())
             )
-            add_result(caller_result, calls)
+            add_result(row, calls)
 
         # For callers_of, skip common builtins early (bare names only)
         # "Who calls .map()?" returns hundreds of useless hits.
@@ -658,7 +674,7 @@ def query_graph(
                 seen_sources.add(source)
                 caller = store.get_node(source)
                 if caller:
-                    add_caller(node_to_dict(caller), calls)
+                    add_with_calls(node_to_dict(caller), calls)
             # Fallback: CALLS edges store unqualified target names
             # (e.g. "generateTestCode") while qn is fully qualified
             # (e.g. "file.ts::generateTestCode"). Search by plain name too.
@@ -718,7 +734,7 @@ def query_graph(
                     if caller:
                         caller_result = node_to_dict(caller)
                         caller_result["target_resolution"] = resolutions[source]
-                        add_caller(caller_result, calls)
+                        add_with_calls(caller_result, calls)
                 # A call through a supertype's declaration can run this
                 # override; a super call (``super.m()``, ``base.M()``, or the
                 # override's own ``super().m()``) is bound statically and cannot.
@@ -738,7 +754,7 @@ def query_graph(
                             if caller:
                                 caller_result = node_to_dict(caller)
                                 caller_result["target_resolution"] = "via_supertype"
-                                add_caller(caller_result, calls)
+                                add_with_calls(caller_result, calls)
 
         elif pattern == "references_to":
             seen_reference_sources: set[str] = set()
@@ -754,54 +770,59 @@ def query_graph(
                     add_result(node_to_dict(source), e)
 
         elif pattern == "callees_of":
-            seen_targets: set[str] = set()
-            for e in store.iter_edges_by_source(qn):
-                if e.kind == "CALLS":
-                    if e.target_qualified not in seen_targets:
-                        seen_targets.add(e.target_qualified)
-                        callee = store.get_node(e.target_qualified)
-                        if callee:
-                            add_result(node_to_dict(callee), e)
-                        elif (
-                            isinstance(e.extra.get("ambiguous_targets"), list)
-                            or isinstance(e.extra.get("unresolved_targets"), list)
-                            or "::" not in e.target_qualified
-                            or (node is not None and node.language == "cpp")
-                        ):
-                            unresolved = (
-                                e.extra.get("ambiguous_targets")
-                                or e.extra.get("unresolved_targets")
+            # One result per callee with every line it is called on, as for
+            # callers_of: keeping the first edge per callee turned two calls
+            # of one helper into one.
+            for target_qn, calls in _calls_by_caller(
+                (e for e in store.iter_edges_by_source(qn) if e.kind == "CALLS"),
+                by="target",
+            ):
+                e = calls[0]
+                callee = store.get_node(target_qn)
+                if callee:
+                    add_with_calls(node_to_dict(callee), calls)
+                elif (
+                    isinstance(e.extra.get("ambiguous_targets"), list)
+                    or isinstance(e.extra.get("unresolved_targets"), list)
+                    or "::" not in target_qn
+                    or (node is not None and node.language == "cpp")
+                ):
+                    unresolved = (
+                        e.extra.get("ambiguous_targets")
+                        or e.extra.get("unresolved_targets")
+                    )
+                    result: dict[str, Any] = {
+                        "kind": "Function",
+                        "name": target_qn,
+                        "qualified_name": target_qn,
+                    }
+                    if isinstance(unresolved, list):
+                        resolution = (
+                            "ambiguous"
+                            if e.extra.get("ambiguous_targets")
+                            else "unresolved"
+                        )
+                        result["resolution"] = resolution
+                        result["candidates"] = [
+                            _sanitize_name(candidate)
+                            for candidate in unresolved[:20]
+                            if isinstance(candidate, str)
+                        ]
+                        candidate_count = e.extra.get(
+                            f"{resolution}_target_count",
+                        )
+                        if not isinstance(candidate_count, int):
+                            candidate_count = len(unresolved)
+                        result["candidate_count"] = candidate_count
+                        result["candidates_truncated"] = bool(
+                            e.extra.get(
+                                f"{resolution}_targets_truncated",
                             )
-                            result: dict[str, Any] = {
-                                "kind": "Function",
-                                "name": e.target_qualified,
-                                "qualified_name": e.target_qualified,
-                            }
-                            if isinstance(unresolved, list):
-                                resolution = (
-                                    "ambiguous"
-                                    if e.extra.get("ambiguous_targets")
-                                    else "unresolved"
-                                )
-                                result["resolution"] = resolution
-                                result["candidates"] = [
-                                    _sanitize_name(candidate)
-                                    for candidate in unresolved[:20]
-                                    if isinstance(candidate, str)
-                                ]
-                                candidate_count = e.extra.get(
-                                    f"{resolution}_target_count",
-                                )
-                                if not isinstance(candidate_count, int):
-                                    candidate_count = len(unresolved)
-                                result["candidate_count"] = candidate_count
-                                result["candidates_truncated"] = bool(
-                                    e.extra.get(
-                                        f"{resolution}_targets_truncated",
-                                    )
-                                    or candidate_count > len(result["candidates"])
-                                )
-                            add_result(result, e)
+                            or candidate_count > len(result["candidates"])
+                        )
+                    # No file of its own, so every call line is named with
+                    # its file (call_sites_elsewhere).
+                    add_with_calls(result, calls)
 
         elif pattern == "imports_of":
             for e in store.iter_edges_by_source(qn):
@@ -990,8 +1011,9 @@ def query_graph(
         # places a signature change has to be made, and agents asked for call
         # sites answered with the caller count (report11, T5).
         found = (
-            f"{total_results} caller(s), {total_call_lines} call line(s)"
-            if pattern == "callers_of"
+            f"{total_results} {_CALL_NOUNS[pattern]}(s), "
+            f"{total_call_lines} call line(s)"
+            if pattern in _CALL_NOUNS
             else f"{total_results} result(s)"
         )
         summary = f"Found {found} for {pattern}('{target}')"
