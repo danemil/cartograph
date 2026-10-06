@@ -711,7 +711,10 @@ container's `vscode` user — `sudo chown -R vscode:vscode /workspaces/<repo>`.
 absolute path with `search`, and `tests?/` matches `dc-test/` (or `latest/`),
 so every file of a checkout under such a directory is a test file:
 `tests_for add_node` returned 11 (via `ingest.py::build`) instead of 5;
-flows, dead-code and anything excluding tests are affected too. Fix: classify
+dead code and anything excluding tests were affected too (flows: on the Python kit
+they were unchanged; a JS file went empty). Fixed in 0.9.6 (`154d40d`): 11 → 5 on a
+`dc-test/` copy; `mem search` takes a positional query (`38bbf35`); Dev Container
+recipe in docs/verify-memory.md step 10 (`5d89c71`). Fix: classify
 on the repo-relative path and anchor patterns to path components.
 Minor: `carto mem search` requires `--query`; a positional query could be
 accepted.

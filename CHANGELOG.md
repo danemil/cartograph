@@ -3,6 +3,22 @@
 Releases of Cartograph itself. `engine/CHANGELOG.md` is the upstream
 code-review-graph history the engine was forked from (2.3.8).
 
+## 0.9.6 — 2026-10-06
+
+**Every graph rebuilds once** on the first `carto update` (parser version 3).
+
+- **A test file is judged by its path inside the repository.** The patterns
+  were matched against the absolute path, so a checkout under a folder such as
+  `dc-test/` or `latest/` made every file a test file: `tests_for` returned
+  production callers as test helpers (11 tests instead of 5 in a Dev
+  Container at `/workspaces/dc-test`), and JS production code could become
+  Test nodes. Directory patterns are now anchored to whole path components;
+  flows and dead code use the same classification as the parser, so helpers
+  under `tests/`, `test-utils/`, `_test.go` and `FooTest.java` count as test
+  code there too.
+- `carto mem search "<query>"` works; `--query` still does.
+- Dev Container setup, as checked by hand: `docs/verify-memory.md`, step 10.
+
 ## 0.9.5 — 2026-10-06
 
 **Every graph rebuilds once** on the first `carto update` (parser version 2);
