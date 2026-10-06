@@ -219,6 +219,8 @@ class GraphStore:
         run_migrations(self._conn)
         self._nxg_cache: nx.DiGraph | None = None
         self._cache_lock = threading.Lock()
+        # class_index() with the database state it was built from; see there.
+        self._class_index_cache: tuple[tuple[int, int], tuple[dict, dict, dict]] | None = None
 
     def __enter__(self) -> "GraphStore":
         return self
@@ -234,6 +236,7 @@ class GraphStore:
         """Invalidate the cached NetworkX graph after write operations."""
         with self._cache_lock:
             self._nxg_cache = None
+            self._class_index_cache = None
 
     def close(self) -> None:
         self._conn.close()
@@ -484,6 +487,7 @@ class GraphStore:
     def rollback(self) -> None:
         """Rollback the current transaction."""
         self._conn.rollback()
+        self._invalidate_cache()
 
     # --- Read operations ---
 
@@ -1472,8 +1476,44 @@ class GraphStore:
                             seeds.add(ns)
         return seeds
 
+    def _data_state(self) -> tuple[int, int]:
+        """A value that changes whenever the database this store reads may have.
+
+        ``total_changes`` counts every row this connection has inserted,
+        updated or deleted — through a method here or a resolver writing on
+        ``_conn`` directly. ``PRAGMA data_version`` changes when any other
+        connection commits, in this process or another (a watch updating the
+        graph a reader holds open). Writes to temp tables (impact's working
+        sets) move the counter too: that rebuilds the index needlessly, never
+        keeps a stale one.
+        """
+        version = self._conn.execute("PRAGMA data_version").fetchone()[0]
+        return self._conn.total_changes, version
+
     def class_index(self) -> tuple[dict, dict, dict]:
-        """Classes by name and by qualified name, and each class's INHERITS targets."""
+        """Classes by name and by qualified name, and each class's INHERITS targets.
+
+        Built once and reused while the database is unchanged: callers_of,
+        impact and bare-call resolution each ask for it, and on a large Java
+        graph it is a scan of every class and every INHERITS edge. Callers
+        must not mutate it. Inside an open transaction it is built fresh and
+        not kept, since a rollback there would leave it describing rows that
+        no longer exist without moving either counter.
+        """
+        if self._conn.in_transaction:
+            return self._build_class_index()
+        with self._cache_lock:
+            state = self._data_state()
+            cached = self._class_index_cache
+            if cached is not None and cached[0] == state:
+                return cached[1]
+            index = self._build_class_index()
+            # Kept only if nothing began, wrote or committed while it was built.
+            if not self._conn.in_transaction and self._data_state() == state:
+                self._class_index_cache = (state, index)
+            return index
+
+    def _build_class_index(self) -> tuple[dict, dict, dict]:
         by_name: dict[str, list[tuple[str, str, str]]] = {}
         by_qn: dict[str, tuple[str, str, str]] = {}
         for row in self._conn.execute(

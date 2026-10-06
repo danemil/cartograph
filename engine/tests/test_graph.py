@@ -1310,3 +1310,102 @@ class TestResolveBareEndpoints:
         self.store.commit()
 
         assert self.store.get_transitive_tests(hub_qn, max_depth=1) == []
+
+
+class TestClassIndexCache:
+    """class_index() is built once per store and never served stale.
+
+    Writes reach the store through its methods, through resolvers writing on
+    ``store._conn`` directly, and from other connections (a watch process
+    updating the graph a reader holds open). Each must be seen.
+    """
+
+    def _store(self, tmp_path):
+        store = GraphStore(tmp_path / "graph.db")
+        self._class(store, "A")
+        store.commit()
+        return store
+
+    @staticmethod
+    def _class(store, name, path="/r/a.java"):
+        store.upsert_node(NodeInfo(
+            kind="Class", name=name, file_path=path,
+            line_start=1, line_end=2, language="java",
+        ))
+
+    def test_built_once_while_nothing_changes(self, tmp_path, monkeypatch):
+        store = self._store(tmp_path)
+        try:
+            first = store.class_index()
+            builds = []
+            original = store._build_class_index
+            monkeypatch.setattr(
+                store, "_build_class_index",
+                lambda: builds.append(1) or original(),
+            )
+            assert store.class_index() is first
+            assert store.class_index() is first
+            assert builds == []
+        finally:
+            store.close()
+
+    def test_a_store_write_invalidates_it(self, tmp_path):
+        store = self._store(tmp_path)
+        try:
+            assert set(store.class_index()[0]) == {"A"}
+            self._class(store, "B")
+            store.commit()
+            assert set(store.class_index()[0]) == {"A", "B"}
+            store.upsert_edge(EdgeInfo(
+                kind="INHERITS", source="/r/a.java::B", target="A",
+                file_path="/r/a.java", line=1,
+            ))
+            store.commit()
+            assert store.class_index()[2] == {"/r/a.java::B": ["A"]}
+            store.remove_file_data("/r/a.java")
+            store.commit()
+            assert store.class_index() == ({}, {}, {})
+        finally:
+            store.close()
+
+    def test_a_raw_write_on_the_connection_invalidates_it(self, tmp_path):
+        # Resolvers update edges through store._conn, not through a method.
+        store = self._store(tmp_path)
+        try:
+            store.upsert_edge(EdgeInfo(
+                kind="INHERITS", source="/r/a.java::A", target="Base",
+                file_path="/r/a.java", line=1,
+            ))
+            store.commit()
+            assert store.class_index()[2] == {"/r/a.java::A": ["Base"]}
+            store._conn.execute(
+                "UPDATE edges SET target_qualified = '/r/b.java::Base' "
+                "WHERE kind = 'INHERITS'"
+            )
+            assert store.class_index()[2] == {"/r/a.java::A": ["/r/b.java::Base"]}
+        finally:
+            store.close()
+
+    def test_a_rolled_back_write_is_not_kept(self, tmp_path):
+        store = self._store(tmp_path)
+        try:
+            store._conn.execute("BEGIN")
+            self._class(store, "Gone")
+            assert "Gone" in store.class_index()[0]
+            store._conn.rollback()  # raw, as several modules do
+            assert set(store.class_index()[0]) == {"A"}
+        finally:
+            store.close()
+
+    def test_another_connections_commit_invalidates_it(self, tmp_path):
+        reader = self._store(tmp_path)
+        writer = GraphStore(tmp_path / "graph.db")
+        try:
+            assert set(reader.class_index()[0]) == {"A"}
+            self._class(writer, "B", path="/r/b.java")
+            writer.commit()
+            assert set(reader.class_index()[0]) == {"A", "B"}
+        finally:
+            writer.close()
+            reader.close()
+
