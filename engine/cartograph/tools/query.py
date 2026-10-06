@@ -179,6 +179,33 @@ def _calls_by_caller(edges: Any) -> list[tuple[str, list[Any]]]:
     ]
 
 
+def _with_call_lines(result: dict[str, Any], calls: list[Any]) -> dict[str, Any]:
+    """Name on a caller's row the lines it calls the target on.
+
+    report11, T5: a caller row said only where the caller is defined, the call
+    lines sat in the separate edge list, and answers cited the def line. Calls
+    sit in the caller's own file, so ``call_lines`` holds bare line numbers;
+    a call recorded in another file is listed whole in
+    ``call_sites_elsewhere`` rather than passed off as a line of this one.
+    """
+    own = result.get("file_path")
+    lines: list[int] = []
+    elsewhere: list[dict[str, Any]] = []
+    for e in calls:
+        if not e.line:
+            continue
+        if e.file_path and e.file_path != own:
+            site = {"file": e.file_path, "line": e.line}
+            if site not in elsewhere:
+                elsewhere.append(site)
+        elif e.line not in lines:
+            lines.append(e.line)
+    result["call_lines"] = lines
+    if elsewhere:
+        result["call_sites_elsewhere"] = elsewhere
+    return result
+
+
 def _short_name(qualified: str) -> str:
     """``path/x.py::Store.add`` -> ``Store.add``; a file -> its base name."""
     if "::" in qualified:
@@ -479,6 +506,7 @@ def query_graph(
         results: list[dict[str, Any]] = []
         edges_out: list[dict[str, Any]] = []
         total_results = 0
+        total_call_lines = 0
 
         def add_result(
             result: dict[str, Any], edge: Any | list[Any] | None = None,
@@ -497,6 +525,15 @@ def query_graph(
             for e in edge if isinstance(edge, list) else [edge]:
                 if e is not None:
                     edges_out.append(edge_to_dict(e))
+
+        def add_caller(caller_result: dict[str, Any], calls: list[Any]) -> None:
+            """A callers_of row: the caller, its call lines, all its edges."""
+            nonlocal total_call_lines
+            _with_call_lines(caller_result, calls)
+            total_call_lines += len(caller_result["call_lines"]) + len(
+                caller_result.get("call_sites_elsewhere", ())
+            )
+            add_result(caller_result, calls)
 
         # For callers_of, skip common builtins early (bare names only)
         # "Who calls .map()?" returns hundreds of useless hits.
@@ -598,7 +635,7 @@ def query_graph(
                 seen_sources.add(source)
                 caller = store.get_node(source)
                 if caller:
-                    add_result(node_to_dict(caller), calls)
+                    add_caller(node_to_dict(caller), calls)
             # Fallback: CALLS edges store unqualified target names
             # (e.g. "generateTestCode") while qn is fully qualified
             # (e.g. "file.ts::generateTestCode"). Search by plain name too.
@@ -658,7 +695,7 @@ def query_graph(
                     if caller:
                         caller_result = node_to_dict(caller)
                         caller_result["target_resolution"] = resolutions[source]
-                        add_result(caller_result, calls)
+                        add_caller(caller_result, calls)
                 # A call through a supertype's declaration can run this
                 # override; a super call (``super.m()``, ``base.M()``, or the
                 # override's own ``super().m()``) is bound statically and cannot.
@@ -678,7 +715,7 @@ def query_graph(
                             if caller:
                                 caller_result = node_to_dict(caller)
                                 caller_result["target_resolution"] = "via_supertype"
-                                add_result(caller_result, calls)
+                                add_caller(caller_result, calls)
 
         elif pattern == "references_to":
             seen_reference_sources: set[str] = set()
@@ -926,10 +963,15 @@ def query_graph(
                     add_result(node_to_dict(n))
 
         results_omitted = max(0, total_results - len(results))
-        summary = (
-            f"Found {total_results} result(s) "
-            f"for {pattern}('{target}')"
+        # callers_of counts call lines too: "3 callers" is not the number of
+        # places a signature change has to be made, and agents asked for call
+        # sites answered with the caller count (report11, T5).
+        found = (
+            f"{total_results} caller(s), {total_call_lines} call line(s)"
+            if pattern == "callers_of"
+            else f"{total_results} result(s)"
         )
+        summary = f"Found {found} for {pattern}('{target}')"
         if results_omitted:
             summary += f" — showing {len(results)}, {results_omitted} omitted"
 
@@ -947,7 +989,10 @@ def query_graph(
             minimal_results = [
                 {
                     k: r[k]
-                    for k in ("name", "kind", "file_path", "indirect")
+                    for k in (
+                        "name", "kind", "file_path", "indirect",
+                        "call_lines", "call_sites_elsewhere",
+                    )
                     if k in r
                 }
                 for r in results

@@ -80,7 +80,10 @@ def display_name(row: dict[str, Any]) -> Optional[str]:
 def node_row(
     node: dict[str, Any], metric: Optional[tuple[str, str]] = None,
 ) -> Any:
-    """``[<n> <unit> | ]<kind> | [<name> | ]<path>[:<line>][ | <resolution>]``.
+    """``[<n> <unit> | ]<kind> | [<name> | ]<path>[:<line>][ | <tail>]``.
+
+    The tail, in order: ``calls at <lines>`` (callers_of), ``via <helper>``
+    (tests_for), ``<resolution>``.
 
     ``metric`` names the field a command is about and its unit, e.g.
     ``("line_count", "lines")``. Line 1 of a File is not a location worth
@@ -101,6 +104,15 @@ def node_row(
     if name:
         parts.append(name)
     parts.append(f"{path}:{line}" if line and kind != "File" else path)
+    # callers_of: where the calls are, next to where the caller is, so the def
+    # line is not read as the call site (report11, T5).
+    sites = [str(n) for n in node.get("call_lines") or ()] + [
+        f"{s.get('file')}:{s.get('line')}"
+        for s in node.get("call_sites_elsewhere") or ()
+        if isinstance(s, dict)
+    ]
+    if sites:
+        parts.append("calls at " + ", ".join(sites))
     # tests_for reaches some tests through a test-file helper; say which, so
     # an indirect test does not read as a direct caller.
     if isinstance(node.get("via"), str):
