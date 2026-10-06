@@ -262,33 +262,35 @@ def _keyword_search(
 
     Any word may match, and nodes matching more of them rank first: a
     sentence ("decode the aircraft position") rarely matches whole. A
-    sentence is matched against symbols by its words of four letters or more:
-    the checkout path in File names and qualified names would match every
-    node. One word matches as before.
+    sentence is matched against symbols, not the checkout path in File names
+    and qualified names, which would match every node. Its words of four
+    letters or more decide which nodes match; shorter ones ("get", "the")
+    only rank them, so "get user" puts ``get_users`` first without "the"
+    admitting every name that contains it. One word matches as before.
     Returns ``(node_id, score)`` tuples with a basic relevance score.
     """
     words = query.lower().split()
     if not words:
         return []
     symbol, files = "qualified_name", ""
+    admitting = words
     if len(words) > 1:
-        words = [w for w in words if len(w) > 3] or words
+        admitting = [w for w in words if len(w) > 3] or words
         symbol = "substr(qualified_name, instr(qualified_name, '::') + 2)"
         files = "kind != 'File' AND "
 
-    conditions: list[str] = []
-    params: list[str | int] = []
-    for word in words:
-        conditions.append(
-            f"(LOWER(name) LIKE ? OR LOWER({symbol}) LIKE ?)"
+    def matches(terms: list[str]) -> tuple[str, list[str]]:
+        sql = " + ".join(
+            f"(LOWER(name) LIKE ? OR LOWER({symbol}) LIKE ?)" for _ in terms
         )
-        params.extend([f"%{word}%", f"%{word}%"])
+        return sql, [p for w in terms for p in (f"%{w}%", f"%{w}%")]
 
-    hits = " + ".join(conditions)
-    params.append(limit)
+    hits, hit_params = matches(words)
+    admits, admit_params = matches(admitting)
+    params: list[str | int] = [*hit_params, *admit_params, limit]
     sql = (  # nosec B608
         f"SELECT id, name, qualified_name, {hits} AS hits FROM nodes "
-        f"WHERE {files}hits > 0 ORDER BY hits DESC LIMIT ?"
+        f"WHERE {files}({admits}) > 0 ORDER BY hits DESC LIMIT ?"
     )
 
     try:

@@ -186,6 +186,22 @@ class TestHybridSearch:
         assert {"get_users", "UserService", "UserResponse"} <= set(names)
         assert "authenticate" not in names
 
+    def test_keyword_fallback_short_words_rank_but_do_not_admit(self):
+        """'add user': ``add`` alone admits nothing, but it ranks add_user first."""
+        self._drop_fts()
+        self.store.upsert_node(NodeInfo(
+            kind="Function", name="add_user", file_path="admin.py",
+            line_start=1, line_end=5, language="python",
+        ), file_hash="abc123")
+        self.store.upsert_node(NodeInfo(
+            kind="Function", name="add_index", file_path="admin.py",
+            line_start=7, line_end=9, language="python",
+        ), file_hash="abc123")
+        self.store._conn.commit()
+        names = [r["name"] for r in hybrid_search(self.store, "add user")]
+        assert names[0] == "add_user"
+        assert "add_index" not in names
+
     def test_keyword_fallback_single_word_unchanged(self):
         """One word still matches the qualified name, path included, as before."""
         self._drop_fts()
