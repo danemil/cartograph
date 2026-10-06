@@ -213,7 +213,7 @@ def test_tool_command_missing_graph_reports_a_recoverable_precondition(
 def test_callers_of_lists_one_edge_per_call_line(
     tmp_path, monkeypatch, capsys, detail,
 ):
-    """A caller with three call lines is one result and three edges.
+    """A caller with three call lines is one result and three edges (full).
 
     Measured on a real repo: `_build_fixture` called `add_node` on four lines
     and the response showed one, so an agent reported three call sites where
@@ -268,12 +268,8 @@ def test_callers_of_lists_one_edge_per_call_line(
             "Function | many | use.py:4 | calls at 5, 6, 7",
             "Function | once | use.py:10 | calls at 11",
         ]
-        assert data["edges"] == [
-            "CALLS | many -> lib.py::add | use.py:5",
-            "CALLS | many -> lib.py::add | use.py:6",
-            "CALLS | many -> lib.py::add | use.py:7",
-            "CALLS | once -> lib.py::add | use.py:11",
-        ]
+        # The rows state every call line; the edges would say them again.
+        assert "edges" not in data
     else:
         assert [(r["qualified_name"], r["call_lines"]) for r in data["results"]] == [
             ("use.py::many", [5, 6, 7]), ("use.py::once", [11]),
@@ -282,3 +278,185 @@ def test_callers_of_lists_one_edge_per_call_line(
             ("use.py::many", 5), ("use.py::many", 6), ("use.py::many", 7),
             ("use.py::once", 11),
         ]
+
+
+def _build_repo(tmp_path, monkeypatch, files: dict[str, str]):
+    """A repository built from source, so edges are stored as the parser stores them."""
+    from cartograph.graph import GraphStore
+    from cartograph.incremental import full_build
+
+    monkeypatch.setenv("CRG_SERIAL_PARSE", "1")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    for name, text in files.items():
+        (repo / name).write_text(text, encoding="utf-8")
+    db_path = repo / ".cartograph" / "graph.db"
+    db_path.parent.mkdir()
+    store = GraphStore(db_path)
+    try:
+        full_build(repo, store)
+    finally:
+        store.close()
+    return repo
+
+
+def _run_query(capsys, repo, *extra: str) -> dict:
+    argv = ["cartograph", "query", *extra, "--repo", str(repo)]
+    with patch.object(sys, "argv", argv):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+    assert exc_info.value.code == 0
+    return json.loads(capsys.readouterr().out)
+
+
+_CALLERS_REPO = {
+    "lib.py": "def add(a, b):\n    return a + b\n",
+    "use.py": (
+        "from lib import add\n"
+        "\n"
+        "\n"
+        "def many():\n"
+        "    x = add(1, 2)\n"
+        "    y = add(3, 4)\n"
+        "    return add(x, y)\n"
+        "\n"
+        "\n"
+        "def once():\n"
+        "    return add(8, 9)\n"
+    ),
+}
+
+
+def _two_pages(capsys, repo, pattern: str, target: str, detail: str):
+    first = _run_query(capsys, repo, pattern, target, "--limit", "1", "--detail", detail)
+    cursor = first["page"]["next_cursor"]
+    assert cursor
+    second = _run_query(
+        capsys, repo, pattern, target, "--limit", "1", "--detail", detail,
+        "--cursor", cursor,
+    )
+    return first, second
+
+
+def test_each_callers_of_page_carries_only_its_own_callers_edges(
+    tmp_path, monkeypatch, capsys,
+):
+    """Page 2 repeated page 1's call lines: edges were never sliced by cursor."""
+    repo = _build_repo(tmp_path, monkeypatch, _CALLERS_REPO)
+    first, second = _two_pages(capsys, repo, "callers_of", "lib.py::add", "full")
+
+    assert [r["qualified_name"] for r in first["data"]["results"]] == ["use.py::many"]
+    assert [(e["source"], e["line"]) for e in first["data"]["edges"]] == [
+        ("use.py::many", 5), ("use.py::many", 6), ("use.py::many", 7),
+    ]
+    assert [r["qualified_name"] for r in second["data"]["results"]] == ["use.py::once"]
+    assert [(e["source"], e["line"]) for e in second["data"]["edges"]] == [
+        ("use.py::once", 11),
+    ]
+    # The parallel row index is how the CLI pages edges; it is never emitted.
+    assert "_edge_rows" not in first["data"]
+    assert "_edge_rows" not in second["data"]
+
+
+def test_paging_slices_edges_for_every_pattern_whose_edges_belong_to_rows(
+    tmp_path, monkeypatch, capsys,
+):
+    """The slicing is not callers_of's: inheritors_of paged the same way."""
+    repo = _build_repo(tmp_path, monkeypatch, {
+        "shapes.py": (
+            "class Base:\n    pass\n\n\n"
+            "class One(Base):\n    pass\n\n\n"
+            "class Two(Base):\n    pass\n"
+        ),
+    })
+    first, second = _two_pages(capsys, repo, "inheritors_of", "shapes.py::Base", "full")
+
+    rows = [first["data"]["results"][0]["name"], second["data"]["results"][0]["name"]]
+    assert sorted(rows) == ["One", "Two"]
+    for page, name in ((first, rows[0]), (second, rows[1])):
+        assert [e["source"].rsplit("::", 1)[-1] for e in page["data"]["edges"]] == [name]
+
+
+def test_compact_callers_of_carries_no_edges_its_rows_already_state(
+    tmp_path, monkeypatch, capsys,
+):
+    """Every row ends `calls at <lines>`; the edge list said it all again."""
+    repo = _build_repo(tmp_path, monkeypatch, _CALLERS_REPO)
+    data = _run_query(capsys, repo, "callers_of", "lib.py::add")["data"]
+
+    assert data["results"] == [
+        "Function | many | use.py:4 | calls at 5, 6, 7",
+        "Function | once | use.py:10 | calls at 11",
+    ]
+    assert "edges" not in data
+
+    first, second = _two_pages(capsys, repo, "callers_of", "lib.py::add", "compact")
+    assert "edges" not in first["data"] and "edges" not in second["data"]
+
+
+def test_full_callers_of_keeps_its_edges(tmp_path, monkeypatch, capsys):
+    repo = _build_repo(tmp_path, monkeypatch, _CALLERS_REPO)
+    data = _run_query(
+        capsys, repo, "callers_of", "lib.py::add", "--detail", "full",
+    )["data"]
+    assert [(e["source"], e["line"]) for e in data["edges"]] == [
+        ("use.py::many", 5), ("use.py::many", 6), ("use.py::many", 7),
+        ("use.py::once", 11),
+    ]
+
+
+def test_compact_keeps_edges_for_patterns_whose_rows_do_not_state_them(
+    tmp_path, monkeypatch, capsys,
+):
+    """Only callers_of and callees_of rows carry their call lines."""
+    repo = _build_repo(tmp_path, monkeypatch, {
+        "shapes.py": "class Base:\n    pass\n\n\nclass One(Base):\n    pass\n",
+    })
+    data = _run_query(capsys, repo, "inheritors_of", "shapes.py::Base")["data"]
+    assert len(data["edges"]) == 1
+
+
+def test_an_edge_without_a_row_is_carried_by_the_first_page_only():
+    result = {
+        "results": ["a", "b", "c"],
+        "edges": ["edge-a", "orphan", "edge-b", "edge-c1", "edge-c2"],
+        "_edge_rows": [0, None, 1, 2, 2],
+    }
+    cli._drop_earlier_edges(result, 2)
+    assert result["edges"] == ["edge-c1", "edge-c2"]
+
+    # An index that does not line up with the edges cannot say which to keep.
+    skewed = {"edges": ["x", "y"], "_edge_rows": [0]}
+    cli._drop_earlier_edges(skewed, 1)
+    assert "edges" not in skewed
+
+
+def test_a_token_budget_never_emits_the_edge_index(tmp_path, monkeypatch, capsys):
+    repo = _build_repo(tmp_path, monkeypatch, _CALLERS_REPO)
+    for detail in ("compact", "full"):
+        env = _run_query(
+            capsys, repo, "callers_of", "lib.py::add", "--limit", "1",
+            "--detail", detail, "--max-tokens", "120",
+        )
+        assert "_edge_rows" not in json.dumps(env)
+
+
+def test_a_heuristically_resolved_call_says_so_on_its_row():
+    """Compact callers_of drops edges, which were the only place a tier showed."""
+    from types import SimpleNamespace
+
+    from cartograph import compact
+    from cartograph.tools.query import _with_call_lines
+
+    def edge(line, tier):
+        return SimpleNamespace(file_path="use.py", line=line, confidence_tier=tier)
+
+    row = {"kind": "Function", "name": "f", "qualified_name": "use.py::f",
+           "file_path": "use.py", "line_start": 1}
+    inferred = _with_call_lines(dict(row), [edge(3, "EXTRACTED"), edge(4, "INFERRED")])
+    assert inferred["call_confidence"] == "INFERRED"
+    assert compact.node_row(inferred) == "Function | f | use.py:1 | calls at 3, 4 | INFERRED"
+
+    extracted = _with_call_lines(dict(row), [edge(3, "EXTRACTED")])
+    assert "call_confidence" not in extracted
+    assert compact.node_row(extracted) == "Function | f | use.py:1 | calls at 3"

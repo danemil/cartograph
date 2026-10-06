@@ -1073,6 +1073,31 @@ def _caller_limit(args) -> "tuple[str | None, int | None]":
     return None, None
 
 
+#: Where a tool says which row each of its `edges` belongs to (``query``).
+_EDGE_ROWS = "_edge_rows"
+
+
+def _drop_earlier_edges(result: dict, offset: int) -> None:
+    """Keep only the edges of the rows this page emits.
+
+    A cursor re-fetches the earlier pages' rows and ``_page_for`` discards
+    them; their edges came back too, so page 2 of ``callers_of`` repeated page
+    1's call lines. An edge with no row (an endpoint missing from the graph)
+    belongs to no page but the first, which already carried it.
+    """
+    rows, edges = result.get(_EDGE_ROWS), result.get("edges")
+    if not isinstance(rows, list) or not isinstance(edges, list):
+        return
+    if len(rows) != len(edges):
+        # Not the list the index was taken over; better to say nothing about
+        # edges than to keep the wrong ones.
+        result.pop("edges", None)
+        return
+    result["edges"] = [
+        edge for edge, row in zip(edges, rows) if row is not None and row >= offset
+    ]
+
+
 def _page_for(
     args, command: str, result: dict, *,
     offset: int = 0, page_limit: "int | None" = None,
@@ -1102,6 +1127,7 @@ def _page_for(
         # which collection pages. Before result_count is taken, or the count
         # would describe rows the caller already has.
         result[key] = result[key][offset:]
+        _drop_earlier_edges(result, offset)
     items = result[key]
     total: object = result
     for part in _PAGE_TOTAL.get(command, ()):
@@ -1177,6 +1203,9 @@ def _emit_tool_result(
         _compact.compact(command, result)
 
     page = _page_for(args, command, result, offset=offset, page_limit=page_limit)
+    if isinstance(result, dict):
+        # Paging's bookkeeping, not part of the answer.
+        result.pop(_EDGE_ROWS, None)
     if page is not None and query is not None:
         # Hold the cursor's width before fitting. fit() must budget with it
         # present, because a token stamped afterwards cannot be paid for —

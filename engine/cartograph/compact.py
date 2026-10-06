@@ -82,8 +82,9 @@ def node_row(
 ) -> Any:
     """``[<n> <unit> | ]<kind> | [<name> | ]<path>[:<line>][ | <tail>]``.
 
-    The tail, in order: ``calls at <lines>`` (callers_of), ``via <helper>``
-    (tests_for), ``<resolution>``.
+    The tail, in order: ``calls at <lines>`` (callers_of) and the calls'
+    confidence tier when it is not EXTRACTED, ``via <helper>`` (tests_for),
+    ``<resolution>``.
 
     ``metric`` names the field a command is about and its unit, e.g.
     ``("line_count", "lines")``. Line 1 of a File is not a location worth
@@ -113,6 +114,8 @@ def node_row(
     ]
     if sites:
         parts.append("calls at " + ", ".join(sites))
+        if node.get("call_confidence"):
+            parts.append(node["call_confidence"])
     # tests_for reaches some tests through a test-file helper; say which, so
     # an indirect test does not read as a direct caller.
     if isinstance(node.get("via"), str):
@@ -350,6 +353,8 @@ class _Spec:
     drop: tuple[str, ...] = field(default_factory=tuple)
     #: Keys that repeat the rows only once every row is compact.
     drop_when_compact: tuple[str, ...] = field(default_factory=tuple)
+    #: Keys that repeat the rows for some values of ``data.pattern`` only.
+    drop_for_pattern: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 _SPECS: dict[str, _Spec] = {
@@ -367,6 +372,10 @@ _SPECS: dict[str, _Spec] = {
         # `candidates` is the same list as `disambiguation`, kept upstream for
         # an older key name; `description` restates the pattern name.
         drop=("candidates", "description"),
+        # A callers_of row ends `calls at <lines>` and carries the calls'
+        # tier, so its edges were the rows written again: ~40% of a response.
+        # Other patterns' rows do not state their edges, so they keep them.
+        drop_for_pattern={"callers_of": ("edges",)},
     ),
     # `search_mode` is carried by the envelope, normalised; the copy in `data`
     # is the store's implementation name ("fts"), which is the one spelling
@@ -443,7 +452,9 @@ def compact(command: str, result: Any) -> Any:
     if all_compact:
         for key in spec.drop_when_compact:
             result.pop(key, None)
-    for key in (*_ALWAYS_DROP, *spec.drop):
+    pattern = result.get("pattern")
+    by_pattern = spec.drop_for_pattern.get(pattern, ()) if isinstance(pattern, str) else ()
+    for key in (*_ALWAYS_DROP, *spec.drop, *by_pattern):
         result.pop(key, None)
     for key in [k for k, v in result.items() if v is None]:
         del result[key]

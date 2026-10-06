@@ -153,6 +153,10 @@ _RELATION_NOUNS = {
 _MAX_VIA_NAMES = 3
 
 
+#: The confidence tier of an edge read directly from source.
+_EXTRACTED = "EXTRACTED"
+
+
 def _calls_by_caller(edges: Any) -> list[tuple[str, list[Any]]]:
     """Group call edges by caller: first-seen caller order, line order within.
 
@@ -203,6 +207,13 @@ def _with_call_lines(result: dict[str, Any], calls: list[Any]) -> dict[str, Any]
     result["call_lines"] = lines
     if elsewhere:
         result["call_sites_elsewhere"] = elsewhere
+    # Compact output states the calls only on this row, so the one thing its
+    # edges said beyond the lines has to move here too: a call resolved by
+    # heuristic (scoped_resolver, derived event calls) is not an extracted one.
+    tiers = {getattr(e, "confidence_tier", None) or _EXTRACTED for e in calls}
+    weaker = sorted(tiers - {_EXTRACTED})
+    if weaker:
+        result["call_confidence"] = weaker[0] if len(weaker) == 1 else "/".join(weaker)
     return result
 
 
@@ -505,6 +516,12 @@ def query_graph(
         response_limit = min(max_results, 5) if detail_level == "minimal" else max_results
         results: list[dict[str, Any]] = []
         edges_out: list[dict[str, Any]] = []
+        # Parallel to edges_out: the index in `results` of the row each edge
+        # belongs to, None for an edge with no row of its own. The CLI pages
+        # `results` by cursor and needs this to page `edges` with them —
+        # without it page 2 repeated page 1's edges. Returned as `_edge_rows`
+        # and removed before anything is emitted.
+        edge_rows: list[int | None] = []
         total_results = 0
         total_call_lines = 0
 
@@ -525,6 +542,12 @@ def query_graph(
             for e in edge if isinstance(edge, list) else [edge]:
                 if e is not None:
                     edges_out.append(edge_to_dict(e))
+                    edge_rows.append(len(results) - 1)
+
+        def add_orphan_edge(e: Any) -> None:
+            """An edge whose endpoint has no node, so no row to page with."""
+            edges_out.append(edge_to_dict(e))
+            edge_rows.append(None)
 
         def add_caller(caller_result: dict[str, Any], calls: list[Any]) -> None:
             """A callers_of row: the caller, its call lines, all its edges."""
@@ -900,7 +923,7 @@ def query_graph(
                 if triggered:
                     add_result(node_to_dict(triggered), edge)
                 else:
-                    edges_out.append(edge_to_dict(edge))
+                    add_orphan_edge(edge)
 
         elif pattern == "triggered_by":
             for edge in store.get_edges_by_target(qn):
@@ -910,7 +933,7 @@ def query_graph(
                 if trigger:
                     add_result(node_to_dict(trigger), edge)
                 else:
-                    edges_out.append(edge_to_dict(edge))
+                    add_orphan_edge(edge)
 
         elif pattern in ("publishers_of", "listeners_of"):
             edge_kind = "PUBLISHES" if pattern == "publishers_of" else "HANDLES"
@@ -921,7 +944,7 @@ def query_graph(
                 if source:
                     add_result(node_to_dict(source), edge)
                 else:
-                    edges_out.append(edge_to_dict(edge))
+                    add_orphan_edge(edge)
 
         elif pattern == "handlers_of":
             for edge in store.get_edges_by_target(qn):
@@ -931,7 +954,7 @@ def query_graph(
                 if handler:
                     add_result(node_to_dict(handler), edge)
                 else:
-                    edges_out.append(edge_to_dict(edge))
+                    add_orphan_edge(edge)
 
         elif pattern == "endpoints_for":
             for edge in store.get_edges_by_source(qn):
@@ -941,7 +964,7 @@ def query_graph(
                 if endpoint and endpoint.kind == "Endpoint":
                     add_result(node_to_dict(endpoint), edge)
                 elif endpoint is None:
-                    edges_out.append(edge_to_dict(edge))
+                    add_orphan_edge(edge)
 
         elif pattern == "consumers_of":
             raw_key = node.name if node else target.removeprefix("config:")
@@ -954,7 +977,7 @@ def query_graph(
                     add_result(node_to_dict(consumer), edge)
                     seen_config_sources.add(consumer.qualified_name)
                 elif consumer is None:
-                    edges_out.append(edge_to_dict(edge))
+                    add_orphan_edge(edge)
 
         elif pattern == "file_summary":
             graph_paths = _resolve_graph_file_paths(store, root, [target])
@@ -991,7 +1014,7 @@ def query_graph(
                     k: r[k]
                     for k in (
                         "name", "kind", "file_path", "indirect",
-                        "call_lines", "call_sites_elsewhere",
+                        "call_lines", "call_sites_elsewhere", "call_confidence",
                     )
                     if k in r
                 }
@@ -1021,6 +1044,7 @@ def query_graph(
             "results_omitted": results_omitted,
             "results": results,
             "edges": edges_out,
+            "_edge_rows": edge_rows,
         }
         if confidence:
             response["confidence"] = confidence
