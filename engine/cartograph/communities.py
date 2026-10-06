@@ -813,8 +813,20 @@ def detect_communities(
         dominant_language, description, members, member_qns.
     """
     # Gather all nodes (exclude File nodes to focus on code entities)
-    all_edges = store.get_all_edges()
-    unique_nodes = store.get_all_nodes(exclude_files=True)
+    # In a stable order, not row-id order: Leiden numbers vertices (and keeps
+    # the first edge of a pair) in the order it is given them, and an update
+    # gives re-parsed nodes new, higher ids. Read in id order, the same graph
+    # partitioned one way after `update` and another after a full rebuild.
+    all_edges = sorted(
+        store.get_all_edges(),
+        key=lambda e: (
+            e.source_qualified, e.target_qualified, e.kind, e.file_path, e.line,
+        ),
+    )
+    unique_nodes = sorted(
+        store.get_all_nodes(exclude_files=True),
+        key=lambda n: n.qualified_name,
+    )
 
     # Build adjacency index once for fast cohesion computation
     adj = _build_adjacency(all_edges)

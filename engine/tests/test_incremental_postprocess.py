@@ -293,3 +293,62 @@ def test_no_change_update_leaves_flows_and_communities_alone(repo: Path) -> None
     assert result["summary"].startswith("No changes detected")
     assert (_flows(repo), _community_mates(repo, ["main", "nightly"])) == before
 
+
+@pytest.mark.parametrize("leiden", [False, True])
+def test_communities_do_not_depend_on_row_order(
+    tmp_path: Path, monkeypatch, leiden: bool,
+) -> None:
+    """Re-parsed nodes come back last in id order; communities must not care.
+
+    Leiden numbers vertices in the order it is given them, so a graph read in
+    id order after an update would partition differently from the same graph
+    after a full rebuild.
+    """
+    import random
+
+    from cartograph import communities
+    from cartograph.parser import EdgeInfo, NodeInfo
+
+    if leiden and not communities.IGRAPH_AVAILABLE:
+        pytest.skip("igraph not installed")
+    if not leiden:
+        monkeypatch.setattr(communities, "IGRAPH_AVAILABLE", False)
+
+    rng = random.Random(7)
+    names = [f"m{i % 12}.py::f{i}" for i in range(240)]
+    edges = set()
+    for i, src in enumerate(names):
+        for _ in range(3):
+            j = i + rng.randint(-15, 15) if rng.random() < 0.8 else rng.randrange(240)
+            if 0 <= j < 240 and j != i:
+                edges.add((src, names[j]))
+
+    def build(order: list[str]) -> GraphStore:
+        store = GraphStore(tmp_path / f"{len(list(tmp_path.iterdir()))}.db")
+        for qn in order:
+            path, _, name = qn.partition("::")
+            store.upsert_node(NodeInfo(
+                kind="Function", name=name, file_path=path,
+                line_start=1, line_end=2, language="python",
+                parent_name=None,
+            ))
+        for src, tgt in sorted(edges, key=lambda e: order.index(e[0])):
+            store.upsert_edge(EdgeInfo(
+                kind="CALLS", source=src, target=tgt,
+                file_path=src.partition("::")[0], line=1,
+            ))
+        store.commit()
+        return store
+
+    def partition(store: GraphStore) -> set[frozenset[str]]:
+        try:
+            return {
+                frozenset(c["members"])
+                for c in communities.detect_communities(store)
+            }
+        finally:
+            store.close()
+
+    shuffled = list(names)
+    rng.shuffle(shuffled)
+    assert partition(build(names)) == partition(build(shuffled))
