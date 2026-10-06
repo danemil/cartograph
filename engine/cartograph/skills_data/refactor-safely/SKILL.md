@@ -11,7 +11,9 @@ imports, aliases and methods, which a text search confuses with comments,
 strings and same-named symbols in other files. It does not type-check, so a
 caller it could not pin to this exact symbol ends with how it was found: `unresolved`
 (by name), `ambiguous` (one of several candidates) or `via_supertype` (a call
-through the interface or base class it overrides).
+through the interface or base class it overrides). Report labelled callers
+apart from resolved ones, with their label: a labelled caller may call a
+namesake instead, so read its call line before counting it in what breaks.
 
 ### When to use this
 - "Who calls X?", "Where is X used?"
@@ -57,7 +59,9 @@ changed?" — two calls answer it. Answer from them:
    carto query tests_for <symbol> --format json
    ```
    A row ending `via <helper>` reaches the symbol through a fixture or helper
-   in the test file: it breaks if the helper's call breaks.
+   in the test file: it breaks if the helper's call breaks. Name every test
+   the result lists, those reached `via <helper>` included — not only the
+   helper — so the answer says exactly which tests to update.
 
 3. **Other uses** — passed as a callback, imported, inherited from — when the
    change is a rename or a removal, which these break too:
