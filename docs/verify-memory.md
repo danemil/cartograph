@@ -1,6 +1,6 @@
 ---
 tags: [runbook, memory, cartograph]
-updated: 2026-09-29
+updated: 2026-10-06
 ---
 
 # Verify memory works
@@ -194,6 +194,38 @@ prints nothing — that is the split.
    carto mem status --format text
    ```
    **Expect** one `.jsonl` per chat, and `capture copilot chat   logs (…)`.
+
+## Step 10 — Dev Containers
+
+Run by hand on 0.9.5 (2026-10-06): Docker 29.8.2 on the Linux VM, VS Code over
+Remote SSH, **Dev Containers: Reopen in Container** with this
+`.devcontainer/devcontainer.json`:
+
+```json
+{
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "lts" }
+  },
+  "postCreateCommand": "npm install -g @github/copilot && git config --global --add safe.directory '*'",
+  "customizations": {
+    "vscode": { "extensions": ["GitHub.copilot-chat"] }
+  }
+}
+```
+
+1. In a container terminal, install the **linux-x64** `.vsix` into the
+   container: `code --install-extension carto-linux-x64-<version>.vsix`.
+2. Open a **new** terminal — only terminals opened after the install have
+   `carto` on `PATH` (`/home/vscode/.cartograph/bin`).
+3. If `carto install` or `carto build` cannot write to the repository, the
+   folder is owned by root on the host and the container runs as `vscode`:
+   `sudo chown -R vscode:vscode /workspaces/<repo>`.
+4. `carto install`, `carto build`, then Steps 2–8 as usual. For Chat history,
+   Cartograph Local (Step 9) works the same way into a container.
+
+A session with only **one** prompt is deliberately not summarised; send at
+least two before expecting a `sessions` row.
 
 ## Copilot CLI
 

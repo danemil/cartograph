@@ -224,8 +224,9 @@ uses the same model only after `carto embed` has been run.
 Release `.vsix` files are built by CI for linux-x64, win32-x64 and
 darwin-arm64, and the Linux build is smoke-tested offline on Ubuntu 20.04,
 Ubuntu 22.04 and Debian 11. Linux over Remote SSH has been run by hand
-end to end; Windows and Dev Containers have been tested in CI only. See
-`docs/packaging.md`. What changed in each release: [CHANGELOG.md](CHANGELOG.md).
+end to end, and a Dev Container on that VM by hand on 0.9.5 (setup:
+[docs/verify-memory.md](docs/verify-memory.md#step-10--dev-containers));
+Windows has been tested in CI only. See `docs/packaging.md`. What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
 To check memory on a real machine, step by step: [docs/verify-memory.md](docs/verify-memory.md).
 
