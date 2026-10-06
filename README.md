@@ -216,18 +216,16 @@ with semantic truncation, the six-skill pack, `carto mem add|search|show|status|
 hooks for Copilot CLI and Copilot Chat, memory from Copilot's own
 logs when hooks are blocked, and Cartograph Local for remote windows.
 
-Not yet: cursors (`next_cursor` is honestly `null`), and summaries that read
-the agent's replies rather than only the prompts. Memory search is hybrid
+Not yet: summaries that read the agent's replies rather than only the prompts. Memory search is hybrid
 (keyword + a bundled all-MiniLM-L6-v2) wherever the payload's model is found,
 and says `keyword`, with the reason, where it is not; the graph's own `search`
 uses the same model only after `carto embed` has been run.
 
-The `.vsix` is built and verified **on darwin-arm64 only**. PyInstaller freezes
-the interpreter it runs on, so every other target has to be built on its own
-machine, and none has been. The extension's activation path has not been run
-inside a VS Code window — what was verified is the `.vsix` installing through
-`code --install-extension`, and the placement and query code driven directly.
-See `docs/packaging.md`.
+Release `.vsix` files are built by CI for linux-x64, win32-x64 and
+darwin-arm64, and the Linux build is smoke-tested offline on Ubuntu 20.04,
+Ubuntu 22.04 and Debian 11. Linux over Remote SSH has been run by hand
+end to end; Windows and Dev Containers have been tested in CI only. See
+`docs/packaging.md`. What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
 To check memory on a real machine, step by step: [docs/verify-memory.md](docs/verify-memory.md).
 

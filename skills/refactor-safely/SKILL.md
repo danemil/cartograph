@@ -39,6 +39,9 @@ changed?" — two calls answer it. Answer from them:
    ```
    carto query callers_of <symbol> --limit 50 --format json
    ```
+   Each row ends `calls at <lines>`: the lines the calls sit on, not where
+   the caller is defined. Cite those, and give both totals the summary
+   states (callers and call lines).
    Then read the call lines before saying what breaks, and say it per kind
    of change: calls that pass arguments by position break when a required
    parameter is added, removed or reordered — not when one is renamed or

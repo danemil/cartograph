@@ -658,6 +658,31 @@ calls at :20/:22, and rarely totalled 7 calls); refactor-safely step 2 could
 ask to name every test, including those reached `via <helper>` (2/5 with
 answers named only `_build_fixture`).
 
+## Done — 2026-10-06, 0.9.5: PR #1 merged and finished
+
+PR #1 merged with a merge commit (`f3b2d88`; the contributor's 27d81f3 kept
+as is, so GitHub marks it merged). On top: same-line calls kept apart
+(`b037a37`), no promotion by elimination outside Java (`9a653f5`), 16 tests
+(`b14a170`), short words rank in the keyword fallback (`6bd2f1b`), skills
+report labelled callers apart and name every test (`75f1001`), caller rows
+end `calls at <lines>` with both totals in the summary (`1dee843`). Behaviour
+changes for every language are listed in `CHANGELOG.md` (new, repo root).
+The contributor's recall figures are not quoted as ours; the user decided to
+ask them to re-run their javac / Go grading on the merged master and to share
+the harness.
+
+**Decided, with the reason, so it can be reversed:** the class-index cache
+(`GraphStore.class_index()` memoised, invalidated by `total_changes` +
+`PRAGMA data_version`) was built and measured, then **not shipped**. Each CLI
+command opens its own store and builds the index once (~5 ms on 2,000
+classes), so the cache saved ~0 per command; impact's temp-table writes
+invalidate it anyway; and it adds a small stale-index risk if two threads
+ever share a store. Kept on branch `archive/class-index-cache` (`2aa2f07`,
+with 5 invalidation tests and the benchmark numbers in its message).
+**Revisit when** a long-lived reader appears — a daemon or watch mode that
+answers queries from one store — or a profile shows `class_index` mattering
+on a large Java repository.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
