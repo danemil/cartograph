@@ -535,7 +535,7 @@ correctness first.
 | T2 repository overview | 0.9.1: with 5/5 correct vs 3/5; −27% billing, 4 vs 9 tool calls (nested components named in the layout row) |
 | T3 largest functions | **0.8.9: with 5/5 fully correct vs 1/5; −86% billing, 2 vs 17 tool calls; every "with" run cheaper than every "without" run; coverage "searched all 71 code files" in the repo and in a moved copy** |
 | T4 largest files | carto correctly not used; tie |
-| T5 callers / blast radius | **0.9.2: with 5/5 correct vs 2/5; 5/5 answers state what breaks per kind of change (rename / order / optional) vs 0/5 explicit without; cost ≈ (+5%, overlapping)**. Gap seen: `query tests_for add_node` returned nothing although two test files call it — fixed in 0.9.3 (aliased `import x as y` had no import edge; test-file helpers now followed one hop) |
+| T5 callers / blast radius | **0.9.4 (report11): with 5/5 vs 2/5; with 0 overclaims and 0 TypeError-for-reorder promises vs 2 and 2 without; all 5 tests named 3/5 vs 0/5; 3 callers + 7 call lines stated fully 2/5 (partly 3/5); cost +21% median, ranges overlap (one 7.8B outlier) — not real by the rule. Upgrade path proven on the VM: stale → auto full rebuild → fresh.** Before: 0.9.2: with 5/5 correct vs 2/5; 5/5 answers state what breaks per kind of change (rename / order / optional) vs 0/5 explicit without; cost ≈ (+5%, overlapping)**. Gap seen: `query tests_for add_node` returned nothing although two test files call it — fixed in 0.9.3 (aliased `import x as y` had no import edge; test-file helpers now followed one hop) |
 | T6 free choice | tie |
 
 Defects the measurements found, all fixed: code-only overview (0.8.7), lost
@@ -651,6 +651,12 @@ ship without a harness; ~1 test for ~230 lines of resolver logic.
 the PR on a local branch (`pr1-finish`: same-line fix, tests, Codex review),
 then merge as 0.9.5 with a Java-focused check. Nothing goes to GitHub
 without asking the user.
+
+Optional, from report11: put each caller's call lines in its `callers_of`
+result row (answers cited the def line, e.g. test_graph_store.py:18, not the
+calls at :20/:22, and rarely totalled 7 calls); refactor-safely step 2 could
+ask to name every test, including those reached `via <helper>` (2/5 with
+answers named only `_build_fixture`).
 
 ## NEXT TASK
 
