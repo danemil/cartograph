@@ -1577,6 +1577,7 @@ def incremental_update(
             # rebuild every file is re-parsed, so none is singled out.
             "changed_files": [],
             "dependent_files": [],
+            "updated_paths": [],
             # Read by tools/build.py: report it, and post-process it, as the
             # full build it was.
             "full_rebuild": True,
@@ -1609,6 +1610,7 @@ def incremental_update(
             "changed_files": [],
             "ignored_changes": [],
             "dependent_files": [],
+            "updated_paths": [],
             "stale_files_removed": 0,
             "errors": [],
         }
@@ -1773,6 +1775,16 @@ def incremental_update(
             and f not in error_paths
         ],
         "dependent_files": list(dependent_files),
+        # Every file whose rows this update replaced or removed, in the
+        # graph's stored spelling (absolute, POSIX): re-parsed changed and
+        # dependent files, deleted files, stale files. ``changed_files`` is
+        # repo-relative and leaves out dependents and stale files, so it
+        # cannot say what post-processing has to look at again.
+        "updated_paths": sorted(
+            {normalize_file_path(repo_root / p) for p in parsed_paths}
+            | missing_paths
+            | set(stale_files)
+        ),
         "stale_files_removed": len(stale_files),
         "errors": errors,
         "python_resolution": python_stats,

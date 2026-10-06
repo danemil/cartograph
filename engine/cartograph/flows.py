@@ -476,125 +476,110 @@ def incremental_trace_flows(
     changed_files: list[str],
     max_depth: int = 15,
 ) -> int:
-    """Re-trace only flows that touch *changed_files*.  Much faster than full trace.
+    """Bring stored flows up to date after *changed_files* were re-parsed or removed.
 
-    1. Find flow IDs whose memberships reference nodes in *changed_files*.
-    2. Collect the entry-point node IDs of those flows before deleting them.
-    3. Delete only the affected flows and their memberships.
-    4. Re-detect entry points, keeping those in *changed_files* **or** whose
-       node ID was an entry point of a deleted flow.
-    5. BFS-trace each relevant entry point via :func:`_trace_single_flow`.
-    6. INSERT the new flows (without clearing unrelated flows).
+    *changed_files* are graph paths (absolute, as stored); they say that the
+    graph changed, and which flows count as re-traced through it.
 
-    Returns the number of re-traced flows that were stored.
+    Every entry point is traced again, and the result is what
+    :func:`trace_flows` would give, because a change reaches flows that
+    never touched the changed files: a function in an untouched file becomes
+    an entry point when its only caller goes, or stops being one when it
+    gains a caller; call resolution can point an untouched file's call at a
+    new definition. Re-parsing also gives a file's nodes new ids, so a
+    stored flow through it holds ids that no longer exist. Tracing is cheap
+    next to detecting entry points and loading the adjacency, which any
+    incremental pass pays anyway.
+
+    Writing is incremental: a flow whose entry point and path are unchanged
+    keeps its row and id (an agent may hold that id from an earlier answer);
+    a changed one is updated in place; a flow with no entry point any more is
+    deleted and a new one inserted.
+
+    Returns the number of flows written or running through *changed_files*;
+    0 when *changed_files* is empty, which leaves the flows untouched.
     """
     if not changed_files:
         return 0
 
     # Graph identity uses POSIX separators (#774); bridge native-separator
     # caller paths before matching against stored file_path values.
-    changed_files = [normalize_file_path(p) for p in changed_files]
+    changed_file_set = {normalize_file_path(p) for p in changed_files}
     conn = store._conn
-    changed_file_set = set(changed_files)
 
-    # ------------------------------------------------------------------
-    # 1. Find affected flow IDs
-    # ------------------------------------------------------------------
-    placeholders = ",".join("?" * len(changed_files))
-    affected_rows = conn.execute(
-        f"SELECT DISTINCT fm.flow_id FROM flow_memberships fm "  # nosec B608
-        f"JOIN nodes n ON n.id = fm.node_id "
-        f"WHERE n.file_path IN ({placeholders})",
-        changed_files,
-    ).fetchall()
-    affected_ids = [r[0] for r in affected_rows]
+    new_flows = trace_flows(store, max_depth=max_depth)
 
-    # ------------------------------------------------------------------
-    # 2. Collect old entry-point node IDs before deletion
-    # ------------------------------------------------------------------
-    entry_point_ids: set[int] = set()
-    if affected_ids:
-        ep_placeholders = ",".join("?" * len(affected_ids))
-        ep_rows = conn.execute(
-            f"SELECT entry_point_id FROM flows "  # nosec B608
-            f"WHERE id IN ({ep_placeholders})",
-            affected_ids,
-        ).fetchall()
-        entry_point_ids = {r[0] for r in ep_rows}
+    existing: dict[int, list[tuple]] = {}
+    for row in conn.execute(
+        "SELECT id, entry_point_id, name, depth, node_count, file_count, "
+        "criticality, path_json FROM flows ORDER BY id"
+    ):
+        existing.setdefault(row[1], []).append(tuple(row))
 
-    # ------------------------------------------------------------------
-    # 3. Delete affected flows and their memberships
-    # ------------------------------------------------------------------
-    # Wrap in an explicit transaction so a crash mid-loop cannot leave
-    # orphaned flow_memberships rows pointing at deleted flows.  See #258.
-    if affected_ids:
-        if conn.in_transaction:
-            conn.commit()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            for fid in affected_ids:
-                conn.execute(
-                    "DELETE FROM flow_memberships WHERE flow_id = ?", (fid,),
-                )
-                conn.execute("DELETE FROM flows WHERE id = ?", (fid,))
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
-
-    # ------------------------------------------------------------------
-    # 4. Re-detect entry points and filter to relevant ones
-    # ------------------------------------------------------------------
-    entry_points = detect_entry_points(store)
-    relevant_eps = [
-        ep for ep in entry_points
-        if ep.file_path in changed_file_set or ep.id in entry_point_ids
-    ]
-
-    # ------------------------------------------------------------------
-    # 5. BFS-trace each relevant entry point
-    # ------------------------------------------------------------------
-    new_flows: list[dict] = []
-    if relevant_eps:
-        adj = store.load_flow_adjacency()
-        for ep in relevant_eps:
-            flow = _trace_single_flow(adj, ep, max_depth)
-            if flow is not None:
-                new_flows.append(flow)
-
-    # ------------------------------------------------------------------
-    # 6. INSERT new flows without clearing unrelated ones
-    # ------------------------------------------------------------------
-    count = 0
-    for flow in new_flows:
-        path_json = json.dumps(flow.get("path", []))
-        conn.execute(
-            """INSERT INTO flows
-               (name, entry_point_id, depth, node_count, file_count,
-                criticality, path_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        count = 0
+        for flow in new_flows:
+            path_json = json.dumps(flow.get("path", []))
+            values = (
                 flow["name"],
-                flow["entry_point_id"],
                 flow["depth"],
                 flow["node_count"],
                 flow["file_count"],
                 flow["criticality"],
                 path_json,
-            ),
-        )
-        flow_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-
-        node_ids = flow.get("path", [])
-        for position, node_id in enumerate(node_ids):
-            conn.execute(
-                "INSERT OR IGNORE INTO flow_memberships (flow_id, node_id, position) "
-                "VALUES (?, ?, ?)",
-                (flow_id, node_id, position),
             )
-        count += 1
+            olds = existing.get(flow["entry_point_id"])
+            old = olds.pop(0) if olds else None
+            touches_changed = any(f in changed_file_set for f in flow["files"])
+            if old is not None and tuple(old[2:]) == values:
+                if touches_changed:
+                    count += 1
+                continue
+            if old is not None:
+                flow_id = old[0]
+                conn.execute(
+                    "UPDATE flows SET name = ?, depth = ?, node_count = ?, "
+                    "file_count = ?, criticality = ?, path_json = ?, "
+                    "updated_at = datetime('now') WHERE id = ?",
+                    (*values, flow_id),
+                )
+                conn.execute(
+                    "DELETE FROM flow_memberships WHERE flow_id = ?", (flow_id,),
+                )
+            else:
+                flow_id = conn.execute(
+                    """INSERT INTO flows
+                       (name, entry_point_id, depth, node_count, file_count,
+                        criticality, path_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        flow["name"],
+                        flow["entry_point_id"],
+                        *values[1:],
+                    ),
+                ).lastrowid
+            for position, node_id in enumerate(flow.get("path", [])):
+                conn.execute(
+                    "INSERT OR IGNORE INTO flow_memberships "
+                    "(flow_id, node_id, position) VALUES (?, ?, ?)",
+                    (flow_id, node_id, position),
+                )
+            count += 1
 
-    conn.commit()
+        # Flows whose entry point is gone or is no longer an entry point.
+        for olds in existing.values():
+            for old in olds:
+                conn.execute(
+                    "DELETE FROM flow_memberships WHERE flow_id = ?", (old[0],),
+                )
+                conn.execute("DELETE FROM flows WHERE id = ?", (old[0],))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     return count
 
 

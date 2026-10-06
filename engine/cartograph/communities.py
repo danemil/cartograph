@@ -13,6 +13,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from .graph import GraphEdge, GraphNode, GraphStore, _sanitize_name
+from .parser import normalize_file_path
 
 # Fixed seed for igraph's RNG so Leiden community detection is reproducible
 # across runs. Without this, two builds of the same graph produce different
@@ -846,20 +847,38 @@ def detect_communities(
     return results
 
 
+# Metadata key holding the size of the graph communities were last detected on.
+_COMMUNITY_INPUT_KEY = "communities_input_counts"
+
+
+def _community_input_counts(conn: Any) -> str:
+    """Non-File nodes and edges: what :func:`detect_communities` reads."""
+    nodes = conn.execute("SELECT COUNT(*) FROM nodes WHERE kind != 'File'").fetchone()[0]
+    edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    return f"{nodes}:{edges}"
+
+
 def incremental_detect_communities(
     store: GraphStore,
     changed_files: list[str],
     min_size: int = 2,
 ) -> int:
-    """Re-detect communities only if changed files affect existing communities.
+    """Re-detect communities when *changed_files* changed what they are built from.
 
-    If no existing communities contain nodes from changed files, skips
-    re-detection entirely (the common case for small changes). Otherwise
-    re-runs full community detection.
+    *changed_files* are graph paths (absolute, as stored) that an update
+    re-parsed or removed. Communities are re-detected in full when any of
+    them still has nodes (re-parsing replaced those nodes, which leaves them
+    in no community), or when the graph no longer has the node and edge
+    counts communities were last detected on (a deleted file's nodes are
+    gone before this runs, so they cannot be found by path). Otherwise the
+    stored communities still match the graph and detection is skipped.
+
+    Detection is global: one changed file can move nodes anywhere, so there
+    is no partial re-detection to do.
 
     Args:
         store: The GraphStore instance.
-        changed_files: List of file paths that have changed.
+        changed_files: Graph paths of the files the update re-parsed or removed.
         min_size: Minimum number of nodes for a community to be included.
 
     Returns:
@@ -869,25 +888,26 @@ def incremental_detect_communities(
         return 0
 
     conn = store._conn
+    # Graph identity uses POSIX separators (#774).
+    paths = list(dict.fromkeys(normalize_file_path(p) for p in changed_files))
 
-    # Check if any communities are affected (batch to stay under SQLite limit)
-    affected_count = 0
-    for i in range(0, len(changed_files), _SQL_BATCH):
-        batch = changed_files[i:i + _SQL_BATCH]
+    affected = (
+        store.get_metadata(_COMMUNITY_INPUT_KEY) != _community_input_counts(conn)
+    )
+    for i in range(0, len(paths), _SQL_BATCH):
+        if affected:
+            break
+        batch = paths[i:i + _SQL_BATCH]
         placeholders = ",".join("?" * len(batch))
-        row = conn.execute(
-            f"SELECT COUNT(DISTINCT community_id) FROM nodes "  # nosec B608
-            f"WHERE community_id IS NOT NULL AND file_path IN ({placeholders})",
+        affected = conn.execute(
+            f"SELECT EXISTS(SELECT 1 FROM nodes "  # nosec B608
+            f"WHERE kind != 'File' AND file_path IN ({placeholders}))",
             batch,
-        ).fetchone()
-        if row:
-            affected_count += row[0]
-    affected = (affected_count,) if affected_count else None
+        ).fetchone()[0] == 1
 
-    if not affected or affected[0] == 0:
-        return 0  # No communities affected, skip
+    if not affected:
+        return 0
 
-    # Re-run full community detection (correct and fast enough)
     communities = detect_communities(store, min_size=min_size)
     return store_communities(store, communities)
 
@@ -950,6 +970,10 @@ def store_communities(
                 )
             count += 1
 
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+            (_COMMUNITY_INPUT_KEY, _community_input_counts(conn)),
+        )
         conn.commit()
     except BaseException:
         conn.rollback()

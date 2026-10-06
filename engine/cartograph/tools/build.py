@@ -527,6 +527,8 @@ def build_or_update_graph(
             full_summary = "Full build complete"
         else:
             result = incremental_update(root, store, base=base_resolved)
+            # For post-processing only; not part of what the build reports.
+            updated_paths = result.pop("updated_paths", [])
 
         if not full_rebuild and result.get("full_rebuild"):
             # The update found a graph an older parser built and rebuilt it in
@@ -583,8 +585,12 @@ def build_or_update_graph(
                 ),
             }
 
-        # Pass changed_files for incremental flow/community detection
-        changed = result.get("changed_files") if not full_rebuild else None
+        # Incremental flow/community detection matches files against the
+        # stored node paths, which are absolute: hand it every file this
+        # update re-parsed or removed in that spelling. The repo-relative
+        # ``changed_files`` matched nothing, and left out dependent and
+        # deleted files besides.
+        changed = None if full_rebuild else updated_paths
         warnings = _run_postprocess(
             store,
             build_result,
