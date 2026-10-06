@@ -683,6 +683,13 @@ with 5 invalidation tests and the benchmark numbers in its message).
 answers queries from one store — or a profile shows `class_index` mattering
 on a large Java repository.
 
+0.9.5 checked on the VM (report12, 2026-10-06): `callers_of add_node` —
+"Found 3 caller(s), 7 call line(s)", rows `calls at 68` / `20, 22` /
+`19, 22, 28, 30`; `tests_for` 5 (four `via _build_fixture`); multi-word search
+ranks the test and `add_node` first. The parser-version rebuild had already
+run from a hook before the check (graph built 15:07 that day, edges 5222 →
+5235, the same-line split), so status/update showed fresh — expected.
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
