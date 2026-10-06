@@ -203,6 +203,10 @@ def check_graph(carto: Path, root: Path) -> None:
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         (repo / "a.py").write_text("def f():\n    return 1\n")
         (repo / "b.ts").write_text("export function g(): number {\n  return 2;\n}\n")
+        # Eight files or more take the parallel parse path, whose workers
+        # re-execute the frozen binary on macOS and Windows.
+        for i in range(8):
+            (repo / f"m{i}.py").write_text(f"def h{i}():\n    return {i}\n")
         env = payload_env(root, model=True)
         subprocess.run([str(carto), "build", "--repo", str(repo), "--quiet"], check=True, env=env)
         data = carto_json(

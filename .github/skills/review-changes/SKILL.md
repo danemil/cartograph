@@ -54,7 +54,9 @@ diffing against its base. Pick one scope and use it for every step below:
    ```
    carto query tests_for <symbol> --format json
    ```
-   An empty result is a real answer: nothing tests it.
+   An empty result means no test calls it directly. Tests that reach it
+   through an API or Gherkin steps are not linked, so grep the tests for it
+   before reporting it untested.
 
 5. **Only now read the diff** — and only the parts steps 1–4 flagged.
 

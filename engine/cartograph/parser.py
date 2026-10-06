@@ -4702,6 +4702,7 @@ class CodeParser:
 
         is_cpp = any(node.language == "cpp" for node in nodes)
         is_go = any(node.language == "go" for node in nodes)
+        is_java = any(node.language == "java" for node in nodes)
 
         def cpp_resolution_extra(
             extra: dict,
@@ -4956,6 +4957,17 @@ class CodeParser:
                         )
                         resolved.append(edge)
                         continue
+                    if is_java and len(candidates) > 1:
+                        # Java looks an unqualified call up in the caller's own
+                        # class; another class's namesake in the same file is
+                        # left to the class-hierarchy pass.
+                        candidates = [
+                            qualified for qualified, scope in entries
+                            if scope == source_scopes.get(edge.source)
+                        ]
+                        if not candidates:
+                            resolved.append(edge)
+                            continue
                     edge = EdgeInfo(
                         kind=edge.kind,
                         source=edge.source,
@@ -5095,7 +5107,7 @@ class CodeParser:
         file_path: str,
         import_map: dict[str, str],
         defined_names: set[str],
-    ) -> dict[tuple[int, str, str], tuple[str, str, str]]:
+    ) -> dict[tuple[int, str, str], tuple[Optional[str], str, str]]:
         """Collect evidence-backed targets for calls on typed receivers.
 
         The result is keyed by source line, receiver, and method so the normal
@@ -5120,7 +5132,7 @@ class CodeParser:
             "php": {"compound_statement"},
             "csharp": {"block"},
         }.get(language, set())
-        targets: dict[tuple[int, str, str], tuple[str, str, str]] = {}
+        targets: dict[tuple[int, str, str], tuple[Optional[str], str, str]] = {}
 
         def walk(
             node,
@@ -5176,6 +5188,8 @@ class CodeParser:
                 )
                 if receiver and method:
                     type_name = bindings.get(receiver)
+                    if type_name is None and language == "java":
+                        type_name = self._java_receiver_type(node)
                     evidence = (
                         "constructed_receiver"
                         if language == "php"
@@ -5202,7 +5216,9 @@ class CodeParser:
                             import_map,
                             defined_names,
                         )
-                        if target:
+                        # A Java variable keeps its declared type even when the
+                        # class is out of view: it is then no type name.
+                        if target or (language == "java" and evidence == "typed_receiver"):
                             key = (node.start_point[0] + 1, receiver, method)
                             targets[key] = (target, type_name, evidence)
 
@@ -5347,7 +5363,7 @@ class CodeParser:
         elif language == "java" and node.type in (
             "formal_parameter", "spread_parameter",
         ):
-            self._store_typed_binding(
+            self._store_java_binding(
                 result,
                 node.child_by_field_name("name"),
                 node.child_by_field_name("type"),
@@ -5359,7 +5375,7 @@ class CodeParser:
             type_node = node.child_by_field_name("type")
             for child in node.children:
                 if child.type == "variable_declarator":
-                    self._store_typed_binding(
+                    self._store_java_binding(
                         result,
                         child.child_by_field_name("name"),
                         type_node,
@@ -5467,6 +5483,41 @@ class CodeParser:
         if name and type_name:
             result[name] = type_name
 
+    @staticmethod
+    def _java_declared_type(type_node) -> Optional[str]:
+        """A Java type's simple name. Unlike Python's ``List[X]``, a Java
+        ``Map<K, V>`` or ``Optional<T>`` is itself the receiver's type, and so
+        is an array; primitives have no methods."""
+        if type_node.type == "array_type":
+            return "Array"
+        if type_node.type in ("integral_type", "floating_point_type", "boolean_type", "void_type"):
+            return None
+        match = re.match(r"([A-Za-z_][\w.]*)", type_node.text.decode("utf-8", errors="replace"))
+        return match.group(1).rsplit(".", 1)[-1] if match else None
+
+    @classmethod
+    def _store_java_binding(cls, result: dict[str, str], name_node, type_node) -> None:
+        if name_node is not None and type_node is not None:
+            type_name = cls._java_declared_type(type_node)
+            if type_name:
+                result[name_node.text.decode("utf-8", errors="replace")] = type_name
+
+    @classmethod
+    def _java_receiver_type(cls, call_node) -> Optional[str]:
+        """The type a Java receiver expression shows on its face: a string or
+        class literal, ``new T(..)``, or a cast ``((T) x)``."""
+        receiver = call_node.child_by_field_name("object")
+        while receiver is not None and receiver.type == "parenthesized_expression":
+            receiver = receiver.named_children[0] if receiver.named_children else None
+        if receiver is None:
+            return None
+        if receiver.type in ("string_literal", "class_literal"):
+            return "String" if receiver.type == "string_literal" else "Class"
+        if receiver.type in ("object_creation_expression", "cast_expression"):
+            type_node = receiver.child_by_field_name("type")
+            return cls._java_declared_type(type_node) if type_node is not None else None
+        return None
+
     @classmethod
     def _base_type_name(cls, annotation: str) -> Optional[str]:
         """Return the receiver class from a generic/nullable annotation."""
@@ -5545,7 +5596,7 @@ class CodeParser:
     @staticmethod
     def _apply_typed_call_targets(
         edges: list[EdgeInfo],
-        targets: dict[tuple[int, str, str], tuple[str, str, str]],
+        targets: dict[tuple[int, str, str], tuple[Optional[str], str, str]],
         language: str,
     ) -> list[EdgeInfo]:
         if not targets:
@@ -5562,7 +5613,7 @@ class CodeParser:
                     "receiver_type": type_name,
                     "receiver_resolution": evidence_kind,
                 })
-                resolved_target = target
+                resolved_target = target or edge.target
                 if evidence_kind == "constructed_receiver" or language == "csharp":
                     # Keep PHP/C# parse-only CALLS output backward-compatible
                     # (bare method target) while preserving the receiver
@@ -10785,11 +10836,13 @@ class CodeParser:
             # For Verilog module instantiations and Julia module-level calls,
             # create CALLS edges from the enclosing module. Julia needs this
             # lexical source so same-file resolution can find module members.
+            # A Java field initialiser or static block runs as part of its
+            # class (javac moves it into the constructors or <clinit>).
             if enclosing_func:
                 caller = self._qualify(
                     enclosing_func, file_path, enclosing_class,
                 )
-            elif language in ("verilog", "julia") and enclosing_class:
+            elif language in ("verilog", "julia", "java") and enclosing_class:
                 caller = self._qualify(
                     enclosing_class, file_path, None
                 )
@@ -11940,6 +11993,21 @@ class CodeParser:
             first_text = children[0].text.decode("utf-8", errors="replace")
             if first_text != method_name:
                 receiver_name = first_text
+        # Without it ``super.m()`` reads as a plain ``m()`` and binds to the
+        # override making the call.
+        if method_name and children[0].type == "super":
+            receiver_name = "super"
+        # ``this.address.equals()`` is a call on the field, whose declared type
+        # the typed-receiver pass then supplies.
+        if method_name and children[0].type == "field_access":
+            obj = children[0].child_by_field_name("object")
+            field = children[0].child_by_field_name("field")
+            if obj is not None and obj.type == "this" and field is not None:
+                receiver_name = field.text.decode("utf-8", errors="replace")
+        # Any other expression (``other.getAddress().getValue()``, a cast, an
+        # array element) is the receiver too: such a call is never on ``this``.
+        if method_name and receiver_name is None and children[0].type != "this":
+            receiver_name = children[0].text.decode("utf-8", errors="replace")[:60]
 
         return method_name, receiver_name
 

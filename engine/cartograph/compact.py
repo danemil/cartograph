@@ -80,11 +80,12 @@ def display_name(row: dict[str, Any]) -> Optional[str]:
 def node_row(
     node: dict[str, Any], metric: Optional[tuple[str, str]] = None,
 ) -> Any:
-    """``[<n> <unit> | ]<kind> | [<name> | ]<path>[:<line>]``.
+    """``[<n> <unit> | ]<kind> | [<name> | ]<path>[:<line>][ | <resolution>]``.
 
     ``metric`` names the field a command is about and its unit, e.g.
     ``("line_count", "lines")``. Line 1 of a File is not a location worth
-    printing.
+    printing. ``target_resolution`` stays: without it a caller matched by
+    name alone reads exactly like a resolved one.
     """
     kind = node.get("kind")
     path, line = _location(node)
@@ -104,6 +105,8 @@ def node_row(
     # an indirect test does not read as a direct caller.
     if isinstance(node.get("via"), str):
         parts.append(f"via {node['via'].rsplit('::', 1)[-1]}")
+    if node.get("target_resolution"):
+        parts.append(node["target_resolution"])
     return " | ".join(parts)
 
 

@@ -11,7 +11,9 @@ from ..config_keys import normalize_spring_config_key
 from ..context_savings import attach_context_savings, estimate_file_tokens
 from ..embeddings import EmbeddingStore
 from ..compact import display_name
-from ..graph import GraphNode, GraphStore, _sanitize_name, edge_to_dict, node_to_dict
+from ..graph import (
+    GraphNode, GraphStore, _sanitize_name, edge_to_dict, node_to_dict, receiver_rules_out,
+)
 from ..hints import generate_hints, get_session
 from ..incremental import (
     get_changed_files,
@@ -156,12 +158,17 @@ def _calls_by_caller(edges: Any) -> list[tuple[str, list[Any]]]:
 
     The store keeps one CALLS edge per call line, so a caller that calls the
     target on four lines has four edges and all four are call sites. Only an
-    exact repeat (same source, target, file and line) is dropped.
+    exact repeat (same source, target, file, line and receiver) is dropped:
+    ``repo.save(); other.save();`` on one line is two calls.
     """
     groups: dict[str, list[Any]] = {}
     seen: set[tuple[Any, ...]] = set()
     for e in edges:
-        key = (e.source_qualified, e.target_qualified, e.file_path, e.line)
+        receiver = e.extra.get("receiver") if isinstance(e.extra, dict) else None
+        key = (
+            e.source_qualified, e.target_qualified, e.file_path, e.line,
+            None if receiver is None else str(receiver),
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -596,6 +603,7 @@ def query_graph(
             # (e.g. "generateTestCode") while qn is fully qualified
             # (e.g. "file.ts::generateTestCode"). Search by plain name too.
             if node:
+                index = store.class_index()
                 cpp_overload_count = (
                     store.count_nodes_by_name(
                         node.name,
@@ -611,24 +619,66 @@ def query_graph(
                 # a resolved edge gets none of its bare-name edges: they share
                 # the short name but were not resolved to this target, so they
                 # are as likely to be calls of something else.
-                bare_calls = (
-                    e for e in store.iter_edges_by_target_name(
-                        node.name,
-                        language=node.language or None,
+                bare_calls: list[Any] = []
+                resolutions: dict[str, str] = {}
+                for e in store.iter_edges_by_target_name(
+                    node.name,
+                    language=node.language or None,
+                ):
+                    resolution = (
+                        "ambiguous" if "ambiguous_targets" in e.extra
+                        else "unresolved"
                     )
-                    if cpp_overload_count <= 1
-                    and "ambiguous_targets" not in e.extra
-                    and "unresolved_targets" not in e.extra
-                    and not (node.language == "cpp" and e.extra.get("receiver"))
-                    and e.source_qualified not in seen_sources
-                )
+                    recorded = e.extra.get(f"{resolution}_targets")
+                    if (
+                        cpp_overload_count > 1
+                        or e.source_qualified in seen_sources
+                        or (node.language == "cpp" and (
+                            recorded is not None or e.extra.get("receiver")
+                        ))
+                    ):
+                        continue
+                    # Elsewhere the recorded candidates are the evidence: the
+                    # call reaches one of them, so it is a caller of each.
+                    if (
+                        isinstance(recorded, list)
+                        and not e.extra.get(f"{resolution}_targets_truncated")
+                        and qn not in recorded
+                    ):
+                        continue
+                    if receiver_rules_out(e.extra, e.source_qualified, qn, binding=False):
+                        continue
+                    if not store.receiver_type_admits(e.extra, qn, index, e.source_qualified):
+                        continue
+                    resolutions.setdefault(e.source_qualified, resolution)
+                    bare_calls.append(e)
                 for source, calls in _calls_by_caller(bare_calls):
                     seen_sources.add(source)
                     caller = store.get_node(source)
                     if caller:
                         caller_result = node_to_dict(caller)
-                        caller_result["target_resolution"] = "unresolved"
+                        caller_result["target_resolution"] = resolutions[source]
                         add_result(caller_result, calls)
+                # A call through a supertype's declaration can run this
+                # override; a super call (``super.m()``, ``base.M()``, or the
+                # override's own ``super().m()``) is bound statically and cannot.
+                if node.parent_name:
+                    for super_qn in store.supertype_methods(
+                        node.file_path, node.parent_name, {node.name}, index,
+                    ):
+                        for source, calls in _calls_by_caller(
+                            e for e in store.iter_edges_by_target(super_qn)
+                            if e.kind == "CALLS"
+                            and e.extra.get("receiver") not in ("super", "base")
+                            and e.source_qualified != qn
+                            and e.source_qualified not in seen_sources
+                        ):
+                            seen_sources.add(source)
+                            caller = store.get_node(source)
+                            if caller:
+                                caller_result = node_to_dict(caller)
+                                caller_result["target_resolution"] = "via_supertype"
+                                add_result(caller_result, calls)
 
         elif pattern == "references_to":
             seen_reference_sources: set[str] = set()

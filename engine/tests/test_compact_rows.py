@@ -35,6 +35,25 @@ def test_node_row_keeps_what_an_agent_acts_on():
     )
 
 
+def test_a_caller_row_ends_with_its_resolution():
+    # Without the label a caller matched by name alone, or reached through an
+    # interface, reads exactly like a resolved one.
+    caller = {
+        "kind": "Function", "name": "handle",
+        "qualified_name": "src/app/Service.java::Service.handle",
+        "file_path": "src/app/Service.java", "line_start": 6, "line_end": 9,
+        "parent_name": "Service", "target_resolution": "via_supertype",
+    }
+    assert compact.node_row(caller) == (
+        "Function | Service.handle | src/app/Service.java:6 | via_supertype"
+    )
+    indirect = {**caller, "via": "src/app/Service.java::Service.run",
+                "target_resolution": "ambiguous"}
+    assert compact.node_row(indirect).endswith(" | via Service.run | ambiguous")
+    resolved = {k: v for k, v in caller.items() if k != "target_resolution"}
+    assert compact.node_row(resolved) == "Function | Service.handle | src/app/Service.java:6"
+
+
 def test_a_file_row_does_not_repeat_its_path():
     node = {
         "kind": "File", "name": "src/store.ts", "qualified_name": "src/store.ts",
