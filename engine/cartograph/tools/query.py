@@ -158,12 +158,17 @@ def _calls_by_caller(edges: Any) -> list[tuple[str, list[Any]]]:
 
     The store keeps one CALLS edge per call line, so a caller that calls the
     target on four lines has four edges and all four are call sites. Only an
-    exact repeat (same source, target, file and line) is dropped.
+    exact repeat (same source, target, file, line and receiver) is dropped:
+    ``repo.save(); other.save();`` on one line is two calls.
     """
     groups: dict[str, list[Any]] = {}
     seen: set[tuple[Any, ...]] = set()
     for e in edges:
-        key = (e.source_qualified, e.target_qualified, e.file_path, e.line)
+        receiver = e.extra.get("receiver") if isinstance(e.extra, dict) else None
+        key = (
+            e.source_qualified, e.target_qualified, e.file_path, e.line,
+            None if receiver is None else str(receiver),
+        )
         if key in seen:
             continue
         seen.add(key)

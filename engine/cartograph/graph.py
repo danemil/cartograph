@@ -282,13 +282,21 @@ class GraphStore:
         confidence_tier = str(extra_dict.get("confidence_tier", "EXTRACTED"))
         extra = json.dumps(extra_dict)
 
-        # Check for existing edge (include line so multiple call sites are preserved)
-        existing = self._conn.execute(
-            """SELECT id FROM edges
+        # Check for existing edge (include line so multiple call sites are
+        # preserved, and the receiver so `repo.save(); other.save();` on one
+        # line stays two calls: each binds by its own receiver later, and
+        # merging them would leave one receiver's callee with no caller).
+        receiver = extra_dict.get("receiver")
+        existing = None
+        for row in self._conn.execute(
+            """SELECT id, extra FROM edges
                WHERE kind=? AND source_qualified=? AND target_qualified=?
                      AND file_path=? AND line=?""",
             (edge.kind, edge.source, edge.target, edge.file_path, edge.line),
-        ).fetchone()
+        ):
+            if _edge_receiver(row["extra"]) == receiver:
+                existing = row
+                break
 
         if existing:
             self._conn.execute(
@@ -2645,6 +2653,15 @@ class GraphStore:
             confidence=confidence,
             confidence_tier=confidence_tier,
         )
+
+
+def _edge_receiver(extra: Any) -> Any:
+    """The ``receiver`` recorded in an edge's stored ``extra`` JSON, if any."""
+    try:
+        data = json.loads(extra or "{}")
+    except (TypeError, ValueError):
+        return None
+    return data.get("receiver") if isinstance(data, dict) else None
 
 
 def _symbol_scope(qn: str) -> str:
