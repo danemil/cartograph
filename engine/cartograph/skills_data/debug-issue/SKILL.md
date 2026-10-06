@@ -38,9 +38,10 @@ without reading the whole call path by hand.
    ```
    carto query callees_of <symbol> --format json
    ```
-   Each row ends `calls at <lines>`: where this code makes the call. A bare
-   number is a line of the row's own file; a call in another file is
-   written `file:line`. `not in graph` marks a builtin or library callee.
+   Each row ends with where this code makes the call: `called at
+   <file>:<lines>` when the callee lives in another file, `calls at <lines>`
+   (lines of the row's own file) when it is in the same one. `not in graph`
+   marks a builtin or library callee.
    `references_to` is the wider net when the symbol is not a function.
 
 4. **Check the tests** — an existing test often localises the bug faster than

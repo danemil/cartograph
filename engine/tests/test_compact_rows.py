@@ -79,7 +79,7 @@ def test_a_caller_row_names_its_call_lines():
         {"file": "tests/shared.py", "line": 5},
     ]}
     assert compact.node_row(elsewhere).endswith(
-        ":18 | calls at 20, 22, tests/shared.py:5"
+        ":18 | calls at 20, 22 | called at tests/shared.py:5"
     )
 
 
@@ -337,7 +337,7 @@ def test_a_callee_not_in_the_graph_is_still_a_row_with_its_calls():
     external = {"kind": "Function", "name": "len", "qualified_name": "len",
                 "call_lines": [], "call_sites_elsewhere": sites}
     assert compact.query_row(external) == (
-        "Function | len | not in graph | calls at src/a.py:12, src/a.py:14"
+        "Function | len | not in graph | called at src/a.py:12, 14"
     )
     ambiguous = {
         **external, "name": "load", "qualified_name": "load",
@@ -346,7 +346,7 @@ def test_a_callee_not_in_the_graph_is_still_a_row_with_its_calls():
     }
     assert compact.query_row(ambiguous) == (
         "Function | load | ambiguous, 5 candidates: x.py::load, y.py::load, +3 more"
-        " | calls at src/a.py:12, src/a.py:14"
+        " | called at src/a.py:12, 14"
     )
     # A path-less row that is not a callee is still passed whole.
     assert compact.query_row({"import_target": "os"}) == {"import_target": "os"}

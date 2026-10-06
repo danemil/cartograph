@@ -119,13 +119,18 @@ def _call_tail(node: dict[str, Any]) -> list[str]:
     parts: list[str] = []
     # callers_of: where the calls are, next to where the caller is, so the def
     # line is not read as the call site (report11, T5).
-    sites = [str(n) for n in node.get("call_lines") or ()] + [
-        f"{s.get('file')}:{s.get('line')}"
-        for s in node.get("call_sites_elsewhere") or ()
-        if isinstance(s, dict)
-    ]
-    if sites:
-        parts.append("calls at " + ", ".join(sites))
+    own = [str(n) for n in node.get("call_lines") or ()]
+    # callees_of: the calls sit in the queried function's file, not the
+    # callee's, so they are named by that file once: `called at f.py:75, 92`.
+    elsewhere: dict[str, list[str]] = {}
+    for s in node.get("call_sites_elsewhere") or ():
+        if isinstance(s, dict):
+            elsewhere.setdefault(str(s.get("file")), []).append(str(s.get("line")))
+    if own:
+        parts.append("calls at " + ", ".join(own))
+    for file, lines in elsewhere.items():
+        parts.append(f"called at {file}:" + ", ".join(lines))
+    if own or elsewhere:
         if node.get("call_confidence"):
             parts.append(node["call_confidence"])
     # tests_for reaches some tests through a test-file helper; say which, so
@@ -144,7 +149,7 @@ def query_row(node: dict[str, Any]) -> Any:
     library function, an overload it could not choose — under its bare name,
     with no file. It is still a call the function makes, so its row says so:
     ``<kind> | <name> | <not in graph | ambiguous, <n> candidates: ...> |
-    calls at <file>:<line>, ...``. Any other path-less row is passed whole.
+    called at <file>:<line>, ...``. Any other path-less row is passed whole.
     """
     path, _ = _location(node)
     kind, name = node.get("kind"), node.get("qualified_name")

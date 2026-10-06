@@ -147,7 +147,7 @@ void caller() { process(1); }
     from cartograph import compact
     assert compact.query_row(callees["results"][0]) == (
         f"Function | process | ambiguous, 2 candidates: {int_overload}, "
-        f"{double_overload} | calls at {source_path.as_posix()}:3"
+        f"{double_overload} | called at {source_path.as_posix()}:3"
     )
     assert callees["edges"][0]["ambiguous_targets"] == [
         int_overload,

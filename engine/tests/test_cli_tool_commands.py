@@ -499,9 +499,9 @@ def test_callees_of_rows_say_where_each_callee_is_called(
         "Found 3 callee(s), 5 call line(s) for callees_of('use.py::run')"
     )
     assert data["results"] == [
-        "Function | add | lib.py:1 | calls at use.py:9, use.py:11",
+        "Function | add | lib.py:1 | called at use.py:9, 11",
         "Function | helper | use.py:4 | calls at 10",
-        "Function | external | not in graph | calls at use.py:12, use.py:13",
+        "Function | external | not in graph | called at use.py:12, 13",
     ]
     assert "edges" not in data
 
