@@ -719,6 +719,13 @@ on the repo-relative path and anchor patterns to path components.
 Minor: `carto mem search` requires `--query`; a positional query could be
 accepted.
 
+0.9.6 re-checked in the Dev Container (2026-10-06): `tests_for add_node` = 5
+(was 11 under `/workspaces/dc-test`); the parser-version rebuild had already
+run on install; `carto mem search "<query>"` works and returns both Chat
+prompts plus a Chat session summary ("Identify tests affected by an add_node
+parameter change") — Chat summaries via logs proven in a container too.
+**Dev Containers: proven by hand. Windows (local, no Remote SSH): still CI only.**
+
 ## NEXT TASK
 
 1. **Remote SSH acceptance of 0.4.1** on the user's VM. 0.4.0 proved the
