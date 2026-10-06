@@ -173,6 +173,29 @@ class TestHybridSearch:
         names = [r["name"] for r in results]
         assert "authenticate" in names
 
+    def _drop_fts(self):
+        self.store._conn.execute("DROP TABLE IF EXISTS nodes_fts")
+        self.store._conn.commit()
+
+    def test_keyword_fallback_ranks_rows_matching_more_words_first(self):
+        """A sentence matches by any of its words, the best-covered row first."""
+        self._drop_fts()
+        results = hybrid_search(self.store, "create user record")
+        names = [r["name"] for r in results]
+        assert names[0] == "create_user"
+        assert {"get_users", "UserService", "UserResponse"} <= set(names)
+        assert "authenticate" not in names
+
+    def test_keyword_fallback_single_word_unchanged(self):
+        """One word still matches the qualified name, path included, as before."""
+        self._drop_fts()
+        names = [r["name"] for r in hybrid_search(self.store, "authenticate")]
+        assert names == ["authenticate"]
+        # "api" appears only in the path api.py of these two functions.
+        names = {r["name"] for r in hybrid_search(self.store, "api")}
+        assert {"get_users", "create_user"} <= names
+        assert "authenticate" not in names
+
     # --- Empty query ---
 
     def test_empty_query_handled(self):
